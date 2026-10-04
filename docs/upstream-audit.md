@@ -51,8 +51,10 @@ Implemented now:
 - confirmed revision, applied generation, last-known-good generation and recovery-required state;
 - a one-at-a-time apply journal with prepare/activate/verify/rollback/commit phases;
 - startup interruption recovery that blocks new applies when core reconciliation could be required;
+- a bounded core lifecycle state machine with explicit stop intent, exponential restart backoff and a failure-window circuit breaker;
+- a Linux process-group runner that rejects unsafe executable paths, plus readiness gating and fixed-capacity stdout/stderr buffers;
 - explicit capability flags that keep incomplete M1/M2 features false;
 - a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, and `auto_redirect` inbounds;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
-Still open before M1 can be called complete: core supervisor and bounded restart policy, three real proxy inbounds, deterministic restricted native-config compilation, local proxy behavior health checks, generation retention/garbage collection, database online-backup integration, and fault-injection coverage across the external core/SQLite transaction boundary.
+Still open before M1 can be called complete: binding the supervisor to a provenance-approved locked core artifact, persisting user start/stop intent, three real proxy inbounds, deterministic restricted native-config compilation, an authenticated concrete local core health probe, generation retention/garbage collection, database online-backup integration, and fault-injection coverage across the external core/SQLite transaction boundary.

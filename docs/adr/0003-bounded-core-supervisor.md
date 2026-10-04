@@ -35,9 +35,9 @@ A runner returns a process handle with `PID`, `Wait`, `Terminate`, and `Kill`. T
 
 This ADR does **not** approve a core binary and does not make `core_supervision` a product capability yet. The daemon continues to report that capability as false until all of the following are wired and tested together:
 
-1. a provenance-checked executable runner tied to the locked core artifact;
+1. binding the implemented Linux executable runner to a provenance-approved locked core artifact;
 2. deterministic generated configuration and pre-start validation;
-3. authenticated local core control/health checks;
+3. binding the implemented readiness gate to authenticated local core control/health checks;
 4. generation/apply-journal transitions around activation and rollback;
 5. process identity and recovery checks after daemon restart.
 
@@ -49,3 +49,11 @@ No code in this supervisor downloads a core, chooses a `latest` version, or trea
 - TUI lifetime cannot become restart ownership.
 - Deterministic failures become visible `failed`/circuit-open states instead of restart storms.
 - The real executable runner remains an M1 integration task and cannot bypass M0 core provenance blockers.
+
+## Implementation refinement: readiness and Linux process groups
+
+The supervisor now supports an injected readiness probe with a bounded 10 second default deadline. A started process remains in `starting` until that probe succeeds. Readiness failure is counted against the same bounded failure budget as deterministic start failure; the unready process is terminated and reaped before retry.
+
+The Linux `ExecRunner` starts the core in a dedicated process group and signals that owned group on graceful stop or force kill. It requires an absolute regular executable, rejects symlinks and executables writable by group/others, and does not search `PATH`.
+
+Child stdout/stderr can be connected to fixed-capacity `RingBuffer` writers so log volume cannot cause unbounded daemon-memory growth. The daemon advertises these pieces separately from the still-false product-level `core_supervision` capability.

@@ -249,6 +249,7 @@ func newTestSupervisor(t *testing.T, runner Runner, maxFailures int) *Supervisor
 		MaxBackoff:     20 * time.Millisecond,
 		FailureWindow:  time.Second,
 		MaxFailures:    maxFailures,
+		ReadyTimeout:   100 * time.Millisecond,
 		StopTimeout:    200 * time.Millisecond,
 	}
 	supervisor, err := NewSupervisor(runner, policy)
@@ -295,4 +296,92 @@ func waitStarts(t *testing.T, runner *fakeRunner, want int) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("runner starts = %d, want >= %d", runner.Starts(), want)
+}
+
+
+func TestSupervisorWaitsForReadinessBeforeRunning(t *testing.T) {
+	runner := &fakeRunner{}
+	gate := make(chan struct{})
+	probe := ProbeFunc(func(ctx context.Context, _ Process) error {
+		select {
+		case <-gate:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	policy := Policy{
+		InitialBackoff: 5 * time.Millisecond,
+		MaxBackoff:     20 * time.Millisecond,
+		FailureWindow:  time.Second,
+		MaxFailures:    3,
+		ReadyTimeout:   200 * time.Millisecond,
+		StopTimeout:    200 * time.Millisecond,
+	}
+	supervisor, err := NewSupervisorWithProbe(runner, probe, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Run(ctx) }()
+	waitSupervisorRunning(t, supervisor)
+
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitStarts(t, runner, 1)
+	if got := supervisor.Snapshot().State; got != StateStarting {
+		t.Fatalf("state before readiness = %s, want starting", got)
+	}
+	close(gate)
+	waitState(t, supervisor, StateRunning)
+
+	if err := supervisor.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSupervisorCountsReadinessFailureTowardCircuitBreaker(t *testing.T) {
+	runner := &fakeRunner{}
+	probe := ProbeFunc(func(context.Context, Process) error {
+		return errors.New("local control API unavailable")
+	})
+	policy := Policy{
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     2 * time.Millisecond,
+		FailureWindow:  time.Second,
+		MaxFailures:    2,
+		ReadyTimeout:   50 * time.Millisecond,
+		StopTimeout:    50 * time.Millisecond,
+	}
+	supervisor, err := NewSupervisorWithProbe(runner, probe, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Run(ctx) }()
+	waitSupervisorRunning(t, supervisor)
+
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, supervisor, StateFailed)
+	snapshot := supervisor.Snapshot()
+	if !snapshot.CircuitOpen || snapshot.ConsecutiveFails != 2 {
+		t.Fatalf("unexpected readiness-failure snapshot: %+v", snapshot)
+	}
+	if got := runner.Starts(); got != 2 {
+		t.Fatalf("start attempts = %d, want 2", got)
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }

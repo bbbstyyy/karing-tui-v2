@@ -2,7 +2,7 @@
 
 Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs/plan.md).
 
-> Status: early development. The daemon/API and durable SQLite generation/apply journal foundation exist, but the proxy core supervisor, three proxy inbounds, five-layer routing compiler, CN preset runtime, subscriptions, and TUI are **not** implemented yet.
+> Status: early development. The daemon/API, durable SQLite generation/apply journal, bounded core-supervisor state machine, Linux process-group runner, readiness gate, and bounded child-log buffers exist. The approved KaringX/sing-box artifact is still not wired; the three proxy inbounds, five-layer routing compiler, CN preset runtime, subscriptions, and TUI are **not** implemented yet.
 
 ## Non-negotiable scope
 
@@ -45,6 +45,13 @@ make build
 ```
 
 CI runs with `GOTOOLCHAIN=local` on the pinned Go release and rejects an untidy `go.mod`/`go.sum`.
+
+## Core supervision boundary
+
+The supervisor now has a Linux executable runner that creates a dedicated process group, signals only the process it owns, rejects relative/symlink/group-writable executables, waits for an injected readiness probe before entering `running`, and bounds stdout/stderr through fixed-capacity ring buffers. Restart policy remains 1/2/4/8... seconds up to 60 seconds with a five-failures-per-10-minutes circuit breaker.
+
+This is still infrastructure, not approval to launch an arbitrary core. `core_supervision` remains false until a reproducible locked KaringX/sing-box artifact, deterministic config generation, authenticated local health probing, and apply-journal integration are all wired together.
+
 
 ## systemd user service
 

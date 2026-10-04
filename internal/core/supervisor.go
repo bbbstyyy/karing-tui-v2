@@ -37,11 +37,24 @@ type Runner interface {
 	Start(context.Context) (Process, error)
 }
 
+type Probe interface {
+	Ready(context.Context, Process) error
+}
+
+type ProbeFunc func(context.Context, Process) error
+
+func (f ProbeFunc) Ready(ctx context.Context, process Process) error {
+	return f(ctx, process)
+}
+
+var readyImmediately Probe = ProbeFunc(func(context.Context, Process) error { return nil })
+
 type Policy struct {
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
 	FailureWindow  time.Duration
 	MaxFailures    int
+	ReadyTimeout   time.Duration
 	StopTimeout    time.Duration
 }
 
@@ -51,6 +64,7 @@ func DefaultPolicy() Policy {
 		MaxBackoff:     60 * time.Second,
 		FailureWindow:  10 * time.Minute,
 		MaxFailures:    5,
+		ReadyTimeout:   10 * time.Second,
 		StopTimeout:    10 * time.Second,
 	}
 }
@@ -67,6 +81,9 @@ func (p Policy) Validate() error {
 	}
 	if p.MaxFailures < 1 {
 		return fmt.Errorf("%w: max failures must be positive", ErrInvalidPolicy)
+	}
+	if p.ReadyTimeout <= 0 {
+		return fmt.Errorf("%w: readiness timeout must be positive", ErrInvalidPolicy)
 	}
 	if p.StopTimeout <= 0 {
 		return fmt.Errorf("%w: stop timeout must be positive", ErrInvalidPolicy)
@@ -104,6 +121,7 @@ type processExit struct {
 
 type Supervisor struct {
 	runner Runner
+	probe  Probe
 	policy Policy
 
 	mu       sync.RWMutex
@@ -113,14 +131,22 @@ type Supervisor struct {
 }
 
 func NewSupervisor(runner Runner, policy Policy) (*Supervisor, error) {
+	return NewSupervisorWithProbe(runner, readyImmediately, policy)
+}
+
+func NewSupervisorWithProbe(runner Runner, probe Probe, policy Policy) (*Supervisor, error) {
 	if runner == nil {
 		return nil, errors.New("core runner is nil")
+	}
+	if probe == nil {
+		return nil, errors.New("core readiness probe is nil")
 	}
 	if err := policy.Validate(); err != nil {
 		return nil, err
 	}
 	return &Supervisor{
 		runner:   runner,
+		probe:    probe,
 		policy:   policy,
 		commands: make(chan command),
 		snapshot: Snapshot{State: StateStopped},
@@ -296,6 +322,27 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			scheduleRetry()
 			return
 		}
+
+		readyCtx, cancel := context.WithTimeout(ctx, s.policy.ReadyTimeout)
+		readyErr := s.probe.Ready(readyCtx, process)
+		cancel()
+		if readyErr != nil {
+			readyErr = fmt.Errorf("core readiness check failed: %w", readyErr)
+			if stopErr := stopBeforeRunning(process, s.policy.StopTimeout); stopErr != nil {
+				readyErr = errors.Join(readyErr, stopErr)
+			}
+			if recordFailure(readyErr) {
+				setSnapshot(func(snapshot *Snapshot) {
+					snapshot.State = StateFailed
+					snapshot.PID = 0
+					snapshot.NextRetryAt = time.Time{}
+				})
+				return
+			}
+			scheduleRetry()
+			return
+		}
+
 		current = process
 		setSnapshot(func(snapshot *Snapshot) {
 			snapshot.State = StateRunning
@@ -503,4 +550,34 @@ func Backoff(policy Policy, attempt int) time.Duration {
 		return policy.MaxBackoff
 	}
 	return delay
+}
+
+
+func stopBeforeRunning(process Process, timeout time.Duration) error {
+	if err := process.Terminate(); err != nil {
+		if killErr := process.Kill(); killErr != nil {
+			return errors.Join(err, killErr)
+		}
+	}
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- process.Wait() }()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-waitCh:
+		return nil
+	case <-timer.C:
+		if err := process.Kill(); err != nil {
+			return errors.Join(ErrStopTimeout, err)
+		}
+		timer.Reset(timeout)
+		select {
+		case <-waitCh:
+			return ErrStopTimeout
+		case <-timer.C:
+			return ErrStopTimeout
+		}
+	}
 }
