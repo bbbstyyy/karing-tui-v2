@@ -165,10 +165,7 @@ func (f *fakeDaemonCore) Snapshot() core.Snapshot {
 
 func TestCoreLifecycleAPIUpdatesPersistedIntentAndStatus(t *testing.T) {
 	ctx := context.Background()
-	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openServerTestStore(t, ctx)
 	defer store.Close()
 
 	fake := &fakeDaemonCore{snapshot: core.Snapshot{State: core.StateStopped}}
@@ -235,10 +232,7 @@ func TestCoreLifecycleAPIUpdatesPersistedIntentAndStatus(t *testing.T) {
 
 func TestCoreLifecycleAPIRejectsUnconfiguredRuntime(t *testing.T) {
 	ctx := context.Background()
-	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := openServerTestStore(t, ctx)
 	defer store.Close()
 
 	handler := New(runtimepath.Paths{}).handler(store, nil)
@@ -247,4 +241,17 @@ func TestCoreLifecycleAPIRejectsUnconfiguredRuntime(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("start without runtime status = %d, want 503", recorder.Code)
 	}
+}
+
+func openServerTestStore(t *testing.T, ctx context.Context) *storage.Store {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.Open(ctx, filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
