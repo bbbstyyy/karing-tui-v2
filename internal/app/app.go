@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/client"
 	"github.com/bbbstyyy/karing-tui-v2/internal/daemon"
@@ -26,6 +27,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "daemon":
 		return runDaemon(args[1:], stderr)
+	case "core":
+		return runCore(args[1:], stdout, stderr)
 	case "status":
 		return runStatus(args[1:], stdout, stderr)
 	case "capabilities":
@@ -66,6 +69,34 @@ func runDaemon(args []string, stderr io.Writer) int {
 	return 0
 }
 
+func runCore(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 || (args[0] != "start" && args[0] != "stop") {
+		fmt.Fprintln(stderr, "usage: karing-tui core <start|stop>")
+		return 2
+	}
+	paths, err := runtimepath.Resolve()
+	if err != nil {
+		fmt.Fprintf(stderr, "runtime paths: %v\n", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	api := client.New(paths.Socket)
+	switch args[0] {
+	case "start":
+		err = api.CoreStart(ctx)
+	case "stop":
+		err = api.CoreStop(ctx)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "core %s failed: %v\n", args[0], err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "core: %s\n", map[string]string{"start": "running", "stop": "stopped"}[args[0]])
+	return 0
+}
+
 func runStatus(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -88,7 +119,7 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(
 		stdout,
-		"daemon: running\napi: %s\nversion: %s\nrevision: %d\napplied generation: %s\nlast-known-good: %s\nrecovery required: %t\ndesired core: %s\ncore: %s\n",
+		"daemon: running\napi: %s\nversion: %s\nrevision: %d\napplied generation: %s\nlast-known-good: %s\nrecovery required: %t\ndesired core: %s\ncore configured: %t\ncore: %s\ncore pid: %d\ncore failures: %d\ncore circuit open: %t\n",
 		status.APIVersion,
 		status.DaemonVersion,
 		status.ConfigRevision,
@@ -96,8 +127,18 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 		formatGenerationID(status.LastKnownGoodGenerationID),
 		status.RecoveryRequired,
 		status.CoreDesiredState,
+		status.CoreConfigured,
 		status.CoreState,
+		status.CorePID,
+		status.CoreConsecutiveFailures,
+		status.CoreCircuitOpen,
 	)
+	if status.ActiveOperation != "" {
+		fmt.Fprintf(stdout, "active operation: %s\n", status.ActiveOperation)
+	}
+	if status.CoreLastError != "" {
+		fmt.Fprintf(stdout, "core error: %s\n", status.CoreLastError)
+	}
 	return 0
 }
 
@@ -141,6 +182,8 @@ func printUsage(w io.Writer) {
 
 Usage:
   karing-tui daemon run       run the management daemon in the foreground
+  karing-tui core start       start the confirmed applied core generation
+  karing-tui core stop        stop the managed core and persist stop intent
   karing-tui status [--json]  query daemon status over the Unix socket
   karing-tui capabilities     show implemented capability flags
   karing-tui version          show build version

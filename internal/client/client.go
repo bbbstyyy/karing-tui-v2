@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -12,7 +13,8 @@ import (
 )
 
 type Client struct {
-	httpClient *http.Client
+	queryClient   *http.Client
+	controlClient *http.Client
 }
 
 func New(socketPath string) *Client {
@@ -23,7 +25,8 @@ func New(socketPath string) *Client {
 		},
 	}
 	return &Client{
-		httpClient: &http.Client{Transport: transport, Timeout: 3 * time.Second},
+		queryClient:   &http.Client{Transport: transport, Timeout: 3 * time.Second},
+		controlClient: &http.Client{Transport: transport, Timeout: 20 * time.Second},
 	}
 }
 
@@ -43,21 +46,56 @@ func (c *Client) Capabilities(ctx context.Context) (apiv1.CapabilitiesResponse, 
 	return response, nil
 }
 
+func (c *Client) CoreStart(ctx context.Context) error {
+	return c.post(ctx, "/v1/core/start")
+}
+
+func (c *Client) CoreStop(ctx context.Context) error {
+	return c.post(ctx, "/v1/core/stop")
+}
+
 func (c *Client) get(ctx context.Context, path string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.queryClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("daemon returned %s", resp.Status)
+		return responseError(resp)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
 		return fmt.Errorf("decode daemon response: %w", err)
 	}
 	return nil
+}
+
+func (c *Client) post(ctx context.Context, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix"+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.controlClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return responseError(resp)
+	}
+	return nil
+}
+
+func responseError(resp *http.Response) error {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err == nil && len(body) != 0 {
+		var payload apiv1.ErrorResponse
+		if json.Unmarshal(body, &payload) == nil && payload.Error != "" {
+			return fmt.Errorf("daemon returned %s: %s", resp.Status, payload.Error)
+		}
+	}
+	return fmt.Errorf("daemon returned %s", resp.Status)
 }

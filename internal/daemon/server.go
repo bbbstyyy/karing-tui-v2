@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
+	"github.com/bbbstyyy/karing-tui-v2/internal/core"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 	"github.com/bbbstyyy/karing-tui-v2/internal/version"
@@ -59,36 +60,85 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("recover interrupted apply journal: %w", err)
 	}
 
+	daemonCtx, daemonCancel := context.WithCancel(ctx)
+	defer daemonCancel()
+
+	runtime, coreErrCh, coreCancel, err := buildServerRuntime(daemonCtx, store, s.paths)
+	if err != nil {
+		return fmt.Errorf("configure managed core runtime: %w", err)
+	}
+	if coreCancel != nil {
+		defer coreCancel()
+	}
+
 	httpServer := &http.Server{
-		Handler:           s.handler(store),
+		Handler:           s.handler(store, runtime),
 		ReadHeaderTimeout: 2 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
 
-	errCh := make(chan error, 1)
+	httpErrCh := make(chan error, 1)
 	go func() {
 		err := httpServer.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+			httpErrCh <- err
 			return
 		}
-		errCh <- nil
+		httpErrCh <- nil
 	}()
 
+	if runtime != nil {
+		go runtime.Restore(daemonCtx)
+	}
+
+	var (
+		cause    error
+		httpDone bool
+		coreDone bool
+	)
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown daemon API: %w", err)
+	case err := <-httpErrCh:
+		httpDone = true
+		cause = err
+	case err := <-coreErrCh:
+		coreDone = true
+		if ctx.Err() == nil {
+			if err == nil {
+				err = errors.New("core supervisor exited unexpectedly")
+			}
+			cause = fmt.Errorf("core supervisor engine: %w", err)
+		} else {
+			cause = err
 		}
-		return <-errCh
-	case err := <-errCh:
-		return err
 	}
+
+	daemonCancel()
+	if coreCancel != nil {
+		coreCancel()
+	}
+
+	if !httpDone {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		shutdownErr := httpServer.Shutdown(shutdownCtx)
+		cancel()
+		if shutdownErr != nil {
+			cause = errors.Join(cause, fmt.Errorf("shutdown daemon API: %w", shutdownErr))
+		}
+		if err := waitError(httpErrCh, 3*time.Second); err != nil {
+			cause = errors.Join(cause, fmt.Errorf("wait for daemon API shutdown: %w", err))
+		}
+	}
+
+	if coreErrCh != nil && !coreDone {
+		if err := waitError(coreErrCh, 12*time.Second); err != nil {
+			cause = errors.Join(cause, fmt.Errorf("wait for core supervisor shutdown: %w", err))
+		}
+	}
+	return cause
 }
 
-func (s *Server) handler(store *storage.Store) http.Handler {
+func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := store.Snapshot(r.Context()); err != nil {
@@ -104,7 +154,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 			return
 		}
 		now := time.Now().UTC()
-		writeJSON(w, http.StatusOK, apiv1.StatusResponse{
+		response := apiv1.StatusResponse{
 			APIVersion:                apiv1.Version,
 			DaemonVersion:             version.Version,
 			DaemonCommit:              version.Commit,
@@ -117,9 +167,24 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 			RecoveryRequired:          snapshot.RecoveryRequired,
 			CoreDesiredState:          string(snapshot.CoreDesiredState),
 			CoreState:                 "not-configured",
-		})
+		}
+		if runtime != nil {
+			coreSnapshot := runtime.Snapshot()
+			response.CoreConfigured = true
+			response.CoreState = string(coreSnapshot.State)
+			response.CorePID = coreSnapshot.PID
+			response.CoreCircuitOpen = coreSnapshot.CircuitOpen
+			response.CoreConsecutiveFailures = coreSnapshot.ConsecutiveFails
+			response.CoreLastError = coreSnapshot.LastError
+			if response.CoreLastError == "" {
+				response.CoreLastError = runtime.RestoreError()
+			}
+			response.ActiveOperation = runtime.ActiveOperation().Name
+		}
+		writeJSON(w, http.StatusOK, response)
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
+		coreEnabled := runtime != nil
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			APIVersion: apiv1.Version,
 			Capabilities: map[string]bool{
@@ -144,13 +209,14 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"generation_bound_runner":   true,
 				"managed_core_adapter":      true,
 				"operation_serialization":   true,
+				"core_runtime_options":      true,
 				"core_distribution":         false,
 				"lifecycle_coordinator":     true,
-				"core_lifecycle_api":        false,
+				"core_lifecycle_api":        coreEnabled,
 				"proxy_inbound_model":       true,
 				"mixed_inbound_probe":       true,
 				"bounded_core_log_buffer":   true,
-				"core_supervision":          false,
+				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,
 				"routing_ir":                false,
 				"cn_preset":                 false,
@@ -159,7 +225,63 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 			},
 		})
 	})
+	mux.HandleFunc("POST /v1/core/start", func(w http.ResponseWriter, r *http.Request) {
+		runCoreOperation(w, r, runtime, "start")
+	})
+	mux.HandleFunc("POST /v1/core/stop", func(w http.ResponseWriter, r *http.Request) {
+		runCoreOperation(w, r, runtime, "stop")
+	})
 	return mux
+}
+
+func runCoreOperation(w http.ResponseWriter, r *http.Request, runtime *serverRuntime, operation string) {
+	if runtime == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "core runtime is not configured"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Second)
+	defer cancel()
+
+	var err error
+	switch operation {
+	case "start":
+		err = runtime.Start(ctx)
+	case "stop":
+		err = runtime.Stop(ctx)
+	default:
+		writeJSON(w, http.StatusNotFound, apiv1.ErrorResponse{Error: "unknown core operation"})
+		return
+	}
+	if err == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, storage.ErrRecoveryRequired),
+		errors.Is(err, ErrNoAppliedGeneration),
+		errors.Is(err, core.ErrCircuitOpen):
+		status = http.StatusConflict
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusGatewayTimeout
+	}
+	writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
+}
+
+func waitError(ch <-chan error, timeout time.Duration) error {
+	if ch == nil {
+		return nil
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-ch:
+		return err
+	case <-timer.C:
+		return errors.New("timed out waiting for component shutdown")
+	}
 }
 
 func prepareSocket(path string) error {
