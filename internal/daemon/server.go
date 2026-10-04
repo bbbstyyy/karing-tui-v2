@@ -134,6 +134,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"core_supervisor_engine":  true,
 				"core_exec_runner":        true,
 				"core_readiness_gate":     true,
+				"core_clash_version_probe": true,
 				"bounded_core_log_buffer": true,
 				"core_supervision":        false,
 				"routing_ir":              false,

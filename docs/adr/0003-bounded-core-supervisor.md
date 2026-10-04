@@ -57,3 +57,12 @@ The supervisor now supports an injected readiness probe with a bounded 10 second
 The Linux `ExecRunner` starts the core in a dedicated process group and signals that owned group on graceful stop or force kill. It requires an absolute regular executable, rejects symlinks and executables writable by group/others, and does not search `PATH`.
 
 Child stdout/stderr can be connected to fixed-capacity `RingBuffer` writers so log volume cannot cause unbounded daemon-memory growth. The daemon advertises these pieces separately from the still-false product-level `core_supervision` capability.
+
+
+## Implementation refinement: authenticated local control probe
+
+The fixed KaringX/sing-box source at `9f020fcefd4c9655689d503abd11572f31365b5a` places `GET /version` behind its Clash API authentication middleware. With a configured secret, the middleware accepts only `Authorization: Bearer <secret>`. The fixed handler returns JSON containing a `sing-box ...` version string together with `premium: true` and `meta: true`.
+
+`internal/coreapi.ClashVersionProbe` implements that exact readiness contract. It requires a non-empty secret, accepts only an HTTP endpoint using a loopback IP literal and explicit port, disables environment proxy routing, refuses redirects, bounds the response body to 64 KiB, and validates the expected JSON shape before readiness can succeed.
+
+This probe is intentionally local. It does not test general Internet access or node reachability, so an external network outage cannot by itself become a supervisor restart trigger. A later M1 integration step must still verify the three expected proxy listeners and required local proxy behavior before an apply is committed.
