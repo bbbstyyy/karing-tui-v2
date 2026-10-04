@@ -112,6 +112,22 @@ file "$out"
 sha="$(sha256sum "$out" | awk '{print $1}')"
 echo "CORE_SHA256_LINUX_${arch^^}=$sha"
 
-if [[ "$arch" == "amd64" ]]; then
+expected_sha="$(jq -r --arg arch "$arch" '.build_verification[$arch + "_sha256"] // empty' "$lock")"
+if [[ -n "$expected_sha" && "$sha" != "$expected_sha" ]]; then
+  echo "core SHA-256 mismatch for $arch: got $sha, want $expected_sha" >&2
+  exit 1
+fi
+
+machine="$(uname -m)"
+native=0
+case "$arch:$machine" in
+  amd64:x86_64|arm64:aarch64|arm64:arm64)
+    native=1
+    ;;
+esac
+if [[ "$native" == "1" ]]; then
+  echo "CORE_NATIVE_RUNTIME_ARCH=$arch"
   "$repo_root/scripts/smoke-core-runtime.sh" "$out"
+else
+  echo "CORE_NATIVE_RUNTIME_SKIPPED=$arch-on-$machine"
 fi

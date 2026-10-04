@@ -52,3 +52,17 @@ This decision is accepted only if provenance proves:
 - shutdown by SIGTERM exits cleanly.
 
 Until those checks pass, `build_approved` remains false.
+
+
+## Provenance run #8 result
+
+Run #8 passed the project-owned entrypoint build on both architectures.
+
+Recorded candidate hashes:
+
+- linux/amd64: `829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569`
+- linux/arm64: `77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512`
+
+The amd64 job also passed the full ordinary-user runtime smoke: injected version, configuration check, process start, unauthenticated Clash API rejection, Bearer-authenticated `/version`, all three Mixed SOCKS5 greetings, and clean SIGTERM shutdown.
+
+The next provenance gate runs each architecture on a native hosted runner and requires the rebuilt binary to match the recorded SHA-256 before executing the same smoke. This closes the plan's "each architecture basic executability" requirement rather than treating an arm64 cross-build alone as execution evidence.
