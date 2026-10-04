@@ -64,6 +64,7 @@ Implemented now:
 - immutable candidate generations with SHA-256 identity and a 64 MiB compiled-config ceiling;
 - confirmed revision, applied generation, last-known-good generation, recovery-required state, and persisted core desired state (default `stopped`);
 - a one-at-a-time apply journal with prepare/activate/verify/rollback/commit phases;
+- an apply coordinator with bounded check/activate/verify/rollback steps, immutable previous-generation rollback, and fault-injection tests for check/start/verify/commit/rollback failures;
 - startup interruption recovery that blocks new applies when core reconciliation could be required;
 - a bounded core lifecycle state machine with explicit stop intent, exponential restart backoff and a failure-window circuit breaker;
 - a Linux process-group runner that rejects unsafe executable paths, plus readiness gating and fixed-capacity stdout/stderr buffers; concurrent bounded-log writes are exercised under the CI race detector;
@@ -74,4 +75,4 @@ Implemented now:
 - a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, and `auto_redirect` inbounds;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
-Still open before M1 can be called complete: exposing the lifecycle coordinator through explicit daemon API commands, wiring it and the implemented probes to a provenance-approved locked core artifact, compiling the three modeled inbounds with correct Rule/DIRECT/CurrentSelected semantics, deterministic restricted native-config compilation, local proxy-behavior verification beyond the control API, generation retention/garbage collection, database online-backup integration, and fault-injection coverage across the external core/SQLite transaction boundary.
+Still open before M1 can be called complete: exposing the lifecycle coordinator through explicit daemon API commands, wiring lifecycle/apply coordination and the implemented probes to a provenance-approved locked core artifact, compiling the three modeled inbounds with correct Rule/DIRECT/CurrentSelected semantics, deterministic restricted native-config compilation, local proxy-behavior verification beyond the control API, generation retention/garbage collection, database online-backup integration, and process-level crash/power-loss fault injection across the real external core/SQLite boundary.

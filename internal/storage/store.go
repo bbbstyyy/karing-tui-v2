@@ -292,6 +292,60 @@ func (s *Store) FinishRollback(ctx context.Context, attemptID int64) error {
 	return s.advance(ctx, attemptID, PhaseRollingBack, PhaseRolledBack, "")
 }
 
+func (s *Store) FailRollback(ctx context.Context, attemptID int64, cause string) error {
+	if cause == "" {
+		cause = "rollback failed"
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin failed rollback transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	attempt, err := readAttemptTx(ctx, tx, attemptID)
+	if err != nil {
+		return err
+	}
+	if attempt.Phase != PhaseRollingBack {
+		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, attempt.Phase, PhaseFailed)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	detail := "rollback failed: " + cause
+	result, err := tx.ExecContext(ctx, `
+		UPDATE apply_journal
+		SET phase = ?,
+			active_slot = NULL,
+			error = CASE WHEN error = '' THEN ? ELSE error || '; ' || ? END,
+			updated_at = ?
+		WHERE id = ? AND phase = ? AND active_slot = 1
+	`, PhaseFailed, detail, detail, now, attemptID, PhaseRollingBack)
+	if err != nil {
+		return fmt.Errorf("record failed rollback: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read failed rollback update result: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("%w: rollback attempt %d is no longer active", ErrInvalidTransition, attemptID)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE daemon_state
+		SET recovery_required = 1
+		WHERE singleton = 1
+	`); err != nil {
+		return fmt.Errorf("mark recovery required after failed rollback: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit failed rollback state: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) AbortPrepared(ctx context.Context, attemptID int64, cause string) error {
 	return s.advanceFromAny(ctx, attemptID, []Phase{PhasePrepared}, PhaseFailed, cause, true)
 }

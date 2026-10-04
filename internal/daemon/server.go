@@ -129,6 +129,8 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"proxy_only_import_guard":  true,
 				"sqlite_state":             true,
 				"apply_journal":            true,
+				"apply_coordinator":        true,
+				"managed_apply":            false,
 				"crash_recovery_state":     true,
 				"persisted_core_intent":    true,
 				"core_supervisor_engine":   true,

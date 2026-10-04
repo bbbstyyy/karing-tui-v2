@@ -54,6 +54,10 @@ The supervisor now has a Linux executable runner that creates a dedicated proces
 
 `internal/daemon.LifecycleCoordinator` now connects durable desired state to the supervisor contract with crash-oriented ordering: Start persists `running` before requesting a start; Stop persists `stopped` before stopping the process; restore refuses to start while apply recovery is unresolved. This coordinator is not exposed as a lifecycle API yet.
 
+`internal/daemon.ApplyCoordinator` now provides the matching configuration transaction skeleton. Candidate config is durably prepared, checked before activation, then journaled through activation and verification. Only a verified candidate advances the confirmed revision/LKG. Any post-activation failure attempts the immutable previous generation; a failed rollback marks `recovery_required` and blocks further applies. Every external core operation and state step has a deadline, and cleanup uses a bounded detached context so caller cancellation cannot silently leave a safe-to-close prepared attempt active.
+
+This remains an abstract core boundary: `managed_apply` stays false until the coordinator is wired to the provenance-approved core runner, deterministic compiler, and concrete local health probe.
+
 This is still infrastructure, not approval to launch an arbitrary core. `core_supervision` remains false until a reproducible locked KaringX/sing-box artifact, deterministic config generation, authenticated local health probing, and apply-journal integration are all wired together.
 
 
