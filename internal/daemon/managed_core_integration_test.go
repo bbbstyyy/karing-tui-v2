@@ -294,7 +294,7 @@ func integrationCoreConfig(t *testing.T, inbounds domain.InboundSet, controlPort
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(config), "set_system_proxy":true") {
+	if strings.Contains(string(config), "\"set_system_proxy\":true") {
 		t.Fatal("integration config unexpectedly enables system proxy mutation")
 	}
 	return config
