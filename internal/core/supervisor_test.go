@@ -261,17 +261,11 @@ func newTestSupervisor(t *testing.T, runner Runner, maxFailures int) *Supervisor
 
 func waitSupervisorRunning(t *testing.T, supervisor *Supervisor) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		supervisor.mu.RLock()
-		running := supervisor.running
-		supervisor.mu.RUnlock()
-		if running {
-			return
-		}
-		time.Sleep(time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := supervisor.WaitReady(ctx); err != nil {
+		t.Fatalf("supervisor run loop did not start: %v", err)
 	}
-	t.Fatal("supervisor run loop did not start")
 }
 
 func waitState(t *testing.T, supervisor *Supervisor, want State) {
@@ -382,5 +376,15 @@ func TestSupervisorCountsReadinessFailureTowardCircuitBreaker(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+
+func TestSupervisorWaitReadyHonorsContextBeforeRun(t *testing.T) {
+	supervisor := newTestSupervisor(t, &fakeRunner{}, 3)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if err := supervisor.WaitReady(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitReady error = %v, want deadline exceeded", err)
 	}
 }

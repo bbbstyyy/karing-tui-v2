@@ -34,6 +34,7 @@ type generationBinder interface {
 
 type supervisorEngine interface {
 	Run(context.Context) error
+	WaitReady(context.Context) error
 	Start(context.Context) error
 	Stop(context.Context) error
 	ResetCircuit(context.Context) error
@@ -129,6 +130,10 @@ func newManagedCore(
 
 func (m *ManagedCore) Run(ctx context.Context) error {
 	return m.supervisor.Run(ctx)
+}
+
+func (m *ManagedCore) WaitReady(ctx context.Context) error {
+	return m.supervisor.WaitReady(ctx)
 }
 
 func (m *ManagedCore) Snapshot() core.Snapshot {

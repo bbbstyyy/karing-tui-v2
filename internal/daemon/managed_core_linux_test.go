@@ -66,6 +66,10 @@ func (s *fakeSupervisor) Run(context.Context) error {
 	return nil
 }
 
+func (s *fakeSupervisor) WaitReady(context.Context) error {
+	return nil
+}
+
 func (s *fakeSupervisor) Start(context.Context) error {
 	s.starts++
 	s.snapshot = core.Snapshot{State: core.StateRunning, DesiredRunning: true, PID: 123}

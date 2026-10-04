@@ -127,6 +127,7 @@ type Supervisor struct {
 	mu       sync.RWMutex
 	snapshot Snapshot
 	running  bool
+	readyCh  chan struct{}
 	commands chan command
 }
 
@@ -149,6 +150,7 @@ func NewSupervisorWithProbe(runner Runner, probe Probe, policy Policy) (*Supervi
 		probe:    probe,
 		policy:   policy,
 		commands: make(chan command),
+		readyCh:  make(chan struct{}),
 		snapshot: Snapshot{State: StateStopped},
 	}, nil
 }
@@ -157,6 +159,23 @@ func (s *Supervisor) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.snapshot
+}
+
+func (s *Supervisor) WaitReady(ctx context.Context) error {
+	s.mu.RLock()
+	if s.running {
+		s.mu.RUnlock()
+		return nil
+	}
+	readyCh := s.readyCh
+	s.mu.RUnlock()
+
+	select {
+	case <-readyCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *Supervisor) Start(ctx context.Context) error {
@@ -208,10 +227,12 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return errors.New("core supervisor already running")
 	}
 	s.running = true
+	close(s.readyCh)
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
 		s.running = false
+		s.readyCh = make(chan struct{})
 		s.mu.Unlock()
 	}()
 
