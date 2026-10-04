@@ -87,3 +87,10 @@ Build approval is not sufficient to start an arbitrary executable with the same 
 Before future daemon wiring accepts a core path, the verifier requires an absolute path, opens the file with `O_NOFOLLOW`, verifies the opened descriptor is a regular executable not writable by group/others and owned by root or the current UID, hashes that same opened descriptor, and requires the exact locked architecture hash.
 
 This gate is implemented independently from `ExecRunner`; `core_supervision` remains false until the verifier, deterministic config generation, local health probe, supervisor, lifecycle coordinator, and apply journal are composed into one runtime.
+
+
+## Verified restart path
+
+`internal/core.VerifiedExecRunner` binds one `ExecConfig.Executable` to an artifact verifier and invokes the verifier on every `Start`, including supervisor crash restarts. Verification failure is fail-closed and does not execute the child.
+
+This prevents a future composition mistake where the daemon verifies one path but starts another, and prevents a replaced artifact from bypassing identity checks merely because the first launch was previously approved.
