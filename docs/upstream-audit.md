@@ -54,6 +54,7 @@ Implemented now:
 - a bounded core lifecycle state machine with explicit stop intent, exponential restart backoff and a failure-window circuit breaker;
 - a Linux process-group runner that rejects unsafe executable paths, plus readiness gating and fixed-capacity stdout/stderr buffers;
 - an authenticated loopback-only Clash `/version` probe validated against the fixed KaringX/sing-box source, including Bearer auth and the expected `sing-box`/`premium`/`meta` response contract;
+- a first-class Rule/Direct/Selected inbound model with the plan defaults, strict loopback/distinct-port validation, and a SOCKS5 greeting probe for expected Mixed listeners;
 - explicit capability flags that keep incomplete M1/M2 features false;
 - a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, and `auto_redirect` inbounds;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
