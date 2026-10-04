@@ -153,7 +153,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"cn_preset":                 false,
 				"subscriptions":             false,
 				"tui":                       false,
-			}
+			},
 		})
 	})
 	return mux
