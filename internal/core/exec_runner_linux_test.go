@@ -47,7 +47,6 @@ func TestRingBufferKeepsNewestBytes(t *testing.T) {
 	}
 }
 
-
 func TestRingBufferConcurrentWritersRemainBounded(t *testing.T) {
 	const capacity = 4096
 	buffer := NewRingBuffer(capacity)
