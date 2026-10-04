@@ -18,7 +18,7 @@ import (
 )
 
 func TestGenerationRunnerRequiresBoundConfig(t *testing.T) {
-	executable := writeExecutableFixture(t, "#!/bin/sh\nexit 0\n")
+	executable := writeGenerationRunnerExecutableFixture(t, "#!/bin/sh\nexit 0\n")
 	runner, err := NewGenerationRunner(executable, func(string) error { return nil }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -29,8 +29,8 @@ func TestGenerationRunnerRequiresBoundConfig(t *testing.T) {
 }
 
 func TestGenerationRunnerStartsBoundConfigThroughVerifier(t *testing.T) {
-	executable := writeExecutableFixture(t, "#!/bin/sh\nif [ \"$1\" != \"run\" ] || [ \"$2\" != \"-c\" ] || [ ! -f \"$3\" ]; then\n  exit 42\nfi\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n")
-	configPath, configSHA := writeConfigFixture(t)
+	executable := writeGenerationRunnerExecutableFixture(t, "#!/bin/sh\nif [ \"$1\" != \"run\" ] || [ \"$2\" != \"-c\" ] || [ ! -f \"$3\" ]; then\n  exit 42\nfi\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n")
+	configPath, configSHA := writeGenerationRunnerConfigFixture(t)
 	var verifies atomic.Int32
 	runner, err := NewGenerationRunner(executable, func(path string) error {
 		if path != executable {
@@ -64,8 +64,8 @@ func TestGenerationRunnerStartsBoundConfigThroughVerifier(t *testing.T) {
 }
 
 func TestGenerationRunnerDetectsConfigTamperBeforeStart(t *testing.T) {
-	executable := writeExecutableFixture(t, "#!/bin/sh\nexit 0\n")
-	configPath, configSHA := writeConfigFixture(t)
+	executable := writeGenerationRunnerExecutableFixture(t, "#!/bin/sh\nexit 0\n")
+	configPath, configSHA := writeGenerationRunnerConfigFixture(t)
 	runner, err := NewGenerationRunner(executable, func(string) error { return nil }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +82,8 @@ func TestGenerationRunnerDetectsConfigTamperBeforeStart(t *testing.T) {
 }
 
 func TestCheckGenerationConfigUsesVerifierAndExactPath(t *testing.T) {
-	executable := writeExecutableFixture(t, "#!/bin/sh\nif [ \"$1\" != \"check\" ] || [ \"$2\" != \"-c\" ] || [ ! -f \"$3\" ]; then\n  exit 43\nfi\nexit 0\n")
-	configPath, configSHA := writeConfigFixture(t)
+	executable := writeGenerationRunnerExecutableFixture(t, "#!/bin/sh\nif [ \"$1\" != \"check\" ] || [ \"$2\" != \"-c\" ] || [ ! -f \"$3\" ]; then\n  exit 43\nfi\nexit 0\n")
+	configPath, configSHA := writeGenerationRunnerConfigFixture(t)
 	var verifies atomic.Int32
 	var stderr strings.Builder
 	if err := CheckGenerationConfig(context.Background(), executable, func(string) error {
@@ -98,13 +98,13 @@ func TestCheckGenerationConfigUsesVerifierAndExactPath(t *testing.T) {
 }
 
 func TestGenerationRunnerRejectsSymlinkAndPermissiveConfig(t *testing.T) {
-	executable := writeExecutableFixture(t, "#!/bin/sh\nexit 0\n")
+	executable := writeGenerationRunnerExecutableFixture(t, "#!/bin/sh\nexit 0\n")
 	runner, err := NewGenerationRunner(executable, func(string) error { return nil }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	target, targetSHA := writeConfigFixture(t)
+	target, targetSHA := writeGenerationRunnerConfigFixture(t)
 	link := filepath.Join(t.TempDir(), "config-link.json")
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestGenerationRunnerRejectsSymlinkAndPermissiveConfig(t *testing.T) {
 	}
 }
 
-func writeExecutableFixture(t *testing.T, content string) string {
+func writeGenerationRunnerExecutableFixture(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "core")
 	if err := os.WriteFile(path, []byte(content), 0o500); err != nil {
@@ -136,7 +136,7 @@ func writeExecutableFixture(t *testing.T, content string) string {
 	return path
 }
 
-func writeConfigFixture(t *testing.T) (string, string) {
+func writeGenerationRunnerConfigFixture(t *testing.T) (string, string) {
 	t.Helper()
 	content := []byte("{}")
 	path := filepath.Join(t.TempDir(), "config.json")
