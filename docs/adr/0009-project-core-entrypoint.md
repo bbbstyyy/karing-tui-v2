@@ -78,3 +78,12 @@ Core-provenance run #9 completed successfully for both native Linux architecture
 Both native runners passed the project-owned entrypoint's ordinary-user `version`, config `check`, `run`, authenticated Clash `/version`, all three Mixed SOCKS5 listener probes, and SIGTERM shutdown. The lock file therefore sets `build_approved=true` for this narrow M1 standalone Linux artifact scope.
 
 This approval does not enable daemon `core_supervision`; process wiring, generated config activation, apply rollback, crash recovery, and behavior-level route verification remain separate integration gates.
+
+
+## Runtime artifact identity gate
+
+Build approval is not sufficient to start an arbitrary executable with the same filename. `internal/coreartifact` pins the run #9 SHA-256 values per Linux architecture.
+
+Before future daemon wiring accepts a core path, the verifier requires an absolute path, opens the file with `O_NOFOLLOW`, verifies the opened descriptor is a regular executable not writable by group/others and owned by root or the current UID, hashes that same opened descriptor, and requires the exact locked architecture hash.
+
+This gate is implemented independently from `ExecRunner`; `core_supervision` remains false until the verifier, deterministic config generation, local health probe, supervisor, lifecycle coordinator, and apply journal are composed into one runtime.

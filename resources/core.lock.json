@@ -1,5 +1,5 @@
 {
-  "schema": 10,
+  "schema": 11,
   "source_repository": "https://github.com/KaringX/sing-box",
   "candidate_ref": "karing_v1.13.19",
   "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
@@ -136,5 +136,25 @@
       "Clash PUT /configs as a full-reload contract",
       "production daemon/core wiring before apply/recovery integration tests"
     ]
-  }
+  },
+  "artifact_verifier": {
+    "package": "internal/coreartifact",
+    "candidate_version": "karing-tui-v2-core-1.13.19-beddeaba",
+    "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
+    "linux_amd64_sha256": "829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569",
+    "linux_arm64_sha256": "77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512",
+    "policy": [
+      "absolute path only",
+      "open with O_NOFOLLOW",
+      "regular executable file only",
+      "reject group/other-writable artifact",
+      "owner must be root or current uid",
+      "hash the opened file descriptor and require exact architecture SHA-256"
+    ]
+  },
+  "distribution_approved": false,
+  "distribution_blockers": [
+    "project/upstream/resource license closure is still open",
+    "release packaging and offline source/license manifest are not complete"
+  ]
 }
