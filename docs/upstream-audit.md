@@ -38,7 +38,7 @@ At this candidate, the upstream build workflow pins Go **1.25.12**. The project 
 - appended `with_karing,with_shadowsocksr`, required by the fork's own guarded packages;
 - a fixed linker-injected version string instead of the Makefile's `read_tag@latest`.
 
-`scripts/verify-core-build.sh` and `.github/workflows/core-provenance.yml` build amd64 and arm64 but do not publish artifacts. Provenance run #5 successfully produced both binaries and fixed SHA-256 values; the amd64 job failed only after the build because the Karing-tagged CLI requires `--service-config` even for `version`. The next gate therefore runs `scripts/smoke-core-runtime.sh` with a private temporary service-config, then validates config parsing, authenticated loopback Clash API, all three fixed Mixed listeners, and clean shutdown. `build_approved` remains false until that runtime smoke passes.
+`scripts/verify-core-build.sh` and `.github/workflows/core-provenance.yml` build amd64 and arm64 but do not publish artifacts. Provenance run #5 successfully produced both binaries, but source inspection then found a disqualifying Linux behavior under `with_karing`: `cmd/sing-box/extension_process_linux.go` enumerates processes with the same executable basename and calls Terminate/Kill on them from the CLI pre-run path. Those hashes are retained only as rejected evidence. The safe reference build now forbids `with_karing`, keeps the upstream base tags, appends only `with_shadowsocksr`, and reruns ordinary-user `version/check/run`, authenticated loopback Clash API, three fixed Mixed listeners, and clean shutdown. `build_approved` remains false until that safe path passes.
 
 ### Clash API full reload remains untrusted
 

@@ -80,6 +80,10 @@ actual_tags="$base_tags"
 if [[ -n "$extra_tags" ]]; then
   actual_tags="$actual_tags,$extra_tags"
 fi
+if [[ ",$actual_tags," == *",with_karing,"* ]]; then
+  echo "unsafe Linux core tag with_karing is forbidden" >&2
+  exit 1
+fi
 echo "CORE_BUILD_TAGS=$actual_tags"
 
 actual_ldflags="$(cat release/LDFLAGS)"

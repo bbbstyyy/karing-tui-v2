@@ -1,5 +1,5 @@
 {
-  "schema": 6,
+  "schema": 7,
   "source_repository": "https://github.com/KaringX/sing-box",
   "candidate_ref": "karing_v1.13.19",
   "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
@@ -26,13 +26,14 @@
     "version_command": "go run github.com/sagernet/sing-box/cmd/internal/read_tag@latest"
   },
   "karing_build_tag_evidence": {
-    "required_extra_tags": [
-      "with_karing",
-      "with_shadowsocksr"
+    "tag": "with_karing",
+    "allowed_in_linux_daemon_core": false,
+    "rejection_reason": "on Linux, cmd/sing-box/extension_process_linux.go makeProcessSingleton enumerates processes with the same executable basename and terminates/kills them during PersistentPreRunE; this violates T19 and the daemon ownership boundary",
+    "source_files": [
+      "cmd/sing-box/cmd_extension_karing.go",
+      "cmd/sing-box/extension_process_linux.go"
     ],
-    "with_karing_reason": "shared Karing packages such as common/debug are compiled only under with_karing and are referenced by Karing paths",
-    "with_shadowsocksr_reason": "include/registry.go imports and registers protocol/shadowsocksr while its implementation is guarded by with_shadowsocksr",
-    "present_in_default_make_tags": false
+    "policy": "do not build the daemon-managed standalone core with with_karing"
   },
   "reference_linux_cli_build": {
     "go_version": "1.25.12",
@@ -46,17 +47,15 @@
     ],
     "tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
     "extra_tags": [
-      "with_karing",
       "with_shadowsocksr"
     ],
-    "tags_strategy": "use the candidate's default tag file unchanged as the base and append only the two fork-required tags",
+    "tags_strategy": "use release/DEFAULT_BUILD_TAGS_OTHERS unchanged as the base and append only with_shadowsocksr; explicitly exclude with_karing on Linux",
     "ldflags_file": "release/LDFLAGS",
     "version_value": "karing-tui-v2-core-1.13.19-beddeaba",
     "version_strategy": "inject a fixed constant.Version with -ldflags; never invoke the Makefile read_tag@latest helper",
     "verification_script": "scripts/verify-core-build.sh",
     "workflow": ".github/workflows/core-provenance.yml",
-    "service_config_required": true,
-    "service_config_reason": "with_karing selects cmd_extension_karing.go, whose PersistentPreRunE loads --service-config before version/check/run",
+    "service_config_required": false,
     "runtime_smoke_script": "scripts/smoke-core-runtime.sh"
   },
   "rejected_candidates": [
@@ -79,22 +78,26 @@
     }
   ],
   "build_verification": {
-    "status": "binary_builds_succeeded_runtime_smoke_pending",
-    "provenance_run": 5,
-    "linux_amd64_sha256": "5b4e95ec70ef853063b05f58adf11c66a3bd7894818486ae5996e7877b591f42",
-    "linux_arm64_sha256": "4af4440a99f8408f515f4906ac92ee123811eb6a3c63ac5bd17e8f98dd0841b4",
-    "amd64_build_succeeded": true,
-    "arm64_build_succeeded": true,
-    "amd64_job_failure_after_build": "bare version command rejected because with_karing requires --service-config",
+    "status": "safe_build_retry_pending",
+    "linux_amd64_sha256": null,
+    "linux_arm64_sha256": null,
     "ordinary_uid_version_smoke": false,
     "config_check_smoke": false,
     "local_clash_api_smoke": false,
-    "mixed_inbound_smoke": false
+    "mixed_inbound_smoke": false,
+    "unsafe_with_karing_build_evidence": {
+      "provenance_run": 5,
+      "linux_amd64_sha256": "5b4e95ec70ef853063b05f58adf11c66a3bd7894818486ae5996e7877b591f42",
+      "linux_arm64_sha256": "4af4440a99f8408f515f4906ac92ee123811eb6a3c63ac5bd17e8f98dd0841b4",
+      "accepted": false,
+      "reason": "with_karing Linux CLI may terminate unrelated same-basename processes"
+    }
   },
   "build_approved": false,
   "reasons": [
-    "ordinary-UID service-config version/check/run smoke has not yet completed",
-    "authenticated local Clash API and all three configured Mixed listeners have not yet been exercised against the built artifact",
+    "the safe standalone build without with_karing has not yet passed amd64/arm64 provenance",
+    "safe-build binary hashes have not yet been recorded",
+    "ordinary-UID version/check/run, authenticated local Clash API, and three Mixed listeners have not yet passed against the safe build",
     "PUT /configs must not be treated as a verified full reload contract without runtime evidence"
   ]
 }
