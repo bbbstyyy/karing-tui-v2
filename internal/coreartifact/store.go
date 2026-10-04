@@ -123,24 +123,38 @@ func (s *Store) ConfigPath(generationID int64) (string, error) {
 	return filepath.Join(s.root, "generations", strconv.FormatInt(generationID, 10), "config.json"), nil
 }
 
-func verifyExistingConfig(path, expected string) (string, error) {
+func VerifyGenerationConfig(path, expectedSHA256 string) error {
+	expected, err := normalizeSHA256(expectedSHA256)
+	if err != nil {
+		return err
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", fmt.Errorf("inspect existing generation config: %w", err)
+		return fmt.Errorf("inspect generation config: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("%w: existing generation config is not a regular file", ErrUnsafeGenerationPath)
+		return fmt.Errorf("%w: generation config is not a regular file", ErrUnsafeGenerationPath)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("%w: generation config mode %04o is too permissive", ErrUnsafeGenerationPath, info.Mode().Perm())
+		return fmt.Errorf("%w: generation config mode %04o is too permissive", ErrUnsafeGenerationPath, info.Mode().Perm())
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read existing generation config: %w", err)
+		return fmt.Errorf("read generation config: %w", err)
 	}
 	sum := sha256.Sum256(content)
 	if hex.EncodeToString(sum[:]) != expected {
-		return "", ErrGenerationImmutable
+		return ErrConfigHashMismatch
+	}
+	return nil
+}
+
+func verifyExistingConfig(path, expected string) (string, error) {
+	if err := VerifyGenerationConfig(path, expected); err != nil {
+		if errors.Is(err, ErrConfigHashMismatch) {
+			return "", ErrGenerationImmutable
+		}
+		return "", err
 	}
 	return path, nil
 }
