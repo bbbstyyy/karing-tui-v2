@@ -117,7 +117,6 @@ func TestStoreRejectsPermissiveExistingGenerationDirectory(t *testing.T) {
 	}
 }
 
-
 func TestVerifyGenerationConfigRejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.json")
