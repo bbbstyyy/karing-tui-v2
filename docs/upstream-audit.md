@@ -12,7 +12,7 @@ This file records implementation-relevant facts that must remain explicit while 
 
 ## Confirmed blockers and constraints
 
-### Sibling source revisions are locked; the actual Karing build recipe is still blocked
+### Sibling source revisions are locked; standalone Linux reference build is identified
 
 The fixed KaringX/sing-box `go.mod` declares Go `1.25.5` and uses six active local sibling replacements. Each active replacement has a commented KaringX pseudo-version immediately above it. The embedded commit IDs were verified to exist in the corresponding repositories and their `go.mod` module paths match the replaced Sagernet module path.
 
@@ -25,14 +25,21 @@ The fixed KaringX/sing-box `go.mod` declares Go `1.25.5` and uses six active loc
 | `github.com/sagernet/wireguard-go` | `KaringX/wireguard-go@7d2d140c511350001d0152228b5b0792d7263169` |
 | `github.com/sagernet/tailscale` | `KaringX/tailscale@7007033a39f94fe88a693fb6b79ffb57de5f9d23` |
 
-These revisions are now recorded in `resources/core.lock.json`, so "unknown sibling revision" is no longer a blocker by itself. The workspace still must preserve the `<workspace>/KaringX/<repository>` layout required by the fixed local replace paths.
+These revisions are recorded in `resources/core.lock.json`, and the verification script recreates the required `<workspace>/KaringX/<repository>` layout.
 
-The build is **still not approved**. At the fixed commit, `Makefile` loads `release/DEFAULT_BUILD_TAGS_OTHERS`, but those default tags do not include `with_karing`. Meanwhile the Karing-specific CLI and Clash API extension files are guarded by `//go:build with_karing`. The Makefile also derives its version with `go run github.com/sagernet/sing-box/cmd/internal/read_tag@latest`, which is not reproducibly pinned. The actual Karing release build recipe, exact tags/tool version, Linux amd64/arm64 hashes and behavior checks therefore remain mandatory blockers.
+The fixed source also contains stronger standalone-build evidence than the Makefile alone. Its `.github/workflows/build.yml` uses Go **1.26.7** and builds Linux purego with `CGO_ENABLED=0`, `release/DEFAULT_BUILD_TAGS_OTHERS`, `release/LDFLAGS`, `-trimpath`, and an empty build ID. The upstream workflow does **not** add `with_karing` for that standalone binary.
+
+Karing-specific command/Clash extension files are guarded by `with_karing`, but this project does not depend on those app-specific extension endpoints for the first Linux standalone core: lifecycle, configuration transactions, and local health are owned by our daemon. This is a deliberate boundary, not a claim that the Karing app's private/local `vpn-service` build is reproduced.
+
+The fixed Makefile still uses `go run .../read_tag@latest` for version calculation. Our reference build does not invoke that helper: it injects a fixed `constant.Version` value through the same linker variable used by the upstream workflow.
+
+`scripts/verify-core-build.sh` and `.github/workflows/core-provenance.yml` now exercise the locked pure-Go build for Linux amd64 and arm64. They do not publish the binaries. Until both builds succeed, hashes are recorded, and ordinary-UID runtime/config/API/Mixed-listener behavior is verified, `resources/core.lock.json` remains `build_approved=false`.
 
 Sources:
 - <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/go.mod>
-- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/Makefile>
+- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/.github/workflows/build.yml>
 - <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/release/DEFAULT_BUILD_TAGS_OTHERS>
+- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/release/LDFLAGS>
 
 ### Clash API `/configs` is not a full hot-reload contract at this baseline
 

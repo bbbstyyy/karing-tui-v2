@@ -67,7 +67,7 @@ A sample unit is in [`packaging/systemd/karing-tui-v2.service`](packaging/system
 
 ## Upstream/core status
 
-The candidate core is **not yet approved for production builds**. See [`docs/upstream-audit.md`](docs/upstream-audit.md) and [`resources/core.lock.json`](resources/core.lock.json) for the current M0 blockers. The six local sibling `replace` revisions are now commit-pinned, but the real Karing build recipe is still unresolved because Karing extension files require `with_karing` while the fixed Makefile default tags omit it, and the Makefile still invokes a version helper with `@latest`. The inspected `/configs` PUT handler also remains non-reload evidence.
+The candidate core is **not yet approved for production builds**, but the standalone Linux CLI build path is now concrete. At the fixed core commit, the upstream `.github/workflows/build.yml` builds Linux purego with Go 1.26.7, `CGO_ENABLED=0`, `release/DEFAULT_BUILD_TAGS_OTHERS`, and the locked shared ldflags. Karing-only files guarded by `with_karing` are app/extension functionality and are not required by that standalone reference build. Our provenance workflow clones all six local sibling replacements at locked commits and reproduces this amd64/arm64 path without using the Makefile's `@latest` version helper. Build hashes and runtime behavior still have to pass before `build_approved` can become true. See [`docs/upstream-audit.md`](docs/upstream-audit.md) and [`resources/core.lock.json`](resources/core.lock.json).
 
 ## License
 

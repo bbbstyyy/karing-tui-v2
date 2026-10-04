@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "source_repository": "https://github.com/KaringX/sing-box",
   "candidate_ref": "karing_v1.14.0",
   "candidate_commit": "9f020fcefd4c9655689d503abd11572f31365b5a",
@@ -65,14 +65,49 @@
       "cmd/sing-box/cmd_run_extension_karing.go",
       "experimental/clashapi/api_extension_karing.go"
     ],
-    "present_in_default_make_tags": false
+    "present_in_default_make_tags": false,
+    "standalone_linux_reference_requires_tag": false,
+    "project_decision": "The Linux TUI uses a standalone core process and does not depend on Karing app FFI/extension endpoints guarded by with_karing. Karing-specific extensions remain compatibility evidence, not a prerequisite for the first standalone Linux core build."
   },
   "build_approved": false,
   "reasons": [
-    "the actual Karing release build recipe is not yet identified: Karing extension files require with_karing, but the fixed Makefile default tags do not include it",
-    "the fixed Makefile derives the version through a go run ...@latest command, so the build tool dependency is not reproducibly pinned",
-    "resulting linux amd64/arm64 binary hashes and behavior checks are not yet recorded",
+    "the locked amd64/arm64 pure-Go build workflow has not yet completed and its output hashes have not yet been recorded",
+    "ordinary-UID runtime behavior, config check, authenticated local Clash API, and three Mixed listener behavior have not yet all been exercised against the built artifact",
     "the fixed source still requires the pinned sibling workspace layout rather than a standalone checkout",
     "PUT /configs at the fixed candidate is not a verified full configuration reload mechanism"
-  ]
+  ],
+  "fixed_upstream_workflow_evidence": {
+    "path": ".github/workflows/build.yml",
+    "go_version": "1.26.7",
+    "linux_purego": {
+      "cgo_enabled": false,
+      "tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
+      "command": "go build -v -trimpath -o dist/sing-box -tags \"${BUILD_TAGS}\" -ldflags \"-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=\" ./cmd/sing-box"
+    }
+  },
+  "reference_linux_cli_build": {
+    "go_version": "1.26.7",
+    "mode": "purego",
+    "cgo_enabled": false,
+    "goos": "linux",
+    "architectures": [
+      "amd64",
+      "arm64"
+    ],
+    "tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
+    "ldflags_file": "release/LDFLAGS",
+    "version_value": "karing-tui-v2-core-1.14.0-9f020fce",
+    "version_strategy": "inject a fixed constant.Version with -ldflags; do not invoke the Makefile read_tag@latest helper",
+    "verification_script": "scripts/verify-core-build.sh",
+    "workflow": ".github/workflows/core-provenance.yml"
+  },
+  "build_verification": {
+    "status": "pending_ci",
+    "linux_amd64_sha256": null,
+    "linux_arm64_sha256": null,
+    "ordinary_uid_version_smoke": false,
+    "config_check_smoke": false,
+    "local_clash_api_smoke": false,
+    "mixed_inbound_smoke": false
+  }
 }
