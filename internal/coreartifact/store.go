@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,7 +27,7 @@ func NewStore(root string) (*Store, error) {
 	if root == "" || !filepath.IsAbs(root) {
 		return nil, errors.New("generation store root must be an absolute path")
 	}
-	return &Store{root: root}, nil
+	return &Store{root: filepath.Clean(root)}, nil
 }
 
 func (s *Store) Stage(ctx context.Context, generationID int64, config []byte, expectedSHA256 string) (string, error) {
@@ -59,10 +60,7 @@ func (s *Store) Stage(ctx context.Context, generationID int64, config []byte, ex
 	}
 	configPath := filepath.Join(generationDir, "config.json")
 
-	if info, err := os.Lstat(configPath); err == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("%w: existing config is not a regular file", ErrUnsafeGenerationPath)
-		}
+	if _, err := os.Lstat(configPath); err == nil {
 		return verifyExistingConfig(configPath, expected)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("inspect generation config: %w", err)
@@ -110,8 +108,10 @@ func (s *Store) Stage(ctx context.Context, generationID int64, config []byte, ex
 	}
 	cleanup = false
 
-	if err := syncDir(generationDir); err != nil {
-		return "", err
+	for _, dir := range []string{generationDir, generationsDir, s.root} {
+		if err := syncDir(dir); err != nil {
+			return "", err
+		}
 	}
 	return configPath, nil
 }
@@ -128,22 +128,40 @@ func VerifyGenerationConfig(path, expectedSHA256 string) error {
 	if err != nil {
 		return err
 	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("inspect generation config: %w", err)
+	if path == "" || !filepath.IsAbs(path) {
+		return fmt.Errorf("%w: generation config path must be absolute", ErrUnsafeGenerationPath)
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("%w: open generation config without following symlink: %v", ErrUnsafeGenerationPath, err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		_ = syscall.Close(fd)
+		return errors.New("wrap generation config file descriptor")
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect opened generation config: %w", err)
+	}
+	if !info.Mode().IsRegular() {
 		return fmt.Errorf("%w: generation config is not a regular file", ErrUnsafeGenerationPath)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("%w: generation config mode %04o is too permissive", ErrUnsafeGenerationPath, info.Mode().Perm())
 	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read generation config: %w", err)
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) != os.Getuid() {
+		return fmt.Errorf("%w: generation config owner uid %d is not current uid %d", ErrUnsafeGenerationPath, stat.Uid, os.Getuid())
 	}
-	sum := sha256.Sum256(content)
-	if hex.EncodeToString(sum[:]) != expected {
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return fmt.Errorf("hash generation config: %w", err)
+	}
+	if hex.EncodeToString(hasher.Sum(nil)) != expected {
 		return ErrConfigHashMismatch
 	}
 	return nil
@@ -189,11 +207,11 @@ func ensurePrivateDir(path string) error {
 func syncDir(path string) error {
 	dir, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("open directory for sync: %w", err)
+		return fmt.Errorf("open directory %s for sync: %w", path, err)
 	}
 	defer dir.Close()
 	if err := dir.Sync(); err != nil {
-		return fmt.Errorf("sync generation directory: %w", err)
+		return fmt.Errorf("sync directory %s: %w", path, err)
 	}
 	return nil
 }

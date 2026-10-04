@@ -116,3 +116,40 @@ func TestStoreRejectsPermissiveExistingGenerationDirectory(t *testing.T) {
 		t.Fatalf("permissive generation directory error = %v", err)
 	}
 }
+
+
+func TestVerifyGenerationConfigRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	content := []byte(`{}`)
+	if err := os.WriteFile(target, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	if err := VerifyGenerationConfig(link, hex.EncodeToString(sum[:])); !errors.Is(err, ErrUnsafeGenerationPath) {
+		t.Fatalf("symlink generation config error = %v", err)
+	}
+}
+
+func TestVerifyGenerationConfigRejectsPermissiveMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	content := []byte(`{}`)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	if err := VerifyGenerationConfig(path, hex.EncodeToString(sum[:])); !errors.Is(err, ErrUnsafeGenerationPath) {
+		t.Fatalf("permissive config error = %v", err)
+	}
+}
+
+func TestVerifyGenerationConfigRequiresAbsolutePath(t *testing.T) {
+	sum := sha256.Sum256(nil)
+	if err := VerifyGenerationConfig("config.json", hex.EncodeToString(sum[:])); !errors.Is(err, ErrUnsafeGenerationPath) {
+		t.Fatalf("relative generation config error = %v", err)
+	}
+}
