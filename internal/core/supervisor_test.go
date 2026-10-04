@@ -298,7 +298,6 @@ func waitStarts(t *testing.T, runner *fakeRunner, want int) {
 	t.Fatalf("runner starts = %d, want >= %d", runner.Starts(), want)
 }
 
-
 func TestSupervisorWaitsForReadinessBeforeRunning(t *testing.T) {
 	runner := &fakeRunner{}
 	gate := make(chan struct{})

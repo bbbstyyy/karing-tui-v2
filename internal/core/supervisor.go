@@ -552,7 +552,6 @@ func Backoff(policy Policy, attempt int) time.Duration {
 	return delay
 }
 
-
 func stopBeforeRunning(process Process, timeout time.Duration) error {
 	if err := process.Terminate(); err != nil {
 		if killErr := process.Kill(); killErr != nil {
