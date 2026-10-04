@@ -54,7 +54,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.APIVersion != "v1" || status.CoreState != "not-configured" || status.ConfigRevision != 0 || status.RecoveryRequired {
+	if status.APIVersion != "v1" || status.CoreState != "not-configured" || status.CoreDesiredState != "stopped" || status.ConfigRevision != 0 || status.RecoveryRequired {
 		t.Fatalf("unexpected status: %+v", status)
 	}
 
@@ -62,7 +62,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !caps.Capabilities["daemon"] || !caps.Capabilities["sqlite_state"] || !caps.Capabilities["apply_journal"] || caps.Capabilities["routing_ir"] {
+	if !caps.Capabilities["daemon"] || !caps.Capabilities["sqlite_state"] || !caps.Capabilities["apply_journal"] || !caps.Capabilities["persisted_core_intent"] || caps.Capabilities["routing_ir"] {
 		t.Fatalf("unexpected capabilities: %+v", caps.Capabilities)
 	}
 

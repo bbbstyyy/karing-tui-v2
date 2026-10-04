@@ -59,3 +59,12 @@ Compiled generation JSON is currently capped at 64 MiB. Generation retention/gar
 - Core activation can be implemented as external actions between journal phase transitions.
 - Recovery state is visible even before core supervision exists.
 - SQLite migration, backup and retention policy remain explicit engineering surfaces rather than hidden file replacement behavior.
+
+
+## Schema v2: persist lifecycle intent separately from configuration revision
+
+The singleton daemon state now stores `core_desired_state` with only two valid values: `stopped` and `running`. The default is `stopped`.
+
+This is operational intent, not configuration content. Updating it therefore does not increment `config_revision`, create a generation, or touch the apply journal. An explicit stop can survive a daemon restart without being confused with a failed start or an interrupted apply.
+
+The persistence primitive is implemented before lifecycle API wiring. Until the real core artifact and lifecycle endpoints are integrated, the daemon exposes the persisted value through status but does not automatically launch a core merely because the value is `running`.

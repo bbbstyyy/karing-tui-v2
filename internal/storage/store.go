@@ -29,6 +29,8 @@ var (
 	ErrInvalidTransition = errors.New("invalid apply journal transition")
 )
 
+var ErrInvalidCoreDesiredState = errors.New("invalid core desired state")
+
 type Phase string
 
 const (
@@ -42,11 +44,17 @@ const (
 	PhaseInterrupted Phase = "interrupted"
 )
 
+type CoreDesiredState string
+
+const CoreDesiredStopped CoreDesiredState = "stopped"
+const CoreDesiredRunning CoreDesiredState = "running"
+
 type Snapshot struct {
 	Revision                  uint64
 	AppliedGenerationID       *int64
 	LastKnownGoodGenerationID *int64
 	RecoveryRequired          bool
+	CoreDesiredState          CoreDesiredState
 	ActiveAttemptID           *int64
 }
 
@@ -117,12 +125,13 @@ func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 		applied          sql.NullInt64
 		lastKnownGood    sql.NullInt64
 		recoveryRequired int
+		coreDesired      string
 	)
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT config_revision, applied_generation_id, last_known_good_generation_id, recovery_required
+		SELECT config_revision, applied_generation_id, last_known_good_generation_id, recovery_required, core_desired_state
 		FROM daemon_state
 		WHERE singleton = 1
-	`).Scan(&revision, &applied, &lastKnownGood, &recoveryRequired); err != nil {
+	`).Scan(&revision, &applied, &lastKnownGood, &recoveryRequired, &coreDesired); err != nil {
 		return Snapshot{}, fmt.Errorf("read daemon state: %w", err)
 	}
 
@@ -141,8 +150,31 @@ func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 		AppliedGenerationID:       nullInt64Ptr(applied),
 		LastKnownGoodGenerationID: nullInt64Ptr(lastKnownGood),
 		RecoveryRequired:          recoveryRequired != 0,
+		CoreDesiredState:          CoreDesiredState(coreDesired),
 		ActiveAttemptID:           nullInt64Ptr(active),
 	}, nil
+}
+
+func (s *Store) SetCoreDesiredState(ctx context.Context, state CoreDesiredState) error {
+	if state != CoreDesiredStopped && state != CoreDesiredRunning {
+		return fmt.Errorf("%w: %q", ErrInvalidCoreDesiredState, state)
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE daemon_state
+		SET core_desired_state = ?
+		WHERE singleton = 1
+	`, state)
+	if err != nil {
+		return fmt.Errorf("persist core desired state: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read core desired state update result: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("persist core desired state: updated %d daemon_state rows", affected)
+	}
+	return nil
 }
 
 func (s *Store) PrepareApply(ctx context.Context, expectedRevision uint64, config []byte) (Attempt, error) {
@@ -564,7 +596,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -628,6 +660,19 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(1, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 1: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 2 {
+		if _, err := tx.ExecContext(ctx, `
+			ALTER TABLE daemon_state
+			ADD COLUMN core_desired_state TEXT NOT NULL DEFAULT 'stopped'
+			CHECK(core_desired_state IN ('stopped', 'running'))
+		`); err != nil {
+			return fmt.Errorf("apply sqlite migration 2: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(2, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 2: %w", err)
 		}
 	}
 

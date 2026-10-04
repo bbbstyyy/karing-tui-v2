@@ -13,6 +13,7 @@ type StatusResponse struct {
 	AppliedGenerationID       *int64 `json:"applied_generation_id,omitempty"`
 	LastKnownGoodGenerationID *int64 `json:"last_known_good_generation_id,omitempty"`
 	RecoveryRequired          bool   `json:"recovery_required"`
+	CoreDesiredState          string `json:"core_desired_state"`
 	CoreState                 string `json:"core_state"`
 }
 

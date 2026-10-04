@@ -88,13 +88,14 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(
 		stdout,
-		"daemon: running\napi: %s\nversion: %s\nrevision: %d\napplied generation: %s\nlast-known-good: %s\nrecovery required: %t\ncore: %s\n",
+		"daemon: running\napi: %s\nversion: %s\nrevision: %d\napplied generation: %s\nlast-known-good: %s\nrecovery required: %t\ndesired core: %s\ncore: %s\n",
 		status.APIVersion,
 		status.DaemonVersion,
 		status.ConfigRevision,
 		formatGenerationID(status.AppliedGenerationID),
 		formatGenerationID(status.LastKnownGoodGenerationID),
 		status.RecoveryRequired,
+		status.CoreDesiredState,
 		status.CoreState,
 	)
 	return 0

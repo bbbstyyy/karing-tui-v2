@@ -25,7 +25,7 @@ func TestApplyLifecycleKeepsRevisionOnRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.Revision != 0 || initial.AppliedGenerationID != nil || initial.RecoveryRequired {
+	if initial.Revision != 0 || initial.AppliedGenerationID != nil || initial.RecoveryRequired || initial.CoreDesiredState != CoreDesiredStopped {
 		t.Fatalf("unexpected initial snapshot: %+v", initial)
 	}
 
@@ -194,6 +194,58 @@ func TestRecoverPreparedAttemptDoesNotRequireCoreReconcile(t *testing.T) {
 	}
 	if snapshot.RecoveryRequired {
 		t.Fatalf("prepared-only interruption should not require core reconcile: %+v", snapshot)
+	}
+}
+
+func TestCoreDesiredStatePersistsWithoutChangingRevision(t *testing.T) {
+	ctx := context.Background()
+	store, path := newTestStore(t, ctx)
+
+	initial, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.CoreDesiredState != CoreDesiredStopped || initial.Revision != 0 {
+		t.Fatalf("unexpected initial desired state: %+v", initial)
+	}
+	if err := store.SetCoreDesiredState(ctx, CoreDesiredRunning); err != nil {
+		t.Fatal(err)
+	}
+	running, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.CoreDesiredState != CoreDesiredRunning || running.Revision != 0 {
+		t.Fatalf("desired state update changed config revision or failed: %+v", running)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	persisted, err := reopened.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.CoreDesiredState != CoreDesiredRunning || persisted.Revision != 0 {
+		t.Fatalf("desired state did not persist across reopen: %+v", persisted)
+	}
+	if err := reopened.SetCoreDesiredState(ctx, CoreDesiredStopped); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := reopened.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.CoreDesiredState != CoreDesiredStopped || stopped.Revision != 0 {
+		t.Fatalf("explicit stop intent was not persisted independently: %+v", stopped)
+	}
+	if err := reopened.SetCoreDesiredState(ctx, CoreDesiredState("invalid")); !errors.Is(err, ErrInvalidCoreDesiredState) {
+		t.Fatalf("invalid desired state error = %v, want ErrInvalidCoreDesiredState", err)
 	}
 }
 

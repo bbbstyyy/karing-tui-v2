@@ -115,6 +115,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 			AppliedGenerationID:       snapshot.AppliedGenerationID,
 			LastKnownGoodGenerationID: snapshot.LastKnownGoodGenerationID,
 			RecoveryRequired:          snapshot.RecoveryRequired,
+			CoreDesiredState:          string(snapshot.CoreDesiredState),
 			CoreState:                 "not-configured",
 		})
 	})
@@ -129,6 +130,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"sqlite_state":            true,
 				"apply_journal":           true,
 				"crash_recovery_state":    true,
+				"persisted_core_intent":   true,
 				"core_supervisor_engine":  true,
 				"core_exec_runner":        true,
 				"core_readiness_gate":     true,
