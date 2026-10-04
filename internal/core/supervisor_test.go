@@ -379,7 +379,6 @@ func TestSupervisorCountsReadinessFailureTowardCircuitBreaker(t *testing.T) {
 	}
 }
 
-
 func TestSupervisorWaitReadyHonorsContextBeforeRun(t *testing.T) {
 	supervisor := newTestSupervisor(t, &fakeRunner{}, 3)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
