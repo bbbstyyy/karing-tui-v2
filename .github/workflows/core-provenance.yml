@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/core-provenance.yml'
       - 'scripts/verify-core-build.sh'
+      - 'scripts/smoke-core-runtime.sh'
+      - 'resources/core-entry/main.go.txt'
       - 'resources/core.lock.json'
 permissions:
   contents: read

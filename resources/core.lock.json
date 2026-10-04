@@ -1,5 +1,5 @@
 {
-  "schema": 7,
+  "schema": 8,
   "source_repository": "https://github.com/KaringX/sing-box",
   "candidate_ref": "karing_v1.13.19",
   "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
@@ -27,18 +27,19 @@
   },
   "karing_build_tag_evidence": {
     "tag": "with_karing",
-    "allowed_in_linux_daemon_core": false,
-    "rejection_reason": "on Linux, cmd/sing-box/extension_process_linux.go makeProcessSingleton enumerates processes with the same executable basename and terminates/kills them during PersistentPreRunE; this violates T19 and the daemon ownership boundary",
+    "required_for_library_build": true,
+    "upstream_cli_allowed": false,
+    "upstream_cli_rejection_reason": "cmd/sing-box/cmd_extension_karing.go requires service-config and invokes makeProcessSingleton; on Linux extension_process_linux.go terminates/kills processes by executable basename, violating T19 and supervisor ownership",
+    "project_boundary": "compile the locked Karing library with with_karing but do not compile cmd/sing-box; build the project-owned minimal standalone entrypoint instead",
     "source_files": [
       "cmd/sing-box/cmd_extension_karing.go",
       "cmd/sing-box/extension_process_linux.go"
-    ],
-    "policy": "do not build the daemon-managed standalone core with with_karing"
+    ]
   },
   "reference_linux_cli_build": {
     "go_version": "1.25.12",
     "go_version_source": ".github/workflows/build.yml at candidate commit",
-    "mode": "purego",
+    "mode": "project_entrypoint_over_locked_karing_library",
     "cgo_enabled": false,
     "goos": "linux",
     "architectures": [
@@ -47,16 +48,19 @@
     ],
     "tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
     "extra_tags": [
+      "with_karing",
       "with_shadowsocksr"
     ],
-    "tags_strategy": "use release/DEFAULT_BUILD_TAGS_OTHERS unchanged as the base and append only with_shadowsocksr; explicitly exclude with_karing on Linux",
+    "tags_strategy": "use release/DEFAULT_BUILD_TAGS_OTHERS unchanged as the base, append with_karing and with_shadowsocksr for library closure, and build only the project-owned cmd/karing-tui-core entrypoint",
     "ldflags_file": "release/LDFLAGS",
     "version_value": "karing-tui-v2-core-1.13.19-beddeaba",
     "version_strategy": "inject a fixed constant.Version with -ldflags; never invoke the Makefile read_tag@latest helper",
     "verification_script": "scripts/verify-core-build.sh",
     "workflow": ".github/workflows/core-provenance.yml",
     "service_config_required": false,
-    "runtime_smoke_script": "scripts/smoke-core-runtime.sh"
+    "runtime_smoke_script": "scripts/smoke-core-runtime.sh",
+    "entrypoint_template": "resources/core-entry/main.go.txt",
+    "upstream_cmd_sing_box_allowed": false
   },
   "rejected_candidates": [
     {
@@ -78,7 +82,7 @@
     }
   ],
   "build_verification": {
-    "status": "safe_build_retry_pending",
+    "status": "entrypoint_retry_pending",
     "linux_amd64_sha256": null,
     "linux_arm64_sha256": null,
     "ordinary_uid_version_smoke": false,
@@ -95,9 +99,9 @@
   },
   "build_approved": false,
   "reasons": [
-    "the safe standalone build without with_karing has not yet passed amd64/arm64 provenance",
-    "safe-build binary hashes have not yet been recorded",
-    "ordinary-UID version/check/run, authenticated local Clash API, and three Mixed listeners have not yet passed against the safe build",
+    "the project-owned standalone entrypoint over the locked Karing library has not yet passed amd64/arm64 provenance",
+    "approved baseline binary hashes have not yet been recorded",
+    "ordinary-UID version/check/run, authenticated local Clash API, and three Mixed listeners have not yet passed against the project entrypoint build",
     "PUT /configs must not be treated as a verified full reload contract without runtime evidence"
   ]
 }

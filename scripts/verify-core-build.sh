@@ -80,11 +80,15 @@ actual_tags="$base_tags"
 if [[ -n "$extra_tags" ]]; then
   actual_tags="$actual_tags,$extra_tags"
 fi
-if [[ ",$actual_tags," == *",with_karing,"* ]]; then
-  echo "unsafe Linux core tag with_karing is forbidden" >&2
+entrypoint="$repo_root/resources/core-entry/main.go.txt"
+if [[ ! -f "$entrypoint" ]]; then
+  echo "core entrypoint template is missing" >&2
   exit 1
 fi
+mkdir -p "$core_dir/cmd/karing-tui-core"
+cp "$entrypoint" "$core_dir/cmd/karing-tui-core/main.go"
 echo "CORE_BUILD_TAGS=$actual_tags"
+echo "CORE_ENTRYPOINT=cmd/karing-tui-core"
 
 actual_ldflags="$(cat release/LDFLAGS)"
 expected_ldflags="$(jq -r '.fixed_makefile_evidence.ldflags' "$lock")"
@@ -102,7 +106,7 @@ export CGO_ENABLED=0
 export GOOS=linux
 export GOARCH="$arch"
 
-go build -trimpath   -o "$out"   -tags "$actual_tags"   -ldflags "$ldflags"   ./cmd/sing-box
+go build -trimpath   -o "$out"   -tags "$actual_tags"   -ldflags "$ldflags"   ./cmd/karing-tui-core
 
 file "$out"
 sha="$(sha256sum "$out" | awk '{print $1}')"

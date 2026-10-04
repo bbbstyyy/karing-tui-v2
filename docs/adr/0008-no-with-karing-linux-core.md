@@ -1,6 +1,6 @@
 # ADR 0008: Forbid with_karing in the daemon-managed Linux core
 
-- Status: Accepted
+- Status: Superseded by ADR 0009
 - Date: 2026-10-05
 
 ## Context
