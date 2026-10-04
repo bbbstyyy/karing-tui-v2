@@ -67,7 +67,11 @@ A sample unit is in [`packaging/systemd/karing-tui-v2.service`](packaging/system
 
 ## Upstream/core status
 
-The candidate core is **not yet approved for production builds**, but the standalone Linux CLI build path is now concrete. At the fixed core commit, the upstream `.github/workflows/build.yml` builds Linux purego with Go 1.26.7, `CGO_ENABLED=0`, `release/DEFAULT_BUILD_TAGS_OTHERS`, and the locked shared ldflags. Karing-only files guarded by `with_karing` are app/extension functionality and are not required by that standalone reference build. Our provenance workflow clones all six local sibling replacements at locked commits and reproduces this amd64/arm64 path without using the Makefile's `@latest` version helper. Build hashes and runtime behavior still have to pass before `build_approved` can become true. See [`docs/upstream-audit.md`](docs/upstream-audit.md) and [`resources/core.lock.json`](resources/core.lock.json).
+The M1 core candidate is now `KaringX/sing-box@beddeababcc71dfb0c78124598b13341c06c69fb` from `karing_v1.13.19`. The newer `karing_v1.14.0@9f020fce...` candidate was rejected as the M1 baseline after four reproducible provenance runs exposed an unclosed source/dependency/tag state: older local sibling commits miss required APIs, and even synchronized sibling branch snapshots plus the fork-required tags still fail on internal Clash API, DNS, QUIC, and WireGuard mismatches.
+
+The 1.13.19 candidate is materially safer for a long-running daemon because its KaringX dependencies are already fixed remote pseudo-versions rather than live local workspace replacements. Its upstream build workflow pins Go 1.25.12. Our provenance workflow builds Linux amd64/arm64 pure-Go with the candidate's fixed tags/ldflags plus the two Karing-required tags, without invoking the Makefile's `@latest` version helper and without publishing artifacts.
+
+`build_approved` remains false until the matrix succeeds, hashes are recorded, and ordinary-user config/API/Mixed-listener smoke checks pass. 1.14 remains an explicit upgrade target, not a silently patched dependency. See [`docs/upstream-audit.md`](docs/upstream-audit.md), ADR 0007, and [`resources/core.lock.json`](resources/core.lock.json).
 
 ## License
 

@@ -7,51 +7,46 @@ This file records implementation-relevant facts that must remain explicit while 
 | Component | Reference |
 | --- | --- |
 | Karing application source | `KaringX/karing@9d28b22fbbcca5818d147629aae151d49d4dcb7b` |
-| KaringX/sing-box candidate | `KaringX/sing-box@9f020fcefd4c9655689d503abd11572f31365b5a` (`karing_v1.14.0`) |
+| M1 standalone core baseline | `KaringX/sing-box@beddeababcc71dfb0c78124598b13341c06c69fb` (`karing_v1.13.19`) |
+| Rejected 1.14 M1 candidate | `KaringX/sing-box@9f020fcefd4c9655689d503abd11572f31365b5a` (`karing_v1.14.0`) |
 | CN preset source | `assets/datas/preset/cn.json` from the fixed Karing application commit |
 
 ## Confirmed blockers and constraints
 
-### Sibling source revisions are locked; standalone Linux reference build is identified
+### 1.14 is not a reproducible standalone baseline at the inspected commit
 
-The fixed KaringX/sing-box `go.mod` declares Go `1.25.5` and uses six active local sibling replacements. Each active replacement has a commented KaringX pseudo-version immediately above it. The embedded commit IDs were verified to exist in the corresponding repositories and their `go.mod` module paths match the replaced Sagernet module path.
+Four project provenance runs exercised `karing_v1.14.0@9f020fce...`. The first runs proved that the active local sibling replacements cannot be reconstructed from the older pseudo-version comment commits: the core consumes newer APIs such as `sing/common/cleanup`, `sing-tun/gtcpip`, and `sing-quic/hysteria2/realm`.
 
-| Module | KaringX source commit |
-| --- | --- |
-| `github.com/sagernet/sing` | `KaringX/sing@12e7cea731746a4511e56394f218e781b5d3b420` |
-| `github.com/sagernet/sing-quic` | `KaringX/sing-quic@0122883b056b4473b0395f5d2b6724e670f8ed7a` |
-| `github.com/sagernet/quic-go` | `KaringX/quic-go@e535214ac88c2bd220c4d1ae22ef8c45fec14421` |
-| `github.com/sagernet/sing-tun` | `KaringX/sing-tun@60cad1147202ae1bdf60035a7e740530a00f6d09` |
-| `github.com/sagernet/wireguard-go` | `KaringX/wireguard-go@7d2d140c511350001d0152228b5b0792d7263169` |
-| `github.com/sagernet/tailscale` | `KaringX/tailscale@7007033a39f94fe88a693fb6b79ffb57de5f9d23` |
+A second pass resolved sibling snapshots from the documented KaringX branches and added the build tags that the fork's source itself requires. That moved compilation forward but still failed in the fixed core tree on mutually inconsistent APIs, including:
 
-An initial attempt to lock the commits embedded in the commented pseudo-versions was proven wrong by the provenance build: those older commits do not contain APIs used by the fixed core. The corrected candidate set is resolved from the KaringX branch names documented by the core source, taking the latest commit not later than the core candidate timestamp. The exact commits are recorded in `resources/core.lock.json`, and the verification script recreates the required `<workspace>/KaringX/<repository>` layout.
+- Clash API files referring to the removed/renamed traffic manager implementation;
+- `api_extension_karing.go` requiring `dns.ClientOptions.IndependentCache` after the candidate removed that field;
+- QUIC call signatures that do not match the selected fork dependency;
+- a WireGuard composite literal incompatible with the candidate's `DialerOptions`.
 
-The fixed source also contains stronger standalone-build evidence than the Makefile alone. Its `.github/workflows/build.yml` uses Go **1.26.7** and builds Linux purego with `CGO_ENABLED=0`, `release/DEFAULT_BUILD_TAGS_OTHERS`, `release/LDFLAGS`, `-trimpath`, and an empty build ID. The upstream workflow does **not** add `with_karing` or `with_shadowsocksr` for that standalone binary. A real provenance build proved that tag list is incomplete for this fork: unconditional core code imports Karing-only packages whose files are guarded by `with_karing`, and `include/registry.go` imports `protocol/shadowsocksr` whose implementation is guarded by `with_shadowsocksr`.
+The KaringX repository exposes no successful Actions run for this branch that can close those contradictions. M1 therefore does not patch the 1.14 source locally. It remains a tracked upgrade target.
 
-The project still does not depend on Karing app-specific extension endpoints semantically, but the fixed fork currently requires `with_karing` at compile time because several shared packages are present only under that tag. Therefore the reproducible build candidate appends `with_karing` and `with_shadowsocksr` to the unchanged upstream base tag list. This is a build-closure requirement, not a decision to expose those extension endpoints as product API.
+### M1 baseline moves to the stable 1.13.19 fork head
 
-The fixed Makefile still uses `go run .../read_tag@latest` for version calculation. Our reference build does not invoke that helper: it injects a fixed `constant.Version` value through the same linker variable used by the upstream workflow.
+`karing_v1.13.19@beddeaba...` keeps the inspected KaringX dependencies as fixed remote pseudo-version replacements in `go.mod`, avoiding the live local-workspace problem in 1.14. The corresponding source also retains the internally consistent Clash traffic manager imports and DNS client fields needed by the Karing extensions.
 
-`scripts/verify-core-build.sh` and `.github/workflows/core-provenance.yml` exercise the corrected pure-Go build candidate for Linux amd64 and arm64. They do not publish the binaries. The first provenance runs intentionally failed and are retained as evidence that the earlier pseudo-version snapshot assumption was invalid. Until the corrected builds succeed, hashes are recorded, and ordinary-UID runtime/config/API/Mixed-listener behavior is verified, `resources/core.lock.json` remains `build_approved=false`.
+At this candidate, the upstream build workflow pins Go **1.25.12**. The project reference build uses:
 
-Sources:
-- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/go.mod>
-- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/.github/workflows/build.yml>
-- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/release/DEFAULT_BUILD_TAGS_OTHERS>
-- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/release/LDFLAGS>
+- Linux pure-Go (`CGO_ENABLED=0`);
+- `release/DEFAULT_BUILD_TAGS_OTHERS` unchanged as the base;
+- `release/LDFLAGS` unchanged;
+- appended `with_karing,with_shadowsocksr`, required by the fork's own guarded packages;
+- a fixed linker-injected version string instead of the Makefile's `read_tag@latest`.
 
-### Clash API `/configs` is not a full hot-reload contract at this baseline
+`scripts/verify-core-build.sh` and `.github/workflows/core-provenance.yml` build amd64 and arm64 but do not publish artifacts. Until both builds pass, their hashes are recorded, and ordinary-UID runtime/config/API/Mixed-listener behavior is verified, `resources/core.lock.json` remains `build_approved=false`.
 
-At the fixed candidate, the relevant handler accepts PATCH mode changes while the update handler for PUT returns `204 No Content` without applying a new full configuration. A successful HTTP status therefore cannot be used as proof that a generated configuration became active.
+### Clash API full reload remains untrusted
 
-Source: <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/experimental/clashapi/configs.go>
+The daemon must not infer successful full configuration activation from a `PUT /configs` status code alone. Managed application continues to use controlled candidate activation, local behavior verification, and rollback.
 
 ### CN preset evidence is fixed but not yet vendored
 
-The fixed Karing CN preset contains 28 ordered groups. The project will vendor the exact source plus provenance in M2, after the rule resource and licensing closure is documented. Do not replace it with a two-rule "CN direct / otherwise proxy" shortcut.
-
-Source: <https://github.com/KaringX/karing/blob/9d28b22fbbcca5818d147629aae151d49d4dcb7b/assets/datas/preset/cn.json>
+The fixed Karing CN preset contains 28 ordered groups. The project will vendor the exact source plus provenance in M2, after rule-resource and licensing closure is documented. It must not be replaced by a two-rule "CN direct / otherwise proxy" shortcut.
 
 ## Management-plane toolchain and state dependency
 

@@ -1,6 +1,6 @@
 # ADR 0006: Reproduce the standalone Linux core from fixed upstream workflow evidence
 
-- Status: Accepted
+- Status: Superseded by ADR 0007
 - Date: 2026-10-04
 
 ## Context

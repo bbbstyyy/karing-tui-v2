@@ -1,118 +1,42 @@
 {
-  "schema": 4,
+  "schema": 5,
   "source_repository": "https://github.com/KaringX/sing-box",
-  "candidate_ref": "karing_v1.14.0",
-  "candidate_commit": "9f020fcefd4c9655689d503abd11572f31365b5a",
+  "candidate_ref": "karing_v1.13.19",
+  "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
+  "candidate_timestamp": "2026-09-17T04:16:38Z",
+  "candidate_role": "M1 stable standalone Linux baseline",
+  "candidate_reason": "karing_v1.14.0@9f020fce failed reproducible provenance builds because its source tree, local sibling workspace, and required build tags are not mutually build-closed; karing_v1.13.19 keeps KaringX dependencies as fixed remote pseudo-versions and has internally consistent Clash/DNS code at the inspected head",
   "module": "github.com/sagernet/sing-box",
-  "declared_go_version": "1.25.5",
-  "workspace_layout": "<workspace>/KaringX/<repository>",
-  "local_replacements": [
-    {
-      "module": "github.com/sagernet/sing",
-      "replace_path": "../../KaringX/sing",
-      "repository": "https://github.com/KaringX/sing",
-      "source_ref": "karing_v0.9.0-beta.4",
-      "commit": "7310c7583c08cdb509bd447e9784385f252b9bac",
-      "snapshot_date": "2026-09-04T06:27:50Z",
-      "declared_go_version": "1.25.0"
-    },
-    {
-      "module": "github.com/sagernet/sing-quic",
-      "replace_path": "../../KaringX/sing-quic",
-      "repository": "https://github.com/KaringX/sing-quic",
-      "source_ref": "karing-v0.7.0-beta.4",
-      "commit": "f2045467739971be776c58d7796096adeb8ca207",
-      "snapshot_date": "2026-09-04T08:18:36Z",
-      "declared_go_version": "1.25.0"
-    },
-    {
-      "module": "github.com/sagernet/quic-go",
-      "replace_path": "../../KaringX/quic-go",
-      "repository": "https://github.com/KaringX/quic-go",
-      "source_ref": "karing_v0.61.0-sing-box-mod.7",
-      "commit": "842e428a76abf3cea3dfcc608bea03696144b900",
-      "snapshot_date": "2026-09-04T06:48:51Z",
-      "declared_go_version": "1.25.0"
-    },
-    {
-      "module": "github.com/sagernet/sing-tun",
-      "replace_path": "../../KaringX/sing-tun",
-      "repository": "https://github.com/KaringX/sing-tun",
-      "source_ref": "karing_v0.9.0-beta.4",
-      "commit": "73a18704f5717f7c4a66d563ffcb8759280c1e0c",
-      "snapshot_date": "2026-09-04T08:22:02Z",
-      "declared_go_version": "1.25.0"
-    },
-    {
-      "module": "github.com/sagernet/wireguard-go",
-      "replace_path": "../../KaringX/wireguard-go",
-      "repository": "https://github.com/KaringX/wireguard-go",
-      "source_ref": "karing_v0.0.5",
-      "commit": "38074c8b657d6956f4ec2d89e92391b5bafd042f",
-      "snapshot_date": "2026-09-04T07:57:15Z",
-      "declared_go_version": "1.25"
-    },
-    {
-      "module": "github.com/sagernet/tailscale",
-      "replace_path": "../../KaringX/tailscale",
-      "repository": "https://github.com/KaringX/tailscale",
-      "source_ref": "karing_v1.102.1-sing-box-1.14-mod.4",
-      "commit": "903284baa2ca8274e7f12f2e9b90b30ba9e1b28c",
-      "snapshot_date": "2026-09-04T07:13:03Z",
-      "declared_go_version": "1.25.5"
-    }
+  "declared_go_version": "1.25.0",
+  "workspace_mode": "module_replacements",
+  "local_replacements": [],
+  "fixed_module_replacement_evidence": [
+    "github.com/sagernet/sing => github.com/KaringX/sing v0.5.0-alpha.11.0.20260819025303-12e7cea73174",
+    "github.com/sagernet/sing-quic => github.com/KaringX/sing-quic v0.2.0-beta.12.0.20260805050642-0122883b056b",
+    "github.com/sagernet/quic-go => github.com/KaringX/quic-go v0.49.0-beta.1.0.20260319073656-e535214ac88c",
+    "github.com/sagernet/sing-tun => github.com/KaringX/sing-tun v0.6.2-0.20260819025838-60cad1147202",
+    "github.com/sagernet/wireguard-go => github.com/KaringX/wireguard-go v0.0.1-beta.5.0.20260812025805-7d2d140c5113",
+    "github.com/sagernet/tailscale => github.com/KaringX/tailscale v1.80.3-mod.5.0.20260812023457-7007033a39f9"
   ],
-  "sibling_replacements_locked": false,
   "fixed_makefile_evidence": {
     "default_tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
-    "default_tags": "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0",
+    "default_tags": "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0",
     "ldflags_file": "release/LDFLAGS",
-    "ldflags": "-X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0",
+    "ldflags": "-X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0",
     "version_command": "go run github.com/sagernet/sing-box/cmd/internal/read_tag@latest"
   },
   "karing_build_tag_evidence": {
-    "tag": "with_karing",
-    "required_by": [
-      "common/debug/debug.go",
-      "common/fix/socksaddr_safe.go",
-      "common/statistics/statistics.go",
-      "common/gofree/gofree.go",
-      "experimental/clashapi/api_extension_karing.go"
+    "required_extra_tags": [
+      "with_karing",
+      "with_shadowsocksr"
     ],
-    "imported_from_unconditional_core_paths": true,
-    "present_in_default_make_tags": false,
-    "standalone_linux_reference_requires_tag": true,
-    "additional_required_tag": "with_shadowsocksr",
-    "additional_required_tag_evidence": "include/registry.go unconditionally imports and registers protocol/shadowsocksr while its implementation is guarded by //go:build with_shadowsocksr",
-    "conclusion": "the fixed upstream Linux workflow/default tag list is stale or incomplete for this Karing fork; the project must append with_karing and with_shadowsocksr and verify the result"
-  },
-  "build_approved": false,
-  "reasons": [
-    "the corrected sibling snapshot set and fork-required build tags have not yet completed the amd64/arm64 provenance build",
-    "resulting binary hashes have not yet been recorded",
-    "ordinary-UID config check, authenticated local Clash API, and three Mixed listener behavior have not yet all been exercised against the built artifact",
-    "PUT /configs at the fixed candidate is not a verified full configuration reload mechanism"
-  ],
-  "fixed_upstream_workflow_evidence": {
-    "path": ".github/workflows/build.yml",
-    "go_version": "1.26.7",
-    "linux_purego": {
-      "cgo_enabled": false,
-      "tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
-      "command": "go build -v -trimpath -o dist/sing-box -tags \"${BUILD_TAGS}\" -ldflags \"-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=\" ./cmd/sing-box"
-    },
-    "observed_result": {
-      "status": "insufficient_for_fixed_karing_fork",
-      "verification_run": "core-provenance #1/#2/#3",
-      "failures": [
-        "default tags omit with_karing although unconditional core code imports packages whose only files require with_karing",
-        "default tags omit with_shadowsocksr although include/registry.go imports protocol/shadowsocksr",
-        "pseudo-version comment commits in go.mod do not contain APIs used by the fixed core commit"
-      ]
-    }
+    "with_karing_reason": "shared Karing packages such as common/debug are compiled only under with_karing and are referenced by Karing paths",
+    "with_shadowsocksr_reason": "include/registry.go imports and registers protocol/shadowsocksr while its implementation is guarded by with_shadowsocksr",
+    "present_in_default_make_tags": false
   },
   "reference_linux_cli_build": {
-    "go_version": "1.26.7",
+    "go_version": "1.25.12",
+    "go_version_source": ".github/workflows/build.yml at candidate commit",
     "mode": "purego",
     "cgo_enabled": false,
     "goos": "linux",
@@ -121,25 +45,38 @@
       "arm64"
     ],
     "tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
-    "ldflags_file": "release/LDFLAGS",
-    "version_value": "karing-tui-v2-core-1.14.0-9f020fce",
-    "version_strategy": "inject a fixed constant.Version with -ldflags; do not invoke the Makefile read_tag@latest helper",
-    "verification_script": "scripts/verify-core-build.sh",
-    "workflow": ".github/workflows/core-provenance.yml",
     "extra_tags": [
       "with_karing",
       "with_shadowsocksr"
     ],
-    "tags_strategy": "use release/DEFAULT_BUILD_TAGS_OTHERS exactly as base, then append the two fork-required tags with_karing and with_shadowsocksr"
+    "tags_strategy": "use the candidate's default tag file unchanged as the base and append only the two fork-required tags",
+    "ldflags_file": "release/LDFLAGS",
+    "version_value": "karing-tui-v2-core-1.13.19-beddeaba",
+    "version_strategy": "inject a fixed constant.Version with -ldflags; never invoke the Makefile read_tag@latest helper",
+    "verification_script": "scripts/verify-core-build.sh",
+    "workflow": ".github/workflows/core-provenance.yml"
   },
+  "rejected_candidates": [
+    {
+      "ref": "karing_v1.14.0",
+      "commit": "9f020fcefd4c9655689d503abd11572f31365b5a",
+      "status": "rejected_as_m1_baseline",
+      "provenance_runs": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "observed_failures": [
+        "go.mod uses local sibling replacements whose commented pseudo-version commits are older than APIs consumed by the core",
+        "the upstream default tag list omits with_karing and with_shadowsocksr although this fork requires them for build closure",
+        "after synchronizing sibling branch snapshots and adding required tags, the fixed core still fails on internal Clash API, DNS, QUIC, and WireGuard API mismatches"
+      ],
+      "upgrade_policy": "do not patch this source in-place for M1; revisit 1.14 only when a reproducible upstream/fork snapshot closes these mismatches"
+    }
+  ],
   "build_verification": {
-    "status": "retry_pending",
-    "previous_failed_runs": [
-      1,
-      2,
-      3
-    ],
-    "failure_classification": "source snapshot/tag mismatch discovered by provenance build",
+    "status": "pending_ci",
     "linux_amd64_sha256": null,
     "linux_arm64_sha256": null,
     "ordinary_uid_version_smoke": false,
@@ -147,15 +84,11 @@
     "local_clash_api_smoke": false,
     "mixed_inbound_smoke": false
   },
-  "sibling_snapshot_resolution": {
-    "method": "latest commit on the KaringX branch named by the core go.mod comment, not later than the core candidate timestamp",
-    "core_candidate_timestamp": "2026-09-15T06:01:00Z",
-    "required_api_presence_verified": true,
-    "required_api_evidence": [
-      "KaringX/sing@7310c758... contains common/cleanup",
-      "KaringX/sing-quic@f204546... contains hysteria2/realm",
-      "KaringX/sing-tun@73a1870... contains gtcpip/checksum and gtcpip/header"
-    ],
-    "status": "candidate_set_pending_build"
-  }
+  "build_approved": false,
+  "reasons": [
+    "the karing_v1.13.19 amd64/arm64 provenance build has not yet completed",
+    "resulting binary hashes have not yet been recorded",
+    "ordinary-UID config check, authenticated local Clash API, and three Mixed listener behavior have not yet all been exercised against the built artifact",
+    "PUT /configs must not be treated as a verified full reload contract without runtime evidence"
+  ]
 }
