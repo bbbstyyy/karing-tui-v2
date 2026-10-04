@@ -131,3 +131,14 @@ if [[ "$native" == "1" ]]; then
 else
   echo "CORE_NATIVE_RUNTIME_SKIPPED=$arch-on-$machine"
 fi
+
+
+if [[ -n "${CORE_OUTPUT:-}" ]]; then
+  if [[ "${CORE_OUTPUT}" != /* ]]; then
+    echo "CORE_OUTPUT must be an absolute path" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$CORE_OUTPUT")"
+  install -m 0555 "$out" "$CORE_OUTPUT"
+  echo "CORE_OUTPUT_PATH=$CORE_OUTPUT"
+fi
