@@ -83,6 +83,7 @@ Implemented now:
 - an apply coordinator with bounded check/activate/verify/rollback steps, immutable previous-generation rollback, and fault-injection tests for check/start/verify/commit/rollback failures;
 - immutable on-disk generation config staging under the private state directory, with SHA-256 identity, 0600 files, 0700 directories, symlink/ownership checks, atomic publish, fsync, and refusal to overwrite an existing generation with different content;
 - a generation-bound verified runner that accepts only private absolute config paths, re-verifies the locked core before each `run`/`check`, and passes the exact immutable generation path to the project-owned core entrypoint;
+- a ManagedCore adapter that composes durable applied-generation lookup, immutable staging, verified `check/run`, bounded Supervisor restart, local authenticated health verification, rollback, explicit stop-intent preservation, and controlled circuit reset for operator-driven apply/rollback;
 - startup interruption recovery that blocks new applies when core reconciliation could be required;
 - a bounded core lifecycle state machine with explicit stop intent, exponential restart backoff and a failure-window circuit breaker;
 - a Linux process-group runner that rejects unsafe executable paths, plus readiness gating and fixed-capacity stdout/stderr buffers; concurrent bounded-log writes are exercised under the CI race detector;

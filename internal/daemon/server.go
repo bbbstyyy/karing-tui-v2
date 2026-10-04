@@ -142,6 +142,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"generation_artifacts":      true,
 				"core_verified_exec_runner": true,
 				"generation_bound_runner":   true,
+				"managed_core_adapter":       true,
 				"core_distribution":         false,
 				"lifecycle_coordinator":     true,
 				"core_lifecycle_api":        false,
