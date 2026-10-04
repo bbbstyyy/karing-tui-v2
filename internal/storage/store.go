@@ -297,7 +297,7 @@ func (s *Store) CommitApplied(ctx context.Context, attemptID int64, promoteLastK
 		return fmt.Errorf("%w: attempt base %d, current %d", ErrRevisionConflict, attempt.BaseRevision, currentRevision)
 	}
 
-	now := time.Now().UTCh().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE apply_journal
 		SET phase = ?,  active_slot = NULL, updated_at = ?
@@ -375,7 +375,7 @@ func (s *Store) RecoverInterrupted(ctx context.Context) (Recovery, error) {
 	}
 
 	if len(interrupted) != 0 {
-		now := time.Now().UTCh().Format(time.RFC3339Nano)
+		now := time.Now().UTC().Format(time.RFC3339Nano)
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE apply_journal
 			SET phase = ?,  active_slot = NULL,
