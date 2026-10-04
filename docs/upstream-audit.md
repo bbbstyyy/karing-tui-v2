@@ -91,8 +91,10 @@ Implemented now:
 - an authenticated loopback-only Clash `/version` probe validated against the fixed KaringX/sing-box source, including Bearer auth and the expected `sing-box`/`premium`/`meta` response contract;
 - a first-class Rule/Direct/Selected inbound model with the plan defaults, strict loopback/distinct-port validation, and a SOCKS5 greeting probe for expected Mixed listeners;
 - a lifecycle coordinator that orders durable start/stop intent before supervisor actions and blocks restored starts while apply recovery is unresolved;
+- secure opt-in runtime options that accept only an absolute SHA-pinned core path, create a private random loopback control secret, and reject control-port collisions;
+- conditional local lifecycle API/CLI wiring that starts the supervisor engine, restores persisted intent, serializes start/stop operations, and reports real core state/PID/circuit diagnostics;
 - explicit capability flags that keep incomplete M1/M2 features false;
 - a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, `auto_redirect`, and `set_system_proxy=true` so imported configs cannot silently mutate Linux proxy settings;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
-Still open before M1 can be called complete: exposing the lifecycle coordinator through explicit daemon API commands, wiring lifecycle/apply coordination and the implemented probes to a provenance-approved locked core artifact, compiling the three modeled inbounds with correct Rule/DIRECT/CurrentSelected semantics, deterministic restricted native-config compilation, local proxy-behavior verification beyond the control API, generation retention/garbage collection, database online-backup integration, and process-level crash/power-loss fault injection across the real external core/SQLite boundary.
+Still open before M1 can be called complete: deterministic restricted native-config compilation with correct Rule/DIRECT/CurrentSelected semantics, composing/exposing managed apply only through that compiler boundary, route-behavior verification beyond listener/control readiness, generation retention/garbage collection, database online-backup integration, packaging/license closure for core distribution, and process-level crash/power-loss fault injection across the real external core/SQLite boundary.

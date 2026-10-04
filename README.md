@@ -2,7 +2,7 @@
 
 Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs/plan.md).
 
-> Status: early development. The daemon/API, durable SQLite generation/apply journal, bounded core-supervisor state machine, Linux process-group runner, readiness gate, and bounded child-log buffers exist. The approved KaringX/sing-box artifact is still not wired; the three proxy inbounds, five-layer routing compiler, CN preset runtime, subscriptions, and TUI are **not** implemented yet.
+> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. The deterministic routing/config compiler, managed apply API, CN preset runtime, subscriptions, and TUI are **not** implemented yet.
 
 ## Non-negotiable scope
 
@@ -16,6 +16,8 @@ Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs
 
 ```bash
 karing-tui daemon run
+karing-tui core start
+karing-tui core stop
 karing-tui status
 karing-tui status --json
 karing-tui capabilities
@@ -52,13 +54,19 @@ The supervisor now has a Linux executable runner that creates a dedicated proces
 
 `internal/domain` now also fixes the three P0 proxy entry roles as Rule / Direct / Selected, with plan defaults `127.0.0.1:2080`, `:2081`, and `:2082`. Ports must be non-zero and distinct, and bind addresses must remain loopback. The local health layer can verify all three expected Mixed listeners with a SOCKS5 greeting before readiness succeeds; it does not silently pick replacement ports.
 
-`internal/daemon.LifecycleCoordinator` now connects durable desired state to the supervisor contract with crash-oriented ordering: Start persists `running` before requesting a start; Stop persists `stopped` before stopping the process; restore refuses to start while apply recovery is unresolved. This coordinator is not exposed as a lifecycle API yet.
+`internal/daemon.LifecycleCoordinator` connects durable desired state to the supervisor contract with crash-oriented ordering: Start persists `running` before requesting a start; Stop persists `stopped` before stopping the process; restore refuses to start while apply recovery is unresolved. When a verified core path is explicitly configured, the daemon exposes this through `POST /v1/core/start` and `POST /v1/core/stop`, and status reports the real supervisor state/PID/circuit condition.
 
 `internal/daemon.ApplyCoordinator` now provides the matching configuration transaction skeleton. Candidate config is durably prepared, checked before activation, then journaled through activation and verification. Only a verified candidate advances the confirmed revision/LKG. Any post-activation failure attempts the immutable previous generation; a failed rollback marks `recovery_required` and blocks further applies. Every external core operation and state step has a deadline, and cleanup uses a bounded detached context so caller cancellation cannot silently leave a safe-to-close prepared attempt active.
 
-This remains an abstract core boundary: `managed_apply` stays false until the coordinator is wired to the provenance-approved core runner, deterministic compiler, and concrete local health probe.
+`managed_apply` stays false: the runtime can only start the already-confirmed applied generation. There is deliberately no endpoint that accepts arbitrary native sing-box JSON and bypasses the apply journal/compiler boundary.
 
-This is still infrastructure, not approval to launch an arbitrary core. `core_supervision` remains false until a reproducible locked KaringX/sing-box artifact, deterministic config generation, authenticated local health probing, and apply-journal integration are all wired together.
+### Optional managed-core runtime
+
+Core supervision is opt-in until packaging/distribution is closed. Set `KARING_TUI_CORE_PATH` to an **absolute path** containing the exact approved `karing-tui-core` artifact for the current architecture. The daemon verifies that file against the locked SHA-256 before composing the runtime and again before every start/restart. An arbitrary executable with the same filename is rejected.
+
+The three proxy entry defaults remain `127.0.0.1:2080/2081/2082`. The authenticated core control endpoint defaults to `127.0.0.1:3057`; `KARING_TUI_CORE_CONTROL_PORT` may select another non-conflicting port. The daemon creates a random 32-byte secret at `XDG_STATE_HOME/karing-tui-v2/core-control.secret` with mode `0600`; the secret is never placed in a URL, command line, status payload, or normal log.
+
+If `KARING_TUI_CORE_PATH` is absent, the management daemon still runs normally and reports `core_configured=false`; lifecycle capability remains false. If it is present but fails identity/permission checks, daemon startup fails closed.
 
 
 ## systemd user service
@@ -67,11 +75,16 @@ A sample unit is in [`packaging/systemd/karing-tui-v2.service`](packaging/system
 
 ## Upstream/core status
 
-The M1 core candidate is now `KaringX/sing-box@beddeababcc71dfb0c78124598b13341c06c69fb` from `karing_v1.13.19`. The newer `karing_v1.14.0@9f020fce...` candidate was rejected as the M1 baseline after four reproducible provenance runs exposed an unclosed source/dependency/tag state: older local sibling commits miss required APIs, and even synchronized sibling branch snapshots plus the fork-required tags still fail on internal Clash API, DNS, QUIC, and WireGuard mismatches.
+The approved M1 standalone Linux baseline is `KaringX/sing-box@beddeababcc71dfb0c78124598b13341c06c69fb` from `karing_v1.13.19`, built through the project-owned minimal `cmd/karing-tui-core` entrypoint rather than the unsafe upstream Karing CLI. Core-provenance runs #9 and #10 reproduced the locked amd64/arm64 hashes on native runners and passed ordinary-user `version/check/run`, authenticated Clash `/version`, all three Mixed SOCKS5 listener probes, and clean SIGTERM shutdown.
 
-The 1.13.19 candidate is materially safer for a long-running daemon because its KaringX dependencies are already fixed remote pseudo-versions rather than live local workspace replacements. Its upstream build workflow pins Go 1.25.12. Our provenance workflow builds Linux amd64/arm64 pure-Go with the candidate's fixed tags/ldflags plus the two Karing-required tags, without invoking the Makefile's `@latest` version helper and without publishing artifacts.
+Approved hashes:
 
-A provenance build proved that 1.13.19 compiles on both amd64 and arm64, but that build used `with_karing` and is **not accepted**: on Linux the Karing CLI pre-run code scans for other processes with the same executable basename and terminates/kills them. That violates the project's process-ownership and T19 requirements. The approved path therefore explicitly excludes `with_karing` and is being re-verified as a standard standalone sing-box CLI with only the required `with_shadowsocksr` addition. `build_approved` remains false until that safe build and ordinary-user runtime smoke pass. 1.14 remains an explicit upgrade target. See [`docs/upstream-audit.md`](docs/upstream-audit.md), ADR 0007, and [`resources/core.lock.json`](resources/core.lock.json).
+- linux/amd64: `829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569`
+- linux/arm64: `77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512`
+
+The newer `karing_v1.14.0@9f020fce...` remains rejected as the M1 baseline because the inspected source/dependency snapshot is not build-closed. This is an explicit future upgrade target, not something patched silently into the stable baseline.
+
+Build approval is narrower than product completion: core distribution/licensing, deterministic native-config compilation, managed apply, route-behavior fixtures, and long-running fault tests are still open. See [`docs/upstream-audit.md`](docs/upstream-audit.md), ADR 0009, and [`resources/core.lock.json`](resources/core.lock.json).
 
 ## License
 
