@@ -139,6 +139,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"core_clash_version_probe": true,
 				"core_build_approved":      true,
 				"core_artifact_verifier":   true,
+				"generation_artifacts":      true,
 				"core_verified_exec_runner": true,
 				"core_distribution":        false,
 				"lifecycle_coordinator":    true,

@@ -1,0 +1,118 @@
+package coreartifact
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestStoreStagesImmutablePrivateGeneration(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{"inbounds":[]}`)
+	sum := sha256.Sum256(config)
+	hash := hex.EncodeToString(sum[:])
+
+	path, err := store.Stage(context.Background(), 7, config, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := path, filepath.Join(root, "generations", "7", "config.json"); got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config mode = %04o, want 0600", got)
+	}
+	dirInfo, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("generation dir mode = %04o, want 0700", got)
+	}
+
+	if _, err := store.Stage(context.Background(), 7, config, hash); err != nil {
+		t.Fatalf("staging identical immutable config failed: %v", err)
+	}
+
+	changed := []byte(`{"inbounds":[{"type":"mixed"}]}`)
+	changedSum := sha256.Sum256(changed)
+	_, err = store.Stage(context.Background(), 7, changed, hex.EncodeToString(changedSum[:]))
+	if !errors.Is(err, ErrGenerationImmutable) {
+		t.Fatalf("changed immutable generation error = %v", err)
+	}
+}
+
+func TestStoreRejectsHashMismatchAndSymlinkGeneration(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{}`)
+	sum := sha256.Sum256([]byte("other"))
+	if _, err := store.Stage(context.Background(), 1, config, hex.EncodeToString(sum[:])); !errors.Is(err, ErrConfigHashMismatch) {
+		t.Fatalf("hash mismatch error = %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "generations"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "generations", "2")); err != nil {
+		t.Fatal(err)
+	}
+	sum = sha256.Sum256(config)
+	if _, err := store.Stage(context.Background(), 2, config, hex.EncodeToString(sum[:])); !errors.Is(err, ErrUnsafeGenerationPath) {
+		t.Fatalf("symlink generation error = %v", err)
+	}
+}
+
+func TestStoreHonorsCanceledContext(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{}`)
+	sum := sha256.Sum256(config)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.Stage(ctx, 1, config, hex.EncodeToString(sum[:])); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled stage error = %v", err)
+	}
+}
+
+func TestStoreRejectsPermissiveExistingGenerationDirectory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	generationDir := filepath.Join(root, "generations", "3")
+	if err := os.MkdirAll(generationDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(generationDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{}`)
+	sum := sha256.Sum256(config)
+	if _, err := store.Stage(context.Background(), 3, config, hex.EncodeToString(sum[:])); !errors.Is(err, ErrUnsafeGenerationPath) {
+		t.Fatalf("permissive generation directory error = %v", err)
+	}
+}
