@@ -12,13 +12,27 @@ This file records implementation-relevant facts that must remain explicit while 
 
 ## Confirmed blockers and constraints
 
-### Core build is not yet reproducible from the candidate repository alone
+### Sibling source revisions are locked; the actual Karing build recipe is still blocked
 
-The fixed KaringX/sing-box `go.mod` declares Go `1.25.5`, but also contains multiple local sibling replacements such as `../../KaringX/sing`, `../../KaringX/sing-quic`, `../../KaringX/quic-go`, `../../KaringX/sing-tun`, `../../KaringX/wireguard-go`, and `../../KaringX/tailscale`.
+The fixed KaringX/sing-box `go.mod` declares Go `1.25.5` and uses six active local sibling replacements. Each active replacement has a commented KaringX pseudo-version immediately above it. The embedded commit IDs were verified to exist in the corresponding repositories and their `go.mod` module paths match the replaced Sagernet module path.
 
-Until every required sibling source revision, build tag, tool version and artifact hash is fixed and verified, `resources/core.lock.json` keeps `build_approved=false`. The daemon must not download an arbitrary "latest" core to work around this.
+| Module | KaringX source commit |
+| --- | --- |
+| `github.com/sagernet/sing` | `KaringX/sing@12e7cea731746a4511e56394f218e781b5d3b420` |
+| `github.com/sagernet/sing-quic` | `KaringX/sing-quic@0122883b056b4473b0395f5d2b6724e670f8ed7a` |
+| `github.com/sagernet/quic-go` | `KaringX/quic-go@e535214ac88c2bd220c4d1ae22ef8c45fec14421` |
+| `github.com/sagernet/sing-tun` | `KaringX/sing-tun@60cad1147202ae1bdf60035a7e740530a00f6d09` |
+| `github.com/sagernet/wireguard-go` | `KaringX/wireguard-go@7d2d140c511350001d0152228b5b0792d7263169` |
+| `github.com/sagernet/tailscale` | `KaringX/tailscale@7007033a39f94fe88a693fb6b79ffb57de5f9d23` |
 
-Source: <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/go.mod>
+These revisions are now recorded in `resources/core.lock.json`, so "unknown sibling revision" is no longer a blocker by itself. The workspace still must preserve the `<workspace>/KaringX/<repository>` layout required by the fixed local replace paths.
+
+The build is **still not approved**. At the fixed commit, `Makefile` loads `release/DEFAULT_BUILD_TAGS_OTHERS`, but those default tags do not include `with_karing`. Meanwhile the Karing-specific CLI and Clash API extension files are guarded by `//go:build with_karing`. The Makefile also derives its version with `go run github.com/sagernet/sing-box/cmd/internal/read_tag@latest`, which is not reproducibly pinned. The actual Karing release build recipe, exact tags/tool version, Linux amd64/arm64 hashes and behavior checks therefore remain mandatory blockers.
+
+Sources:
+- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/go.mod>
+- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/Makefile>
+- <https://github.com/KaringX/sing-box/blob/9f020fcefd4c9655689d503abd11572f31365b5a/release/DEFAULT_BUILD_TAGS_OTHERS>
 
 ### Clash API `/configs` is not a full hot-reload contract at this baseline
 
@@ -52,7 +66,7 @@ Implemented now:
 - a one-at-a-time apply journal with prepare/activate/verify/rollback/commit phases;
 - startup interruption recovery that blocks new applies when core reconciliation could be required;
 - a bounded core lifecycle state machine with explicit stop intent, exponential restart backoff and a failure-window circuit breaker;
-- a Linux process-group runner that rejects unsafe executable paths, plus readiness gating and fixed-capacity stdout/stderr buffers;
+- a Linux process-group runner that rejects unsafe executable paths, plus readiness gating and fixed-capacity stdout/stderr buffers; concurrent bounded-log writes are exercised under the CI race detector;
 - an authenticated loopback-only Clash `/version` probe validated against the fixed KaringX/sing-box source, including Bearer auth and the expected `sing-box`/`premium`/`meta` response contract;
 - a first-class Rule/Direct/Selected inbound model with the plan defaults, strict loopback/distinct-port validation, and a SOCKS5 greeting probe for expected Mixed listeners;
 - a lifecycle coordinator that orders durable start/stop intent before supervisor actions and blocks restored starts while apply recovery is unresolved;

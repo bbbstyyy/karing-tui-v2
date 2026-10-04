@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -43,5 +44,32 @@ func TestRingBufferKeepsNewestBytes(t *testing.T) {
 	_, _ = buffer.Write([]byte("123456"))
 	if got := string(buffer.Bytes()); got != "23456" {
 		t.Fatalf("buffer = %q, want 23456", got)
+	}
+}
+
+
+func TestRingBufferConcurrentWritersRemainBounded(t *testing.T) {
+	const capacity = 4096
+	buffer := NewRingBuffer(capacity)
+
+	var wg sync.WaitGroup
+	for writer := 0; writer < 16; writer++ {
+		wg.Add(1)
+		go func(writer int) {
+			defer wg.Done()
+			payload := []byte("0123456789abcdef")
+			for i := 0; i < 1000; i++ {
+				if _, err := buffer.Write(payload); err != nil {
+					t.Errorf("writer %d: %v", writer, err)
+					return
+				}
+				_ = buffer.Bytes()
+			}
+		}(writer)
+	}
+	wg.Wait()
+
+	if got := len(buffer.Bytes()); got > capacity {
+		t.Fatalf("buffer length = %d, capacity = %d", got, capacity)
 	}
 }

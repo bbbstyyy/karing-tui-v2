@@ -63,7 +63,7 @@ A sample unit is in [`packaging/systemd/karing-tui-v2.service`](packaging/system
 
 ## Upstream/core status
 
-The candidate core is **not yet approved for production builds**. See [`docs/upstream-audit.md`](docs/upstream-audit.md) and [`resources/core.lock.json`](resources/core.lock.json) for the current M0 blockers, including local sibling `replace` directives in the fixed KaringX/sing-box source and the non-reload behavior of the inspected `/configs` PUT handler.
+The candidate core is **not yet approved for production builds**. See [`docs/upstream-audit.md`](docs/upstream-audit.md) and [`resources/core.lock.json`](resources/core.lock.json) for the current M0 blockers. The six local sibling `replace` revisions are now commit-pinned, but the real Karing build recipe is still unresolved because Karing extension files require `with_karing` while the fixed Makefile default tags omit it, and the Makefile still invokes a version helper with `@latest`. The inspected `/configs` PUT handler also remains non-reload evidence.
 
 ## License
 
