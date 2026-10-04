@@ -1,5 +1,5 @@
 {
-  "schema": 9,
+  "schema": 10,
   "source_repository": "https://github.com/KaringX/sing-box",
   "candidate_ref": "karing_v1.13.19",
   "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
@@ -86,36 +86,55 @@
     }
   ],
   "build_verification": {
-    "status": "native_runtime_pending",
-    "provenance_run_8": {
+    "status": "approved",
+    "provenance_run_9": {
       "result": "success",
+      "workflow_run_id": 37216622450,
+      "head_sha": "701cbfcc2adc9ea94ef599ba499c2d5059324506",
       "linux_amd64_sha256": "829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569",
       "linux_arm64_sha256": "77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512",
+      "amd64_native_runner": "ubuntu-24.04",
+      "arm64_native_runner": "ubuntu-24.04-arm",
       "amd64_ordinary_uid_runtime_smoke": true,
-      "amd64_version_check_run": true,
-      "amd64_local_clash_api_smoke": true,
-      "amd64_mixed_inbound_smoke": true
+      "arm64_ordinary_uid_runtime_smoke": true,
+      "version_smoke": true,
+      "config_check_smoke": true,
+      "local_clash_api_smoke": true,
+      "mixed_inbound_smoke": true,
+      "sigterm_shutdown_smoke": true
     },
     "amd64_sha256": "829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569",
     "arm64_sha256": "77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512",
     "amd64_native_runtime_smoke": true,
-    "arm64_native_runtime_smoke": false,
+    "arm64_native_runtime_smoke": true,
     "config_check_smoke": true,
     "local_clash_api_smoke": true,
     "mixed_inbound_smoke": true,
+    "sigterm_shutdown_smoke": true,
     "hash_reproducibility_check": true,
     "unsafe_with_karing_upstream_cli_evidence": {
       "provenance_run": 5,
       "linux_amd64_sha256": "5b4e95ec70ef853063b05f58adf11c66a3bd7894818486ae5996e7877b591f42",
       "linux_arm64_sha256": "4af4440a99f8408f515f4906ac92ee123811eb6a3c63ac5bd17e8f98dd0841b4",
       "accepted": false,
-      "reason": "with_karing Linux CLI may terminate unrelated same-basename processes"
+      "reason": "upstream with_karing cmd/sing-box uses Karing app service lifecycle and unsafe same-basename singleton handling on Linux"
     }
   },
-  "build_approved": false,
-  "reasons": [
-    "arm64 has a reproducible build hash but has not yet passed the same ordinary-user runtime smoke on a native arm64 runner",
-    "the next provenance run must reproduce both recorded SHA-256 values on native x64/arm64 runners",
-    "PUT /configs must not be treated as a verified full reload contract without runtime evidence"
-  ]
+  "build_approved": true,
+  "reasons": [],
+  "approval": {
+    "scope": "M1 standalone Linux core build and local runtime smoke only",
+    "approved_candidate": "KaringX/sing-box@beddeababcc71dfb0c78124598b13341c06c69fb with project-owned cmd/karing-tui-core entrypoint",
+    "approved_architectures": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "excludes": [
+      "upstream Karing cmd/sing-box entrypoint",
+      "karing_v1.14.0 candidate",
+      "TUN, route takeover, system proxy mutation, TPROXY and redirect modes",
+      "Clash PUT /configs as a full-reload contract",
+      "production daemon/core wiring before apply/recovery integration tests"
+    ]
+  }
 }

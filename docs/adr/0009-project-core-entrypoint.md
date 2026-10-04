@@ -66,3 +66,15 @@ Recorded candidate hashes:
 The amd64 job also passed the full ordinary-user runtime smoke: injected version, configuration check, process start, unauthenticated Clash API rejection, Bearer-authenticated `/version`, all three Mixed SOCKS5 greetings, and clean SIGTERM shutdown.
 
 The next provenance gate runs each architecture on a native hosted runner and requires the rebuilt binary to match the recorded SHA-256 before executing the same smoke. This closes the plan's "each architecture basic executability" requirement rather than treating an arm64 cross-build alone as execution evidence.
+
+
+## Provenance approval
+
+Core-provenance run #9 completed successfully for both native Linux architectures.
+
+- linux/amd64 SHA-256: `829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569`
+- linux/arm64 SHA-256: `77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512`
+
+Both native runners passed the project-owned entrypoint's ordinary-user `version`, config `check`, `run`, authenticated Clash `/version`, all three Mixed SOCKS5 listener probes, and SIGTERM shutdown. The lock file therefore sets `build_approved=true` for this narrow M1 standalone Linux artifact scope.
+
+This approval does not enable daemon `core_supervision`; process wiring, generated config activation, apply rollback, crash recovery, and behavior-level route verification remain separate integration gates.

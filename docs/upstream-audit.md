@@ -48,6 +48,20 @@ The daemon must not infer successful full configuration activation from a `PUT /
 
 The fixed Karing CN preset contains 28 ordered groups. The project will vendor the exact source plus provenance in M2, after rule-resource and licensing closure is documented. It must not be replaced by a two-rule "CN direct / otherwise proxy" shortcut.
 
+### M1 standalone core build is approved
+
+Core-provenance run **#9** completed successfully on native Linux runners for both supported architectures.
+
+| Architecture | SHA-256 |
+| --- | --- |
+| linux/amd64 | `829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569` |
+| linux/arm64 | `77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512` |
+
+The run rebuilt the project-owned `cmd/karing-tui-core` entrypoint over the exact locked KaringX/sing-box 1.13.19 library baseline and verified the recorded hashes. On native amd64 and arm64 runners it also passed ordinary-user `version`, config `check`, `run`, Bearer-authenticated Clash `/version`, SOCKS5 negotiation on all three configured Mixed listeners, and SIGTERM shutdown.
+
+This approval is intentionally narrow. It approves the reproducible standalone Linux core artifact contract, not production daemon wiring, not the upstream Karing CLI, not 1.14, and not any TUN/system-proxy/route-takeover behavior.
+
+
 ## Management-plane toolchain and state dependency
 
 The management-plane Go version is pinned to `1.27.1` in `resources/toolchain.lock.json`. The core remains independently pinned to the version declared by its candidate source until its build process is made reproducible.

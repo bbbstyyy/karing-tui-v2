@@ -137,6 +137,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"core_exec_runner":         true,
 				"core_readiness_gate":      true,
 				"core_clash_version_probe": true,
+				"core_build_approved":      true,
 				"lifecycle_coordinator":    true,
 				"core_lifecycle_api":       false,
 				"proxy_inbound_model":      true,

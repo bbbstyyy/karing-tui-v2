@@ -62,7 +62,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !caps.Capabilities["daemon"] || !caps.Capabilities["sqlite_state"] || !caps.Capabilities["apply_journal"] || !caps.Capabilities["apply_coordinator"] || caps.Capabilities["managed_apply"] || !caps.Capabilities["persisted_core_intent"] || !caps.Capabilities["proxy_inbound_model"] || !caps.Capabilities["mixed_inbound_probe"] || caps.Capabilities["proxy_inbounds"] || caps.Capabilities["routing_ir"] {
+	if !caps.Capabilities["daemon"] || !caps.Capabilities["sqlite_state"] || !caps.Capabilities["apply_journal"] || !caps.Capabilities["apply_coordinator"] || caps.Capabilities["managed_apply"] || !caps.Capabilities["persisted_core_intent"] || !caps.Capabilities["core_build_approved"] || !caps.Capabilities["proxy_inbound_model"] || !caps.Capabilities["mixed_inbound_probe"] || caps.Capabilities["proxy_inbounds"] || caps.Capabilities["routing_ir"] {
 		t.Fatalf("unexpected capabilities: %+v", caps.Capabilities)
 	}
 
