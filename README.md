@@ -7,7 +7,7 @@ Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs
 ## Non-negotiable scope
 
 - Linux, ordinary user permissions.
-- No TUN, TPROXY, redirect, firewall manipulation, route takeover, or automatic privilege escalation.
+- No TUN, TPROXY, redirect, firewall manipulation, route takeover, automatic system-proxy mutation, or automatic privilege escalation.
 - Karing-style multi-layer routing will be preserved as **custom -> GeoSite -> GeoIP -> ACL -> FINAL**. Subscription/ISP routing layers are intentionally excluded.
 - CN preset behavior must not be reduced to a two-rule shortcut.
 - The daemon owns persistent configuration and future core supervision; the TUI is a disposable client.

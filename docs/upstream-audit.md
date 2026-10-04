@@ -79,7 +79,7 @@ Implemented now:
 - a first-class Rule/Direct/Selected inbound model with the plan defaults, strict loopback/distinct-port validation, and a SOCKS5 greeting probe for expected Mixed listeners;
 - a lifecycle coordinator that orders durable start/stop intent before supervisor actions and blocks restored starts while apply recovery is unresolved;
 - explicit capability flags that keep incomplete M1/M2 features false;
-- a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, and `auto_redirect` inbounds;
+- a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, `auto_redirect`, and `set_system_proxy=true` so imported configs cannot silently mutate Linux proxy settings;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
 Still open before M1 can be called complete: exposing the lifecycle coordinator through explicit daemon API commands, wiring lifecycle/apply coordination and the implemented probes to a provenance-approved locked core artifact, compiling the three modeled inbounds with correct Rule/DIRECT/CurrentSelected semantics, deterministic restricted native-config compilation, local proxy-behavior verification beyond the control API, generation retention/garbage collection, database online-backup integration, and process-level crash/power-loss fault injection across the real external core/SQLite boundary.

@@ -51,7 +51,7 @@ func ValidateProxyOnlyConfig(data []byte) error {
 		if _, forbidden := forbiddenInboundTypes[typeName]; forbidden {
 			return fmt.Errorf("%w: inbound %d uses type %q", ErrPrivilegedNetworkFeature, index, typeName)
 		}
-		for _, key := range []string{"auto_route", "auto_redirect"} {
+		for _, key := range []string{"auto_route", "auto_redirect", "set_system_proxy"} {
 			if enabled, _ := item[key].(bool); enabled {
 				return fmt.Errorf("%w: inbound %d enables %s", ErrPrivilegedNetworkFeature, index, key)
 			}

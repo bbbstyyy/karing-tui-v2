@@ -32,6 +32,19 @@ func TestValidateProxyOnlyConfigRejectsAutoRoute(t *testing.T) {
 	}
 }
 
+func TestValidateProxyOnlyConfigRejectsSystemProxyMutation(t *testing.T) {
+	data := []byte(`{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":2080,"set_system_proxy":true}]}`)
+	err := ValidateProxyOnlyConfig(data)
+	if !errors.Is(err, ErrPrivilegedNetworkFeature) {
+		t.Fatalf("expected privileged feature error, got %v", err)
+	}
+
+	allowed := []byte(`{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":2080,"set_system_proxy":false}]}`)
+	if err := ValidateProxyOnlyConfig(allowed); err != nil {
+		t.Fatalf("explicitly disabled system proxy should be allowed: %v", err)
+	}
+}
+
 func TestValidateProxyOnlyConfigRejectsMultipleJSONValues(t *testing.T) {
 	err := ValidateProxyOnlyConfig([]byte(`{} {}`))
 	if err == nil {
