@@ -52,6 +52,8 @@ The supervisor now has a Linux executable runner that creates a dedicated proces
 
 `internal/domain` now also fixes the three P0 proxy entry roles as Rule / Direct / Selected, with plan defaults `127.0.0.1:2080`, `:2081`, and `:2082`. Ports must be non-zero and distinct, and bind addresses must remain loopback. The local health layer can verify all three expected Mixed listeners with a SOCKS5 greeting before readiness succeeds; it does not silently pick replacement ports.
 
+`internal/daemon.LifecycleCoordinator` now connects durable desired state to the supervisor contract with crash-oriented ordering: Start persists `running` before requesting a start; Stop persists `stopped` before stopping the process; restore refuses to start while apply recovery is unresolved. This coordinator is not exposed as a lifecycle API yet.
+
 This is still infrastructure, not approval to launch an arbitrary core. `core_supervision` remains false until a reproducible locked KaringX/sing-box artifact, deterministic config generation, authenticated local health probing, and apply-journal integration are all wired together.
 
 

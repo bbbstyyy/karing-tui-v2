@@ -55,8 +55,9 @@ Implemented now:
 - a Linux process-group runner that rejects unsafe executable paths, plus readiness gating and fixed-capacity stdout/stderr buffers;
 - an authenticated loopback-only Clash `/version` probe validated against the fixed KaringX/sing-box source, including Bearer auth and the expected `sing-box`/`premium`/`meta` response contract;
 - a first-class Rule/Direct/Selected inbound model with the plan defaults, strict loopback/distinct-port validation, and a SOCKS5 greeting probe for expected Mixed listeners;
+- a lifecycle coordinator that orders durable start/stop intent before supervisor actions and blocks restored starts while apply recovery is unresolved;
 - explicit capability flags that keep incomplete M1/M2 features false;
 - a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, and `auto_redirect` inbounds;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
-Still open before M1 can be called complete: binding persisted start/stop intent to explicit daemon lifecycle API commands and the supervisor, binding the supervisor and implemented authenticated probe to a provenance-approved locked core artifact, three real proxy inbounds, deterministic restricted native-config compilation, local proxy-behavior verification beyond the control API, generation retention/garbage collection, database online-backup integration, and fault-injection coverage across the external core/SQLite transaction boundary.
+Still open before M1 can be called complete: exposing the lifecycle coordinator through explicit daemon API commands, wiring it and the implemented probes to a provenance-approved locked core artifact, compiling the three modeled inbounds with correct Rule/DIRECT/CurrentSelected semantics, deterministic restricted native-config compilation, local proxy-behavior verification beyond the control API, generation retention/garbage collection, database online-backup integration, and fault-injection coverage across the external core/SQLite transaction boundary.

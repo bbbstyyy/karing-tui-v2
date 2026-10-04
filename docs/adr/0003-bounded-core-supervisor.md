@@ -66,3 +66,17 @@ The fixed KaringX/sing-box source at `9f020fcefd4c9655689d503abd11572f31365b5a` 
 `internal/coreapi.ClashVersionProbe` implements that exact readiness contract. It requires a non-empty secret, accepts only an HTTP endpoint using a loopback IP literal and explicit port, disables environment proxy routing, refuses redirects, bounds the response body to 64 KiB, and validates the expected JSON shape before readiness can succeed.
 
 This probe is intentionally local. It does not test general Internet access or node reachability, so an external network outage cannot by itself become a supervisor restart trigger. A later M1 integration step must still verify the three expected proxy listeners and required local proxy behavior before an apply is committed.
+
+
+## Implementation refinement: durable lifecycle coordination
+
+The durable desired state and the in-memory supervisor are connected through `daemon.LifecycleCoordinator`, but the coordinator is not yet exposed as a public lifecycle endpoint.
+
+Ordering is deliberate:
+
+- Start first persists `running`, then requests supervisor start. A failed observed start does not rewrite the user's durable desire to run.
+- Stop first persists `stopped`, then requests supervisor stop. Even if process termination reports an error, a daemon restart must not infer that the user wanted automatic restart.
+- Startup restore does not start a desired-running core while `recovery_required` is set, because the applied generation may need reconciliation first.
+- Stop remains allowed during recovery, since recovery gating must never prevent an explicit user stop.
+
+The product-level `core_lifecycle_api` capability remains false until the coordinator is wired to an approved real-core configuration and exposed through authenticated local daemon commands.
