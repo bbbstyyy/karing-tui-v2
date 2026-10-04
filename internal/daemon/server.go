@@ -143,6 +143,7 @@ func (s *Server) handler(store *storage.Store) http.Handler {
 				"core_verified_exec_runner": true,
 				"generation_bound_runner":   true,
 				"managed_core_adapter":      true,
+				"operation_serialization":   true,
 				"core_distribution":         false,
 				"lifecycle_coordinator":     true,
 				"core_lifecycle_api":        false,
