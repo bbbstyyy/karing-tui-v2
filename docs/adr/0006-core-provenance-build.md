@@ -53,3 +53,14 @@ No artifact is published by this workflow.
 A successful build is necessary but not sufficient for `build_approved=true`. Approval additionally requires recorded hashes and runtime checks for ordinary-user execution, configuration validation, authenticated local Clash API, expected loopback Mixed listeners, and the project's no-TUN configuration restrictions.
 
 The fixed `PUT /configs` behavior remains explicitly non-reload evidence; managed configuration application continues to use controlled process activation and rollback.
+
+
+## Provenance run correction
+
+The first executable provenance runs falsified two earlier assumptions.
+
+First, the commit IDs embedded in the commented pseudo-version lines of the fixed `go.mod` are older branch points, not a complete synchronized workspace for the selected core commit. The build failed on missing `sing/common/cleanup`, `sing-tun/gtcpip`, and `sing-quic/hysteria2/realm`. The candidate sibling snapshot is therefore resolved from the KaringX branch names documented by those comments, selecting the latest commit not later than the core candidate timestamp.
+
+Second, the fixed upstream standalone workflow's default tag list is not sufficient for this Karing fork. Unconditional core paths import `common/debug`, `common/fix`, `common/statistics`, and `common/gofree`, but those packages only have files under `with_karing`. Separately, `include/registry.go` unconditionally imports `protocol/shadowsocksr`, whose implementation is guarded by `with_shadowsocksr`.
+
+The corrected reference build therefore keeps the upstream `DEFAULT_BUILD_TAGS_OTHERS` string as an auditable base and appends exactly `with_karing,with_shadowsocksr`. This change remains provisional until the provenance matrix proves both amd64 and arm64.

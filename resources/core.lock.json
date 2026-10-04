@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "source_repository": "https://github.com/KaringX/sing-box",
   "candidate_ref": "karing_v1.14.0",
   "candidate_commit": "9f020fcefd4c9655689d503abd11572f31365b5a",
@@ -11,46 +11,58 @@
       "module": "github.com/sagernet/sing",
       "replace_path": "../../KaringX/sing",
       "repository": "https://github.com/KaringX/sing",
-      "commit": "12e7cea731746a4511e56394f218e781b5d3b420",
-      "declared_go_version": "1.24.0"
+      "source_ref": "karing_v0.9.0-beta.4",
+      "commit": "7310c7583c08cdb509bd447e9784385f252b9bac",
+      "snapshot_date": "2026-09-04T06:27:50Z",
+      "declared_go_version": "1.25.0"
     },
     {
       "module": "github.com/sagernet/sing-quic",
       "replace_path": "../../KaringX/sing-quic",
       "repository": "https://github.com/KaringX/sing-quic",
-      "commit": "0122883b056b4473b0395f5d2b6724e670f8ed7a",
-      "declared_go_version": "1.24.0"
+      "source_ref": "karing-v0.7.0-beta.4",
+      "commit": "f2045467739971be776c58d7796096adeb8ca207",
+      "snapshot_date": "2026-09-04T08:18:36Z",
+      "declared_go_version": "1.25.0"
     },
     {
       "module": "github.com/sagernet/quic-go",
       "replace_path": "../../KaringX/quic-go",
       "repository": "https://github.com/KaringX/quic-go",
-      "commit": "e535214ac88c2bd220c4d1ae22ef8c45fec14421",
-      "declared_go_version": "1.24"
+      "source_ref": "karing_v0.61.0-sing-box-mod.7",
+      "commit": "842e428a76abf3cea3dfcc608bea03696144b900",
+      "snapshot_date": "2026-09-04T06:48:51Z",
+      "declared_go_version": "1.25.0"
     },
     {
       "module": "github.com/sagernet/sing-tun",
       "replace_path": "../../KaringX/sing-tun",
       "repository": "https://github.com/KaringX/sing-tun",
-      "commit": "60cad1147202ae1bdf60035a7e740530a00f6d09",
-      "declared_go_version": "1.24.7"
+      "source_ref": "karing_v0.9.0-beta.4",
+      "commit": "73a18704f5717f7c4a66d563ffcb8759280c1e0c",
+      "snapshot_date": "2026-09-04T08:22:02Z",
+      "declared_go_version": "1.25.0"
     },
     {
       "module": "github.com/sagernet/wireguard-go",
       "replace_path": "../../KaringX/wireguard-go",
       "repository": "https://github.com/KaringX/wireguard-go",
-      "commit": "7d2d140c511350001d0152228b5b0792d7263169",
-      "declared_go_version": "1.20"
+      "source_ref": "karing_v0.0.5",
+      "commit": "38074c8b657d6956f4ec2d89e92391b5bafd042f",
+      "snapshot_date": "2026-09-04T07:57:15Z",
+      "declared_go_version": "1.25"
     },
     {
       "module": "github.com/sagernet/tailscale",
       "replace_path": "../../KaringX/tailscale",
       "repository": "https://github.com/KaringX/tailscale",
-      "commit": "7007033a39f94fe88a693fb6b79ffb57de5f9d23",
-      "declared_go_version": "1.24.1"
+      "source_ref": "karing_v1.102.1-sing-box-1.14-mod.4",
+      "commit": "903284baa2ca8274e7f12f2e9b90b30ba9e1b28c",
+      "snapshot_date": "2026-09-04T07:13:03Z",
+      "declared_go_version": "1.25.5"
     }
   ],
-  "sibling_replacements_locked": true,
+  "sibling_replacements_locked": false,
   "fixed_makefile_evidence": {
     "default_tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
     "default_tags": "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0",
@@ -61,19 +73,24 @@
   "karing_build_tag_evidence": {
     "tag": "with_karing",
     "required_by": [
-      "cmd/sing-box/cmd_extension_karing.go",
-      "cmd/sing-box/cmd_run_extension_karing.go",
+      "common/debug/debug.go",
+      "common/fix/socksaddr_safe.go",
+      "common/statistics/statistics.go",
+      "common/gofree/gofree.go",
       "experimental/clashapi/api_extension_karing.go"
     ],
+    "imported_from_unconditional_core_paths": true,
     "present_in_default_make_tags": false,
-    "standalone_linux_reference_requires_tag": false,
-    "project_decision": "The Linux TUI uses a standalone core process and does not depend on Karing app FFI/extension endpoints guarded by with_karing. Karing-specific extensions remain compatibility evidence, not a prerequisite for the first standalone Linux core build."
+    "standalone_linux_reference_requires_tag": true,
+    "additional_required_tag": "with_shadowsocksr",
+    "additional_required_tag_evidence": "include/registry.go unconditionally imports and registers protocol/shadowsocksr while its implementation is guarded by //go:build with_shadowsocksr",
+    "conclusion": "the fixed upstream Linux workflow/default tag list is stale or incomplete for this Karing fork; the project must append with_karing and with_shadowsocksr and verify the result"
   },
   "build_approved": false,
   "reasons": [
-    "the locked amd64/arm64 pure-Go build workflow has not yet completed and its output hashes have not yet been recorded",
-    "ordinary-UID runtime behavior, config check, authenticated local Clash API, and three Mixed listener behavior have not yet all been exercised against the built artifact",
-    "the fixed source still requires the pinned sibling workspace layout rather than a standalone checkout",
+    "the corrected sibling snapshot set and fork-required build tags have not yet completed the amd64/arm64 provenance build",
+    "resulting binary hashes have not yet been recorded",
+    "ordinary-UID config check, authenticated local Clash API, and three Mixed listener behavior have not yet all been exercised against the built artifact",
     "PUT /configs at the fixed candidate is not a verified full configuration reload mechanism"
   ],
   "fixed_upstream_workflow_evidence": {
@@ -83,6 +100,15 @@
       "cgo_enabled": false,
       "tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
       "command": "go build -v -trimpath -o dist/sing-box -tags \"${BUILD_TAGS}\" -ldflags \"-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=\" ./cmd/sing-box"
+    },
+    "observed_result": {
+      "status": "insufficient_for_fixed_karing_fork",
+      "verification_run": "core-provenance #1/#2/#3",
+      "failures": [
+        "default tags omit with_karing although unconditional core code imports packages whose only files require with_karing",
+        "default tags omit with_shadowsocksr although include/registry.go imports protocol/shadowsocksr",
+        "pseudo-version comment commits in go.mod do not contain APIs used by the fixed core commit"
+      ]
     }
   },
   "reference_linux_cli_build": {
@@ -99,15 +125,37 @@
     "version_value": "karing-tui-v2-core-1.14.0-9f020fce",
     "version_strategy": "inject a fixed constant.Version with -ldflags; do not invoke the Makefile read_tag@latest helper",
     "verification_script": "scripts/verify-core-build.sh",
-    "workflow": ".github/workflows/core-provenance.yml"
+    "workflow": ".github/workflows/core-provenance.yml",
+    "extra_tags": [
+      "with_karing",
+      "with_shadowsocksr"
+    ],
+    "tags_strategy": "use release/DEFAULT_BUILD_TAGS_OTHERS exactly as base, then append the two fork-required tags with_karing and with_shadowsocksr"
   },
   "build_verification": {
-    "status": "pending_ci",
+    "status": "retry_pending",
+    "previous_failed_runs": [
+      1,
+      2,
+      3
+    ],
+    "failure_classification": "source snapshot/tag mismatch discovered by provenance build",
     "linux_amd64_sha256": null,
     "linux_arm64_sha256": null,
     "ordinary_uid_version_smoke": false,
     "config_check_smoke": false,
     "local_clash_api_smoke": false,
     "mixed_inbound_smoke": false
+  },
+  "sibling_snapshot_resolution": {
+    "method": "latest commit on the KaringX branch named by the core go.mod comment, not later than the core candidate timestamp",
+    "core_candidate_timestamp": "2026-09-15T06:01:00Z",
+    "required_api_presence_verified": true,
+    "required_api_evidence": [
+      "KaringX/sing@7310c758... contains common/cleanup",
+      "KaringX/sing-quic@f204546... contains hysteria2/realm",
+      "KaringX/sing-tun@73a1870... contains gtcpip/checksum and gtcpip/header"
+    ],
+    "status": "candidate_set_pending_build"
   }
 }

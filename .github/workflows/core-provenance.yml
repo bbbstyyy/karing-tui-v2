@@ -7,12 +7,6 @@ on:
       - '.github/workflows/core-provenance.yml'
       - 'scripts/verify-core-build.sh'
       - 'resources/core.lock.json'
-  pull_request:
-    paths:
-      - '.github/workflows/core-provenance.yml'
-      - 'scripts/verify-core-build.sh'
-      - 'resources/core.lock.json'
-
 permissions:
   contents: read
 

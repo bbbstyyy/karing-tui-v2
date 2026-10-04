@@ -67,14 +67,20 @@ done < <(
 
 cd "$core_dir"
 
-actual_tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+base_tags="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
 expected_tags="$(jq -r '.fixed_makefile_evidence.default_tags' "$lock")"
-if [[ "$actual_tags" != "$expected_tags" ]]; then
+if [[ "$base_tags" != "$expected_tags" ]]; then
   echo "build tag drift detected" >&2
-  echo "got:  $actual_tags" >&2
+  echo "got:  $base_tags" >&2
   echo "want: $expected_tags" >&2
   exit 1
 fi
+extra_tags="$(jq -r '.reference_linux_cli_build.extra_tags | join(",")' "$lock")"
+actual_tags="$base_tags"
+if [[ -n "$extra_tags" ]]; then
+  actual_tags="$actual_tags,$extra_tags"
+fi
+echo "CORE_BUILD_TAGS=$actual_tags"
 
 actual_ldflags="$(cat release/LDFLAGS)"
 expected_ldflags="$(jq -r '.fixed_makefile_evidence.ldflags' "$lock")"
