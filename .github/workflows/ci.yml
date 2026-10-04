@@ -22,8 +22,8 @@ jobs:
       - name: Dependency lock check
         run: |
           go mod tidy
-          if ! git diff --quiet -- go.mod || test -n "$(git ls-files --others --exclude-standard -- go.sum)"; then
-            git diff -- go.mod
+          if ! git diff --quiet -- go.mod go.sum || test -n "$(git ls-files --others --exclude-standard -- go.sum)"; then
+            git diff -- go.mod go.sum
             if test -f go.sum; then
               echo "--- generated go.sum ---"
               cat go.sum
