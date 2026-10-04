@@ -35,7 +35,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	go func() { errCh <- first.Run(ctx) }()
 
 	api := client.New(paths.Socket)
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(4 * time.Second)
 	var statusErr error
 	for time.Now().Before(deadline) {
 		requestCtx, requestCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -54,7 +54,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.APIVersion != "v1" || status.CoreState != "not-configured" {
+	if status.APIVersion != "v1" || status.CoreState != "not-configured" || status.ConfigRevision != 0 || status.RecoveryRequired {
 		t.Fatalf("unexpected status: %+v", status)
 	}
 
@@ -62,8 +62,16 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !caps.Capabilities["daemon"] || caps.Capabilities["routing_ir"] {
+	if !caps.Capabilities["daemon"] || !caps.Capabilities["sqlite_state"] || !caps.Capabilities["apply_journal"] || caps.Capabilities["routing_ir"] {
 		t.Fatalf("unexpected capabilities: %+v", caps.Capabilities)
+	}
+
+	dbInfo, err := os.Stat(paths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dbInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("database permissions = %04o, want 0600", got)
 	}
 
 	second := New(paths)
@@ -79,7 +87,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		if err != nil {
 			t.Fatalf("daemon shutdown: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(4 * time.Second):
 		t.Fatal("daemon did not shut down")
 	}
 }

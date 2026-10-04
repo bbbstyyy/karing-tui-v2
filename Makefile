@@ -1,10 +1,13 @@
-.PHONY: build test vet fmt-check
+.PHONY: build test test-race vet fmt-check
 
 build:
 	go build -trimpath ./cmd/karing-tui
 
 test:
 	go test ./...
+
+test-race:
+	go test -race ./...
 
 vet:
 	go vet ./...

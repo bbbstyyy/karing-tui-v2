@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "dependencies": [
+    {
+      "module": "modernc.org/sqlite",
+      "version": "v1.60.1",
+      "source": "https://gitlab.com/cznic/sqlite",
+      "mirror": "https://github.com/modernc-org/sqlite",
+      "license": "BSD-3-Clause",
+      "purpose": "CGO-free SQLite driver for daemon state, generations, and apply journal"
+    },
+    {
+      "module": "modernc.org/libc",
+      "version": "v1.77.1",
+      "source": "https://gitlab.com/cznic/libc",
+      "purpose": "explicitly pinned to the exact version required by modernc.org/sqlite v1.60.1"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/client"
@@ -85,7 +86,17 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	if *jsonOutput {
 		return printJSON(stdout, stderr, status)
 	}
-	fmt.Fprintf(stdout, "daemon: running\napi: %s\nversion: %s\nrevision: %d\ncore: %s\n", status.APIVersion, status.DaemonVersion, status.ConfigRevision, status.CoreState)
+	fmt.Fprintf(
+		stdout,
+		"daemon: running\napi: %s\nversion: %s\nrevision: %d\napplied generation: %s\nlast-known-good: %s\nrecovery required: %t\ncore: %s\n",
+		status.APIVersion,
+		status.DaemonVersion,
+		status.ConfigRevision,
+		formatGenerationID(status.AppliedGenerationID),
+		formatGenerationID(status.LastKnownGoodGenerationID),
+		status.RecoveryRequired,
+		status.CoreState,
+	)
 	return 0
 }
 
@@ -115,6 +126,13 @@ func printJSON(stdout, stderr io.Writer, value any) int {
 		return 1
 	}
 	return 0
+}
+
+func formatGenerationID(id *int64) string {
+	if id == nil {
+		return "none"
+	}
+	return strconv.FormatInt(*id, 10)
 }
 
 func printUsage(w io.Writer) {

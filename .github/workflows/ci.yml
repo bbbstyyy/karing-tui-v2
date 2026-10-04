@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,11 +19,26 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - name: Dependency lock check
+        run: |
+          go mod tidy
+          if ! git diff --quiet -- go.mod || test -n "$(git ls-files --others --exclude-standard -- go.sum)"; then
+            git diff -- go.mod
+            if test -f go.sum; then
+              echo "--- generated go.sum ---"
+              cat go.sum
+            fi
+            exit 1
+          fi
+      - name: Verify modules
+        run: go mod verify
       - name: Format check
         run: make fmt-check
       - name: Vet
         run: make vet
       - name: Test
         run: make test
+      - name: Race test
+        run: make test-race
       - name: Build
         run: make build

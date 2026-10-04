@@ -42,6 +42,9 @@ func TestResolveAndEnsureUsesPrivateOverride(t *testing.T) {
 	if got := info.Mode().Perm(); got != 0o700 {
 		t.Fatalf("runtime permissions = %04o, want 0700", got)
 	}
+	if want := filepath.Join(paths.State, "state.db"); paths.Database != want {
+		t.Fatalf("database path = %q, want %q", paths.Database, want)
+	}
 }
 
 func TestResolveRejectsWorldWritableRuntimeDirectory(t *testing.T) {

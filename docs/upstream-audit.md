@@ -32,11 +32,13 @@ The fixed Karing CN preset contains 28 ordered groups. The project will vendor t
 
 Source: <https://github.com/KaringX/karing/blob/9d28b22fbbcca5818d147629aae151d49d4dcb7b/assets/datas/preset/cn.json>
 
-## Management-plane toolchain
+## Management-plane toolchain and state dependency
 
 The management-plane Go version is pinned to `1.27.1` in `resources/toolchain.lock.json`. The core remains independently pinned to the version declared by its candidate source until its build process is made reproducible.
 
-## First implementation slice
+The state layer uses `modernc.org/sqlite v1.60.1`, a CGO-free SQLite driver, and explicitly pins `modernc.org/libc v1.77.1`, the version required by that driver release. The driver is BSD-3-Clause; the dependency selection is recorded in `resources/dependencies.lock.json`. This choice does not alter the still-open project/upstream/resource license closure.
+
+## Implemented foundation
 
 Implemented now:
 
@@ -44,8 +46,13 @@ Implemented now:
 - single-user Unix socket daemon with `0600` socket permissions;
 - versioned `/v1/status`, `/v1/capabilities`, and `/v1/healthz` endpoints;
 - CLI status/capability clients;
+- a private SQLite database with schema migration metadata, WAL mode, full synchronous durability and startup quick-check;
+- immutable candidate generations with SHA-256 identity and a 64 MiB compiled-config ceiling;
+- confirmed revision, applied generation, last-known-good generation and recovery-required state;
+- a one-at-a-time apply journal with prepare/activate/verify/rollback/commit phases;
+- startup interruption recovery that blocks new applies when core reconciliation could be required;
 - explicit capability flags that keep incomplete M1/M2 features false;
 - a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, and `auto_redirect` inbounds;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
-Still open before M1 can be called complete: SQLite state and migrations, generation/apply journal, core supervisor, three real proxy inbounds, local behavior health checks, deterministic restricted native-config compilation, and crash-recovery tests.
+Still open before M1 can be called complete: core supervisor and bounded restart policy, three real proxy inbounds, deterministic restricted native-config compilation, local proxy behavior health checks, generation retention/garbage collection, database online-backup integration, and fault-injection coverage across the external core/SQLite transaction boundary.

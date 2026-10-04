@@ -9,20 +9,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
+	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 	"github.com/bbbstyyy/karing-tui-v2/internal/version"
 )
 
 var ErrAlreadyRunning = errors.New("daemon already running")
 
 type Server struct {
-	paths    runtimepath.Paths
-	started  time.Time
-	revision atomic.Uint64
+	paths   runtimepath.Paths
+	started time.Time
 }
 
 func New(paths runtimepath.Paths) *Server {
@@ -51,8 +50,17 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("secure unix socket: %w", err)
 	}
 
+	store, err := storage.Open(ctx, s.paths.Database)
+	if err != nil {
+		return fmt.Errorf("open daemon state: %w", err)
+	}
+	defer store.Close()
+	if _, err := store.RecoverInterrupted(ctx); err != nil {
+		return fmt.Errorf("recover interrupted apply journal: %w", err)
+	}
+
 	httpServer := &http.Server{
-		Handler:           s.handler(),
+		Handler:           s.handler(store),
 		ReadHeaderTimeout: 2 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
@@ -80,22 +88,34 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-func (s *Server) handler() http.Handler {
+func (s *Server) handler(store *storage.Store) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := store.Snapshot(r.Context()); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "state database unavailable"})
+			return
+		}
 		writeJSON(w, http.StatusOK, apiv1.HealthResponse{Status: "ok"})
 	})
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		snapshot, err := store.Snapshot(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, apiv1.ErrorResponse{Error: "read persistent state"})
+			return
+		}
 		now := time.Now().UTC()
 		writeJSON(w, http.StatusOK, apiv1.StatusResponse{
-			APIVersion:     apiv1.Version,
-			DaemonVersion:  version.Version,
-			DaemonCommit:   version.Commit,
-			PID:            os.Getpid(),
-			StartedAt:      s.started.Format(time.RFC3339Nano),
-			UptimeSeconds:  int64(now.Sub(s.started).Seconds()),
-			ConfigRevision: s.revision.Load(),
-			CoreState:      "not-configured",
+			APIVersion:                apiv1.Version,
+			DaemonVersion:             version.Version,
+			DaemonCommit:              version.Commit,
+			PID:                       os.Getpid(),
+			StartedAt:                 s.started.Format(time.RFC3339Nano),
+			UptimeSeconds:             int64(now.Sub(s.started).Seconds()),
+			ConfigRevision:            snapshot.Revision,
+			AppliedGenerationID:       snapshot.AppliedGenerationID,
+			LastKnownGoodGenerationID: snapshot.LastKnownGoodGenerationID,
+			RecoveryRequired:          snapshot.RecoveryRequired,
+			CoreState:                 "not-configured",
 		})
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
@@ -106,8 +126,10 @@ func (s *Server) handler() http.Handler {
 				"unix_socket_api":         true,
 				"secure_runtime_paths":    true,
 				"proxy_only_import_guard": true,
+				"sqlite_state":            true,
+				"apply_journal":           true,
+				"crash_recovery_state":    true,
 				"core_supervision":        false,
-				"sqlite_state":            false,
 				"routing_ir":              false,
 				"cn_preset":               false,
 				"subscriptions":           false,

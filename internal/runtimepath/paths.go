@@ -13,12 +13,13 @@ const appName = "karing-tui-v2"
 var ErrRuntimeDirUnavailable = errors.New("secure runtime directory unavailable")
 
 type Paths struct {
-	Config  string
-	Data    string
-	State   string
-	Cache   string
-	Runtime string
-	Socket  string
+	Config   string
+	Data     string
+	State    string
+	Cache    string
+	Runtime  string
+	Socket   string
+	Database string
 }
 
 func Resolve() (Paths, error) {
@@ -43,14 +44,19 @@ func Resolve() (Paths, error) {
 		return Paths{}, fmt.Errorf("%w: %v", ErrRuntimeDirUnavailable, err)
 	}
 
+	configDir := filepath.Join(configBase, appName)
+	dataDir := filepath.Join(dataBase, appName)
+	stateDir := filepath.Join(stateBase, appName)
+	cacheDir := filepath.Join(cacheBase, appName)
 	runtimeDir := filepath.Join(runtimeBase, appName)
 	return Paths{
-		Config:  filepath.Join(configBase, appName),
-		Data:    filepath.Join(dataBase, appName),
-		State:   filepath.Join(stateBase, appName),
-		Cache:   filepath.Join(cacheBase, appName),
-		Runtime: runtimeDir,
-		Socket:  filepath.Join(runtimeDir, "daemon.sock"),
+		Config:   configDir,
+		Data:     dataDir,
+		State:    stateDir,
+		Cache:    cacheDir,
+		Runtime:  runtimeDir,
+		Socket:   filepath.Join(runtimeDir, "daemon.sock"),
+		Database: filepath.Join(stateDir, "state.db"),
 	}, nil
 }
 
