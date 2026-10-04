@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "source_repository": "https://github.com/KaringX/sing-box",
+  "candidate_ref": "karing_v1.14.0",
+  "candidate_commit": "9f020fcefd4c9655689d503abd11572f31365b5a",
+  "module": "github.com/sagernet/sing-box",
+  "declared_go_version": "1.25.5",
+  "build_approved": false,
+  "reasons": [
+    "fixed candidate go.mod contains local ../../KaringX/... replace directives and is not yet independently reproducible",
+    "binary provenance, build tags, sibling fork revisions, and behavior tests are not yet locked",
+    "PUT /configs at the fixed candidate is not a verified full configuration reload mechanism"
+  ]
+}
