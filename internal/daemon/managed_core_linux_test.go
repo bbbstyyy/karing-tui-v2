@@ -234,7 +234,6 @@ func TestManagedCoreActivateVerifyAndRollback(t *testing.T) {
 	}
 }
 
-
 func TestManagedCoreApplyPreservesStoppedIntent(t *testing.T) {
 	files := &fakeGenerationFiles{path: "/state/config.json"}
 	binder := &fakeBinder{}

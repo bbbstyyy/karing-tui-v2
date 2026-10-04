@@ -62,9 +62,9 @@ type ManagedCore struct {
 	stdout     *core.RingBuffer
 	stderr     *core.RingBuffer
 
-	transitionMu        sync.Mutex
-	pollInterval        time.Duration
-	applyKeepRunning    bool
+	transitionMu     sync.Mutex
+	pollInterval     time.Duration
+	applyKeepRunning bool
 }
 
 func NewManagedCore(state managedCoreState, options ManagedCoreOptions) (*ManagedCore, error) {
