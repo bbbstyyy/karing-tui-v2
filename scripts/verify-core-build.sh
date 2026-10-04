@@ -105,10 +105,5 @@ sha="$(sha256sum "$out" | awk '{print $1}')"
 echo "CORE_SHA256_LINUX_${arch^^}=$sha"
 
 if [[ "$arch" == "amd64" ]]; then
-  version_output="$("$out" version)"
-  printf '%s\n' "$version_output"
-  if ! grep -Fq "$version" <<<"$version_output"; then
-    echo "built core version output does not contain locked version $version" >&2
-    exit 1
-  fi
+  "$repo_root/scripts/smoke-core-runtime.sh" "$out"
 fi

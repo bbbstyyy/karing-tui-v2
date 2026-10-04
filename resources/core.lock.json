@@ -1,5 +1,5 @@
 {
-  "schema": 5,
+  "schema": 6,
   "source_repository": "https://github.com/KaringX/sing-box",
   "candidate_ref": "karing_v1.13.19",
   "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
@@ -54,7 +54,10 @@
     "version_value": "karing-tui-v2-core-1.13.19-beddeaba",
     "version_strategy": "inject a fixed constant.Version with -ldflags; never invoke the Makefile read_tag@latest helper",
     "verification_script": "scripts/verify-core-build.sh",
-    "workflow": ".github/workflows/core-provenance.yml"
+    "workflow": ".github/workflows/core-provenance.yml",
+    "service_config_required": true,
+    "service_config_reason": "with_karing selects cmd_extension_karing.go, whose PersistentPreRunE loads --service-config before version/check/run",
+    "runtime_smoke_script": "scripts/smoke-core-runtime.sh"
   },
   "rejected_candidates": [
     {
@@ -76,9 +79,13 @@
     }
   ],
   "build_verification": {
-    "status": "pending_ci",
-    "linux_amd64_sha256": null,
-    "linux_arm64_sha256": null,
+    "status": "binary_builds_succeeded_runtime_smoke_pending",
+    "provenance_run": 5,
+    "linux_amd64_sha256": "5b4e95ec70ef853063b05f58adf11c66a3bd7894818486ae5996e7877b591f42",
+    "linux_arm64_sha256": "4af4440a99f8408f515f4906ac92ee123811eb6a3c63ac5bd17e8f98dd0841b4",
+    "amd64_build_succeeded": true,
+    "arm64_build_succeeded": true,
+    "amd64_job_failure_after_build": "bare version command rejected because with_karing requires --service-config",
     "ordinary_uid_version_smoke": false,
     "config_check_smoke": false,
     "local_clash_api_smoke": false,
@@ -86,9 +93,8 @@
   },
   "build_approved": false,
   "reasons": [
-    "the karing_v1.13.19 amd64/arm64 provenance build has not yet completed",
-    "resulting binary hashes have not yet been recorded",
-    "ordinary-UID config check, authenticated local Clash API, and three Mixed listener behavior have not yet all been exercised against the built artifact",
+    "ordinary-UID service-config version/check/run smoke has not yet completed",
+    "authenticated local Clash API and all three configured Mixed listeners have not yet been exercised against the built artifact",
     "PUT /configs must not be treated as a verified full reload contract without runtime evidence"
   ]
 }
