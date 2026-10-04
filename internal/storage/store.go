@@ -432,7 +432,7 @@ func (s *Store) GenerationConfig(ctx context.Context, generationID int64) ([]byt
 }
 
 func (s *Store) Attempt(ctx context.Context, attemptID int64) (Attempt, error) {
-	row := s.db.QueryRowContext(ctx, attemptSelect+` WHERE j\.id = ?``, attemptID)
+	row := s.db.QueryRowContext(ctx, attemptSelect+` WHERE j.id = ?`, attemptID)
 	return scanAttempt(row)
 }
 
@@ -471,7 +471,7 @@ func (s *Store) advanceFromAny(ctx context.Context, attemptID int64, allowed []P
 }
 
 func readAttemptTx(ctx context.Context, tx *sql.Tx, attemptID int64) (Attempt, error) {
-	row := tx.QueryRowContext(ctx, attemptSelect+` WHERE j\.id = ?`, attemptID)
+	row := tx.QueryRowContext(ctx, attemptSelect+` WHERE j.id = ?`, attemptID)
 	return scanAttempt(row)
 }
 
@@ -592,7 +592,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		statements := []string{
 			`CREATE TABLE generations (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				base_revision INTEGER NOT NULL CHECK(\base_revision >= 0),
+				base_revision INTEGER NOT NULL CHECK(base_revision >= 0),
 				target_revision INTEGER NOT NULL CHECK(target_revision = base_revision + 1),
 				config_json BLOB NOT NULL,
 				config_sha256 TEXT NOT NULL CHECK(length(config_sha256) = 64),
