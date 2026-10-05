@@ -95,10 +95,106 @@ func TestCompileNativeConfigBuildsDeterministicRunnableEnvelope(t *testing.T) {
 	}
 }
 
-func TestCompileNativeConfigRejectsDomainNodeUntilDNSCompilerExists(t *testing.T) {
+func TestCompileNativeConfigRejectsDomainNodeWithoutBoundResolver(t *testing.T) {
 	input := nativeTestInput(t, "proxy.example.com")
 	if _, err := CompileNativeConfig(input); !errors.Is(err, ErrDNSRequired) {
 		t.Fatalf("domain node error = %v", err)
+	}
+}
+
+func TestCompileNativeConfigAllowsDomainNodeWithExplicitOutboundDNS(t *testing.T) {
+	input := nativeTestInput(t, "proxy.example.com")
+	dns, err := CompileOutboundDNS(domain.DNSPlan{
+		Profiles: []domain.DNSProfile{{
+			ID:        "outbound",
+			Role:      domain.DNSRoleOutbound,
+			Transport: domain.DNSTransportUDP,
+			Server:    "192.0.2.53",
+			Port:      53,
+		}},
+		OutboundProfileID: "outbound",
+	}, input.Targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := BindNodeDomainResolver(input.Nodes, dns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.DNS = dns
+	input.Nodes = nodes
+
+	artifact, err := CompileNativeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := artifact.Manifest.DNSServerTags, []string{dns.OutboundResolverTag, nativeDNSFailClosedTag}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DNS manifest tags = %#v, want %#v", got, want)
+	}
+
+	var decoded struct {
+		DNS struct {
+			Servers []map[string]any `json:"servers"`
+			Final   string           `json:"final"`
+		} `json:"dns"`
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal(artifact.JSON, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.DNS.Servers) != 2 {
+		t.Fatalf("DNS servers = %d, want outbound + fail-closed", len(decoded.DNS.Servers))
+	}
+	if decoded.DNS.Servers[0]["type"] != "udp" ||
+		decoded.DNS.Servers[0]["tag"] != dns.OutboundResolverTag ||
+		decoded.DNS.Servers[0]["detour"] != input.Targets.DirectTag {
+		t.Fatalf("unexpected outbound DNS server: %+v", decoded.DNS.Servers[0])
+	}
+	if decoded.DNS.Servers[1]["type"] != "predefined" ||
+		decoded.DNS.Servers[1]["tag"] != nativeDNSFailClosedTag ||
+		decoded.DNS.Servers[1]["rcode"] != "REFUSED" {
+		t.Fatalf("unexpected fail-closed DNS server: %+v", decoded.DNS.Servers[1])
+	}
+	if decoded.DNS.Final != nativeDNSFailClosedTag || decoded.DNS.Final == dns.OutboundResolverTag {
+		t.Fatalf("DNS final = %q, want fail-closed tag", decoded.DNS.Final)
+	}
+	if got := decoded.Outbounds[1]["domain_resolver"]; got != dns.OutboundResolverTag {
+		t.Fatalf("domain node resolver = %#v, want %q", got, dns.OutboundResolverTag)
+	}
+}
+
+func TestCompileNativeConfigRejectsDNSClosureOutOfDependencyOrder(t *testing.T) {
+	input := nativeTestInput(t, "127.0.0.1")
+	input.DNS = CompiledDNS{
+		Servers: []DNSServerConfig{
+			{
+				Type:           "tcp",
+				Tag:            "dns-outbound",
+				Server:         "resolver.example.com",
+				ServerPort:     53,
+				Detour:         input.Targets.DirectTag,
+				DomainResolver: "dns-bootstrap",
+			},
+			{
+				Type:       "udp",
+				Tag:        "dns-bootstrap",
+				Server:     "192.0.2.53",
+				ServerPort: 53,
+				Detour:     input.Targets.DirectTag,
+			},
+		},
+		OutboundResolverTag: "dns-outbound",
+	}
+	if _, err := CompileNativeConfig(input); !errors.Is(err, ErrNativeConfigClosure) {
+		t.Fatalf("out-of-order DNS dependency error = %v", err)
+	}
+}
+
+func TestCompileNativeConfigRejectsResolverOnIPLiteralNode(t *testing.T) {
+	input := nativeTestInput(t, "127.0.0.1")
+	input.Nodes.Outbounds[0].DomainResolver = "dns-unexpected"
+	if _, err := CompileNativeConfig(input); !errors.Is(err, ErrNativeConfigClosure) {
+		t.Fatalf("IP node resolver error = %v", err)
 	}
 }
 

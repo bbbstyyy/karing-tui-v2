@@ -44,13 +44,9 @@ Proxy-aware target DNS and Group DNS will have separate detour semantics once th
 
 This binding is independent of target website DNS. It resolves only the server address of non-DIRECT proxy outbounds, matching the approved core's dial-field semantics.
 
-## Still not inserted into the native envelope
+## Native-envelope follow-up
 
-This stage deliberately stops before adding a root `dns` object to `CompileNativeConfig`.
-
-That keeps the runnable envelope from accidentally making Outbound DNS the implicit resolver for Direct/Proxy/Group target resolution before those roles are defined.
-
-The next native DNS step must decide an explicit final/fallback policy and target-resolution rules so no role is widened merely because a server appears first in `dns.servers`.
+ADR 0023 closes the next boundary by inserting this resolver closure into the native envelope with an explicit fail-closed DNS final. The Outbound resolver is therefore available only through explicit `domain_resolver` references and is not promoted to general target DNS.
 
 ## Remaining work
 

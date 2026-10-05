@@ -225,7 +225,7 @@ func integrationCoreConfig(t *testing.T, inbounds domain.InboundSet, controlPort
 		ProfileID: "integration-profile",
 		NodeID:    "integration-node",
 		Kind:      domain.NodeHTTP,
-		Server:    "127.0.0.1",
+		Server:    "integration-proxy.invalid",
 		Port:      nodePort,
 		HTTP:      &domain.HTTPNodeOptions{},
 	}
@@ -272,6 +272,23 @@ func integrationCoreConfig(t *testing.T, inbounds domain.InboundSet, controlPort
 	if err != nil {
 		t.Fatal(err)
 	}
+	dns, err := compiler.CompileOutboundDNS(domain.DNSPlan{
+		Profiles: []domain.DNSProfile{{
+			ID:        "integration-outbound-dns",
+			Role:      domain.DNSRoleOutbound,
+			Transport: domain.DNSTransportUDP,
+			Server:    "127.0.0.1",
+			Port:      9,
+		}},
+		OutboundProfileID: "integration-outbound-dns",
+	}, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err = compiler.BindNodeDomainResolver(nodes, dns)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	artifact, err := compiler.CompileNativeConfig(compiler.NativeConfigInput{
 		Inbounds:       inbounds,
@@ -282,6 +299,7 @@ func integrationCoreConfig(t *testing.T, inbounds domain.InboundSet, controlPort
 		Routing:        bound,
 		Selection:      selection,
 		Nodes:          nodes,
+		DNS:            dns,
 	})
 	if err != nil {
 		t.Fatal(err)

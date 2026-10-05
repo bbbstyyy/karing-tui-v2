@@ -11,7 +11,10 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 )
 
-const NativeSchemaID = "karing-sing-box-1.13.19@beddeababcc71dfb0c78124598b13341c06c69fb"
+const (
+	NativeSchemaID         = "karing-sing-box-1.13.19@beddeababcc71dfb0c78124598b13341c06c69fb"
+	nativeDNSFailClosedTag = "dns-fail-closed"
+)
 
 var (
 	ErrNativeConfigClosure = errors.New("native config dependency closure is incomplete")
@@ -28,6 +31,7 @@ type NativeConfigInput struct {
 	Routing        BoundRouting
 	Selection      CompiledSelection
 	Nodes          CompiledNodes
+	DNS            CompiledDNS
 }
 
 type NativeConfigArtifact struct {
@@ -37,11 +41,12 @@ type NativeConfigArtifact struct {
 }
 
 type NativeManifest struct {
-	SchemaID     string
-	ConfigSHA256 string
-	InboundTags  []string
-	OutboundTags []string
-	RuleSets     []NativeRuleSetManifest
+	SchemaID      string
+	ConfigSHA256  string
+	InboundTags   []string
+	OutboundTags  []string
+	DNSServerTags []string
+	RuleSets      []NativeRuleSetManifest
 }
 
 type NativeRuleSetManifest struct {
@@ -70,6 +75,17 @@ type nativeDirectOutbound struct {
 	Tag  string `json:"tag"`
 }
 
+type nativePredefinedDNSServer struct {
+	Type  string `json:"type"`
+	Tag   string `json:"tag"`
+	Rcode string `json:"rcode"`
+}
+
+type nativeDNSConfig struct {
+	Servers []any  `json:"servers"`
+	Final   string `json:"final"`
+}
+
 type nativeRouteConfig struct {
 	Rules       []RouteRule          `json:"rules"`
 	RuleSet     []LocalRuleSetConfig `json:"rule_set,omitempty"`
@@ -88,6 +104,7 @@ type nativeExperimentalConfig struct {
 
 type nativeConfig struct {
 	Log          nativeLogConfig          `json:"log"`
+	DNS          *nativeDNSConfig         `json:"dns,omitempty"`
 	Inbounds     []nativeInboundConfig    `json:"inbounds"`
 	Outbounds    []any                    `json:"outbounds"`
 	Route        nativeRouteConfig        `json:"route"`
@@ -137,6 +154,15 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 		return NativeConfigArtifact{}, err
 	}
 
+	nativeDNS, dnsTags, err := compileNativeDNS(input.DNS, input.Targets.DirectTag)
+	if err != nil {
+		return NativeConfigArtifact{}, err
+	}
+	dnsTagSet := make(map[string]struct{}, len(dnsTags))
+	for _, tag := range dnsTags {
+		dnsTagSet[tag] = struct{}{}
+	}
+
 	outbounds := make([]any, 0, 1+len(input.Nodes.Outbounds)+len(input.Selection.Groups))
 	outboundTags := make([]string, 0, cap(outbounds))
 	outboundSeen := make(map[string]struct{}, cap(outbounds))
@@ -165,7 +191,17 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 			return NativeConfigArtifact{}, fmt.Errorf("%w: node outbound tag %q does not match metadata tag %q", ErrNativeConfigClosure, outbound.Tag, input.Nodes.Tags[i])
 		}
 		if _, err := netip.ParseAddr(outbound.Server); err != nil {
-			return NativeConfigArtifact{}, fmt.Errorf("%w: node %q server %q", ErrDNSRequired, outbound.Tag, outbound.Server)
+			if outbound.DomainResolver == "" {
+				return NativeConfigArtifact{}, fmt.Errorf("%w: node %q server %q has no explicit resolver", ErrDNSRequired, outbound.Tag, outbound.Server)
+			}
+			if outbound.DomainResolver != input.DNS.OutboundResolverTag {
+				return NativeConfigArtifact{}, fmt.Errorf("%w: node %q resolver %q is not the compiled outbound resolver %q", ErrNativeConfigClosure, outbound.Tag, outbound.DomainResolver, input.DNS.OutboundResolverTag)
+			}
+			if _, exists := dnsTagSet[outbound.DomainResolver]; !exists {
+				return NativeConfigArtifact{}, fmt.Errorf("%w: node %q resolver %q is unavailable", ErrNativeConfigClosure, outbound.Tag, outbound.DomainResolver)
+			}
+		} else if outbound.DomainResolver != "" {
+			return NativeConfigArtifact{}, fmt.Errorf("%w: IP-literal node %q unexpectedly carries resolver %q", ErrNativeConfigClosure, outbound.Tag, outbound.DomainResolver)
 		}
 		if err := addOutbound(outbound.Tag, outbound); err != nil {
 			return NativeConfigArtifact{}, err
@@ -199,6 +235,7 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 			Level:     input.LogLevel,
 			Timestamp: true,
 		},
+		DNS:       nativeDNS,
 		Inbounds:  inbounds,
 		Outbounds: outbounds,
 		Route: nativeRouteConfig{
@@ -225,13 +262,79 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 		JSON:   payload,
 		SHA256: configSHA,
 		Manifest: NativeManifest{
-			SchemaID:     NativeSchemaID,
-			ConfigSHA256: configSHA,
-			InboundTags:  inboundTags,
-			OutboundTags: outboundTags,
-			RuleSets:     manifestRuleSets,
+			SchemaID:      NativeSchemaID,
+			ConfigSHA256:  configSHA,
+			InboundTags:   inboundTags,
+			OutboundTags:  outboundTags,
+			DNSServerTags: dnsTags,
+			RuleSets:      manifestRuleSets,
 		},
 	}, nil
+}
+
+func compileNativeDNS(compiled CompiledDNS, directTag string) (*nativeDNSConfig, []string, error) {
+	if len(compiled.Servers) == 0 {
+		if compiled.OutboundResolverTag != "" || len(compiled.ProfileBindings) != 0 {
+			return nil, nil, fmt.Errorf("%w: empty DNS server closure carries metadata", ErrNativeConfigClosure)
+		}
+		return nil, nil, nil
+	}
+
+	servers := make([]any, 0, len(compiled.Servers)+1)
+	tags := make([]string, 0, len(compiled.Servers)+1)
+	seen := make(map[string]struct{}, len(compiled.Servers)+1)
+	for _, server := range compiled.Servers {
+		if err := validateGeneratedTag(server.Tag); err != nil {
+			return nil, nil, err
+		}
+		if _, exists := seen[server.Tag]; exists {
+			return nil, nil, fmt.Errorf("%w: duplicate DNS server tag %q", ErrNativeConfigClosure, server.Tag)
+		}
+		if server.Detour != directTag {
+			return nil, nil, fmt.Errorf("%w: DNS server %q detour %q is not DIRECT", ErrNativeConfigClosure, server.Tag, server.Detour)
+		}
+		if server.ServerPort == 0 {
+			return nil, nil, fmt.Errorf("%w: DNS server %q has zero port", ErrNativeConfigClosure, server.Tag)
+		}
+		if _, err := netip.ParseAddr(server.Server); err != nil {
+			if server.DomainResolver == "" {
+				return nil, nil, fmt.Errorf("%w: DNS server %q host %q has no bootstrap resolver", ErrDNSRequired, server.Tag, server.Server)
+			}
+			if _, exists := seen[server.DomainResolver]; !exists {
+				return nil, nil, fmt.Errorf("%w: DNS server %q bootstrap resolver %q is unavailable before use", ErrNativeConfigClosure, server.Tag, server.DomainResolver)
+			}
+		} else if server.DomainResolver != "" {
+			return nil, nil, fmt.Errorf("%w: IP-literal DNS server %q unexpectedly carries resolver %q", ErrNativeConfigClosure, server.Tag, server.DomainResolver)
+		}
+		switch server.Type {
+		case "udp", "tcp":
+		default:
+			return nil, nil, fmt.Errorf("%w: unsupported native DNS server type %q", ErrNativeConfigClosure, server.Type)
+		}
+		seen[server.Tag] = struct{}{}
+		tags = append(tags, server.Tag)
+		servers = append(servers, server)
+	}
+	if compiled.OutboundResolverTag == "" {
+		return nil, nil, fmt.Errorf("%w: DNS closure has servers but no outbound resolver", ErrNativeConfigClosure)
+	}
+	if _, exists := seen[compiled.OutboundResolverTag]; !exists {
+		return nil, nil, fmt.Errorf("%w: outbound DNS resolver %q is unavailable", ErrNativeConfigClosure, compiled.OutboundResolverTag)
+	}
+	if _, exists := seen[nativeDNSFailClosedTag]; exists {
+		return nil, nil, fmt.Errorf("%w: fail-closed DNS tag collides with compiled DNS", ErrNativeConfigClosure)
+	}
+
+	servers = append(servers, nativePredefinedDNSServer{
+		Type:  "predefined",
+		Tag:   nativeDNSFailClosedTag,
+		Rcode: "REFUSED",
+	})
+	tags = append(tags, nativeDNSFailClosedTag)
+	return &nativeDNSConfig{
+		Servers: servers,
+		Final:   nativeDNSFailClosedTag,
+	}, tags, nil
 }
 
 func compileNativeInbounds(inbounds domain.InboundSet) ([]nativeInboundConfig, []string, error) {
