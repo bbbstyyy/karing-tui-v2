@@ -34,3 +34,19 @@ If the supervisor engine itself exits unexpectedly while the daemon is otherwise
 This does not expose managed configuration application. `managed_apply` remains false, and lifecycle start can only use the confirmed applied generation already recorded in durable state.
 
 The runtime configuration cannot enable TUN, system proxy changes, arbitrary executables, LAN control endpoints, or a different unpinned core build.
+
+
+## Real-core transaction integration
+
+The managed-core integration workflow now builds the approved artifact and exercises the daemon runtime against it. Readiness is treated as a bounded startup condition: transient loopback connection failures are retried inside the supervisor's readiness deadline, while deterministic authentication or protocol-contract failures fail immediately.
+
+The integration flow verifies:
+
+- first candidate check/activate/verify/commit while desired state is stopped, followed by restoration to stopped;
+- explicit lifecycle start of the committed generation;
+- process-group SIGKILL followed by bounded supervisor restart;
+- invalid candidate rejection before activation without disturbing the running generation;
+- second valid generation replacement while desired state is running;
+- explicit stop persistence with no restart afterward.
+
+The server runtime now owns both lifecycle and apply coordinators behind the same operation gate. This closes an internal composition gap, but it does not expose a public raw sing-box apply endpoint. `managed_apply` remains false until deterministic domain compilation and a versioned apply API are implemented.

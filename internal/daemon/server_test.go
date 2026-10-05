@@ -76,6 +76,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["apply_journal"] ||
 		!caps.Capabilities["apply_coordinator"] ||
 		caps.Capabilities["managed_apply"] ||
+		caps.Capabilities["managed_apply_runtime"] ||
 		!caps.Capabilities["persisted_core_intent"] ||
 		!caps.Capabilities["core_build_approved"] ||
 		!caps.Capabilities["core_artifact_verifier"] ||
@@ -214,6 +215,9 @@ func TestCoreLifecycleAPIUpdatesPersistedIntentAndStatus(t *testing.T) {
 	}
 	if !caps.Capabilities["core_lifecycle_api"] || !caps.Capabilities["core_supervision"] {
 		t.Fatalf("managed runtime capabilities not enabled: %+v", caps.Capabilities)
+	}
+	if caps.Capabilities["managed_apply_runtime"] {
+		t.Fatalf("manually constructed lifecycle-only runtime unexpectedly advertises managed apply: %+v", caps.Capabilities)
 	}
 
 	stop := httptest.NewRecorder()

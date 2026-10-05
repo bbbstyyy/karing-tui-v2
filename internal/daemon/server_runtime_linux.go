@@ -22,9 +22,18 @@ type daemonCoreRuntime interface {
 	Snapshot() core.Snapshot
 }
 
+type managedCoreRuntime interface {
+	daemonCoreRuntime
+	Check(context.Context, Generation) error
+	Activate(context.Context, Generation) error
+	Verify(context.Context, Generation) error
+	Rollback(context.Context, *Generation) error
+}
+
 type serverRuntime struct {
 	core      daemonCoreRuntime
 	lifecycle *LifecycleCoordinator
+	apply     *ApplyCoordinator
 	gate      *OperationGate
 
 	mu         sync.RWMutex
@@ -46,7 +55,7 @@ func buildServerRuntime(ctx context.Context, store *storage.Store, paths runtime
 	return startServerRuntime(ctx, store, managed)
 }
 
-func startServerRuntime(ctx context.Context, store lifecycleStore, managed daemonCoreRuntime) (*serverRuntime, <-chan error, context.CancelFunc, error) {
+func startServerRuntime(ctx context.Context, store *storage.Store, managed managedCoreRuntime) (*serverRuntime, <-chan error, context.CancelFunc, error) {
 	if store == nil {
 		return nil, nil, nil, errors.New("server runtime store is nil")
 	}
@@ -54,6 +63,10 @@ func startServerRuntime(ctx context.Context, store lifecycleStore, managed daemo
 		return nil, nil, nil, errors.New("server runtime core is nil")
 	}
 	lifecycle, err := NewLifecycleCoordinator(store, managed)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	apply, err := NewApplyCoordinator(store, managed, DefaultApplyPolicy())
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -79,6 +92,7 @@ func startServerRuntime(ctx context.Context, store lifecycleStore, managed daemo
 	runtime := &serverRuntime{
 		core:      managed,
 		lifecycle: lifecycle,
+		apply:     apply,
 		gate:      NewOperationGate(),
 	}
 	return runtime, errCh, coreCancel, nil
@@ -129,6 +143,24 @@ func (r *serverRuntime) Stop(ctx context.Context) error {
 		return errors.New("core runtime is not configured")
 	}
 	return r.gate.Do(ctx, "core-stop", r.lifecycle.Stop)
+}
+
+func (r *serverRuntime) ApplyCompiled(ctx context.Context, expectedRevision uint64, config []byte) (storage.Attempt, error) {
+	if r == nil || r.apply == nil {
+		return storage.Attempt{}, errors.New("managed apply runtime is not configured")
+	}
+
+	var attempt storage.Attempt
+	err := r.gate.Do(ctx, "config-apply", func(operationCtx context.Context) error {
+		var applyErr error
+		attempt, applyErr = r.apply.Apply(operationCtx, expectedRevision, config)
+		return applyErr
+	})
+	return attempt, err
+}
+
+func (r *serverRuntime) ManagedApplyReady() bool {
+	return r != nil && r.apply != nil
 }
 
 func (r *serverRuntime) ActiveOperation() OperationSnapshot {

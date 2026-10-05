@@ -68,11 +68,10 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runCtx, runCancel := context.WithCancel(context.Background())
-	runDone := make(chan error, 1)
-	go func() {
-		runDone <- managed.Run(runCtx)
-	}()
+	runtime, runDone, runCancel, err := startServerRuntime(context.Background(), store, managed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		runCancel()
 		select {
@@ -84,28 +83,13 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 			t.Errorf("managed core supervisor did not shut down")
 		}
 	}()
-
-	readyCtx, readyCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	if err := managed.WaitReady(readyCtx); err != nil {
-		readyCancel()
-		t.Fatal(err)
-	}
-	readyCancel()
-
-	apply, err := NewApplyCoordinator(store, managed, ApplyPolicy{
-		StateTimeout:    5 * time.Second,
-		CheckTimeout:    15 * time.Second,
-		ActivateTimeout: 15 * time.Second,
-		VerifyTimeout:   10 * time.Second,
-		RollbackTimeout: 15 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
+	if !runtime.ManagedApplyReady() {
+		t.Fatal("managed apply runtime was not composed")
 	}
 
 	firstConfig := integrationCoreConfig(t, inbounds, ports[3], secret, "warn")
 	applyCtx, applyCancel := context.WithTimeout(context.Background(), 40*time.Second)
-	firstAttempt, err := apply.Apply(applyCtx, 0, firstConfig)
+	firstAttempt, err := runtime.ApplyCompiled(applyCtx, 0, firstConfig)
 	applyCancel()
 	if err != nil {
 		t.Fatalf("first real-core apply: %v; stderr=%s", err, managed.StderrTail())
@@ -122,12 +106,8 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatalf("apply while stopped did not restore stopped intent: %+v", got)
 	}
 
-	lifecycle, err := NewLifecycleCoordinator(store, managed)
-	if err != nil {
-		t.Fatal(err)
-	}
 	startCtx, startCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	if err := lifecycle.Start(startCtx); err != nil {
+	if err := runtime.Start(startCtx); err != nil {
 		startCancel()
 		t.Fatalf("start committed generation: %v; stderr=%s", err, managed.StderrTail())
 	}
@@ -149,7 +129,7 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 
 	badConfig := []byte(`{"inbounds":[{"type":"definitely-invalid"}]}`)
 	badCtx, badCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	_, badErr := apply.Apply(badCtx, 1, badConfig)
+	_, badErr := runtime.ApplyCompiled(badCtx, 1, badConfig)
 	badCancel()
 	if badErr == nil {
 		t.Fatal("invalid candidate unexpectedly applied")
@@ -168,7 +148,7 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 
 	secondConfig := integrationCoreConfig(t, inbounds, ports[3], secret, "error")
 	secondCtx, secondCancel := context.WithTimeout(context.Background(), 40*time.Second)
-	secondAttempt, err := apply.Apply(secondCtx, 1, secondConfig)
+	secondAttempt, err := runtime.ApplyCompiled(secondCtx, 1, secondConfig)
 	secondCancel()
 	if err != nil {
 		t.Fatalf("second real-core apply: %v; stderr=%s", err, managed.StderrTail())
@@ -186,7 +166,7 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	}
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := lifecycle.Stop(stopCtx); err != nil {
+	if err := runtime.Stop(stopCtx); err != nil {
 		stopCancel()
 		t.Fatalf("explicit stop: %v", err)
 	}

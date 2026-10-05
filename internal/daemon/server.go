@@ -185,6 +185,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 		coreEnabled := runtime != nil
+		managedApplyRuntime := runtime != nil && runtime.ManagedApplyReady()
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			APIVersion: apiv1.Version,
 			Capabilities: map[string]bool{
@@ -196,6 +197,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"apply_journal":             true,
 				"apply_coordinator":         true,
 				"managed_apply":             false,
+				"managed_apply_runtime":     managedApplyRuntime,
 				"crash_recovery_state":      true,
 				"persisted_core_intent":     true,
 				"core_supervisor_engine":    true,
