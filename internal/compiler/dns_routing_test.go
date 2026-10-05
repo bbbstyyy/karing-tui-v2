@@ -40,7 +40,7 @@ func TestBindProxyTargetDNSRoutingExpandsSelectedUserRuleAndFinal(t *testing.T) 
 	}
 	proxyTag := stableDNSTag("proxy")
 	dns := CompiledDNS{
-		Servers:          []DNSServerConfig{{
+		Servers: []DNSServerConfig{{
 			Type:       "udp",
 			Tag:        proxyTag,
 			Server:     "192.0.2.53",
