@@ -13,6 +13,7 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 				ID:    "custom-a",
 				Layer: LayerCustom,
 				Order: 10,
+				Match:   matchDomain("custom.example"),
 				Binding: RouteBinding{
 					Enabled: true,
 					Target:  TargetRef{Kind: TargetDirect},
@@ -32,6 +33,7 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 			ID:    "geosite-a",
 			Layer: LayerGeoSite,
 			Order: 10,
+			Match:   matchRuleSet("geosite:example"),
 			Binding: RouteBinding{
 				Enabled: true,
 				Target:  TargetRef{Kind: TargetCurrentSelected},
@@ -41,6 +43,7 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 			ID:    "geoip-a",
 			Layer: LayerGeoIP,
 			Order: 10,
+			Match:   matchRuleSet("geoip:jp"),
 			Binding: RouteBinding{
 				Enabled: true,
 				Target: TargetRef{
@@ -53,6 +56,7 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 			ID:    "acl-a",
 			Layer: LayerACL,
 			Order: 10,
+			Match:   matchRuleSet("acl:example"),
 			Binding: RouteBinding{
 				Enabled:      true,
 				Target:       TargetRef{Kind: TargetGlobalURLTest},
@@ -196,6 +200,7 @@ func TestBlockTargetCannotCarryGroupDNS(t *testing.T) {
 			ID:    "block",
 			Layer: LayerACL,
 			Order: 1,
+			Match:   matchDomain("blocked.example"),
 			Binding: RouteBinding{
 				Enabled:      true,
 				Target:       TargetRef{Kind: TargetBlock},
@@ -214,4 +219,61 @@ func TestFinalMustBeAnExplicitTarget(t *testing.T) {
 	if err := plan.Validate(); !errors.Is(err, ErrInvalidFinalRoute) {
 		t.Fatalf("empty final error = %v", err)
 	}
+}
+
+
+func TestEnabledRouteGroupRequiresExplicitMatcher(t *testing.T) {
+	plan := RoutingPlan{
+		Custom: []RouteGroup{{
+			ID:    "missing-match",
+			Layer: LayerCustom,
+			Order: 1,
+			Binding: RouteBinding{
+				Enabled: true,
+				Target:  TargetRef{Kind: TargetDirect},
+			},
+		}},
+		Final: TargetRef{Kind: TargetDirect},
+	}
+	if err := plan.Validate(); !errors.Is(err, ErrInvalidRouteMatch) {
+		t.Fatalf("missing matcher error = %v", err)
+	}
+}
+
+func TestOrderedActiveStepsCloneMatcher(t *testing.T) {
+	match := Any(
+		Atom(Predicate{Kind: PredicateDomain, Value: "one.example"}),
+		Atom(Predicate{Kind: PredicateDomain, Value: "two.example"}),
+	)
+	plan := RoutingPlan{
+		Custom: []RouteGroup{{
+			ID:    "custom",
+			Layer: LayerCustom,
+			Order: 1,
+			Match: &match,
+			Binding: RouteBinding{
+				Enabled: true,
+				Target:  TargetRef{Kind: TargetDirect},
+			},
+		}},
+		Final: TargetRef{Kind: TargetBlock},
+	}
+	steps, err := plan.OrderedActiveSteps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps[0].Match.Children[0].Predicate.Value = "mutated.example"
+	if got := plan.Custom[0].Match.Children[0].Predicate.Value; got != "one.example" {
+		t.Fatalf("route step matcher aliases plan matcher: %q", got)
+	}
+}
+
+func matchDomain(value string) *MatchExpr {
+	match := Atom(Predicate{Kind: PredicateDomain, Value: value})
+	return &match
+}
+
+func matchRuleSet(value string) *MatchExpr {
+	match := Atom(Predicate{Kind: PredicateRuleSet, Value: value})
+	return &match
 }

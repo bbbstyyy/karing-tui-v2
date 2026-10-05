@@ -84,6 +84,7 @@ type RouteGroup struct {
 	ID      string
 	Layer   RoutingLayer
 	Order   uint32
+	Match   *MatchExpr
 	Binding RouteBinding
 }
 
@@ -96,6 +97,14 @@ func (g RouteGroup) Validate(expectedLayer RoutingLayer) error {
 	}
 	if err := g.Binding.Validate(); err != nil {
 		return fmt.Errorf("route group %q: %w", g.ID, err)
+	}
+	if g.Binding.Enabled && g.Match == nil {
+		return fmt.Errorf("%w: enabled route group %q has no matcher", ErrInvalidRouteMatch, g.ID)
+	}
+	if g.Match != nil {
+		if err := g.Match.Validate(); err != nil {
+			return fmt.Errorf("route group %q matcher: %w", g.ID, err)
+		}
 	}
 	return nil
 }
@@ -111,6 +120,7 @@ type RoutingPlan struct {
 type RouteStep struct {
 	Layer        RoutingLayer
 	GroupID      string
+	Match        *MatchExpr
 	Target       TargetRef
 	DNSProfileID string
 	Final        bool
@@ -147,9 +157,11 @@ func (p RoutingPlan) OrderedActiveSteps() ([]RouteStep, error) {
 			if !group.Binding.Enabled {
 				continue
 			}
+			match := group.Match.Clone()
 			steps = append(steps, RouteStep{
 				Layer:        layer,
 				GroupID:      group.ID,
+				Match:        &match,
 				Target:       group.Binding.Target,
 				DNSProfileID: group.Binding.DNSProfileID,
 			})
