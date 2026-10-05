@@ -4,17 +4,16 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
@@ -217,67 +216,77 @@ func reserveLoopbackPorts(t *testing.T, count int) []uint16 {
 
 func integrationCoreConfig(t *testing.T, inbounds domain.InboundSet, controlPort uint16, secret, logLevel string) []byte {
 	t.Helper()
-	payload := map[string]any{
-		"log": map[string]any{
-			"level":     logLevel,
-			"timestamp": true,
-		},
-		"inbounds": []any{
-			map[string]any{
-				"type":             "mixed",
-				"tag":              "rule-in",
-				"listen":           inbounds.Listen.String(),
-				"listen_port":      inbounds.RulePort,
-				"set_system_proxy": false,
-			},
-			map[string]any{
-				"type":             "mixed",
-				"tag":              "direct-in",
-				"listen":           inbounds.Listen.String(),
-				"listen_port":      inbounds.DirectPort,
-				"set_system_proxy": false,
-			},
-			map[string]any{
-				"type":             "mixed",
-				"tag":              "selected-in",
-				"listen":           inbounds.Listen.String(),
-				"listen_port":      inbounds.SelectedPort,
-				"set_system_proxy": false,
-			},
-		},
-		"outbounds": []any{
-			map[string]any{"type": "direct", "tag": "direct"},
-			map[string]any{"type": "block", "tag": "block"},
-			map[string]any{
-				"type":      "selector",
-				"tag":       "selected",
-				"outbounds": []string{"direct", "block"},
-				"default":   "direct",
-			},
-		},
-		"route": map[string]any{
-			"rules": []any{
-				map[string]any{"inbound": "direct-in", "outbound": "direct"},
-				map[string]any{"inbound": "selected-in", "outbound": "selected"},
-			},
-			"final": "direct",
-		},
-		"experimental": map[string]any{
-			"clash_api": map[string]any{
-				"external_controller": fmt.Sprintf("%s:%d", inbounds.Listen, controlPort),
-				"secret":              secret,
-				"default_mode":        "Rule",
-			},
-		},
+
+	nodePort := uint16(9)
+	if logLevel == "error" {
+		nodePort = 10
 	}
-	config, err := json.Marshal(payload)
+	node := domain.Node{
+		ProfileID: "integration-profile",
+		NodeID:    "integration-node",
+		Kind:      domain.NodeHTTP,
+		Server:    "127.0.0.1",
+		Port:      nodePort,
+		HTTP:      &domain.HTTPNodeOptions{},
+	}
+	nodeKey := compiler.NodeTargetKey{ProfileID: node.ProfileID, NodeID: node.NodeID}
+	targets, err := compiler.NewTargetCatalog(nil, []compiler.NodeTargetKey{nodeKey})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(config), "\"set_system_proxy\":true") {
-		t.Fatal("integration config unexpectedly enables system proxy mutation")
+	nodeRef := domain.TargetRef{
+		Kind:      domain.TargetSpecificNode,
+		ProfileID: node.ProfileID,
+		NodeID:    node.NodeID,
 	}
-	return config
+
+	routing, err := compiler.CompileRouting(domain.RoutingPlan{
+		Final: domain.TargetRef{Kind: domain.TargetDirect},
+	}, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleSetCatalog, err := compiler.NewRuleSetCatalog(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := compiler.BindRuleSetArtifacts(routing, ruleSetCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err = compiler.BindStagedRuleSetPaths(bound, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	selection, err := compiler.CompileSelectionGroups(domain.SelectionPlan{
+		Current: domain.CurrentSelection{
+			Members: []domain.TargetRef{nodeRef},
+			Default: nodeRef,
+		},
+	}, targets, routing.OutboundTags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := compiler.CompileBasicNodeOutbounds([]domain.Node{node}, targets, selection.NodeTargets)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	artifact, err := compiler.CompileNativeConfig(compiler.NativeConfigInput{
+		Inbounds:       inbounds,
+		ControlAddress: netip.AddrPortFrom(inbounds.Listen, controlPort),
+		ControlSecret:  secret,
+		LogLevel:       logLevel,
+		Targets:        targets,
+		Routing:        bound,
+		Selection:      selection,
+		Nodes:          nodes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return artifact.JSON
 }
 
 func waitManagedCoreState(t *testing.T, managed *ManagedCore, timeout time.Duration, accept func(core.Snapshot) bool) core.Snapshot {

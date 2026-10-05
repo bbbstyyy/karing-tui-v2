@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/managed-core-integration.yml'
       - 'internal/daemon/**'
+      - 'internal/compiler/**'
       - 'internal/core/**'
       - 'internal/coreapi/**'
       - 'internal/coreartifact/**'

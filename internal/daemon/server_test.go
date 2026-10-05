@@ -102,6 +102,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["selection_group_lowerer"] ||
 		!caps.Capabilities["basic_node_model"] ||
 		!caps.Capabilities["basic_node_lowerer"] ||
+		!caps.Capabilities["native_config_emitter"] ||
 		caps.Capabilities["proxy_inbounds"] ||
 		caps.Capabilities["routing_ir"] {
 		t.Fatalf("unexpected capabilities: %+v", caps.Capabilities)
