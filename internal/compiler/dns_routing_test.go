@@ -40,7 +40,7 @@ func TestBindProxyTargetDNSRoutingExpandsSelectedUserRuleAndFinal(t *testing.T) 
 	}
 	proxyTag := stableDNSTag("proxy")
 	dns := CompiledDNS{
-		Servers: []DNSServerConfig{{
+		Servers:          []DNSServerConfig{{
 			Type:       "udp",
 			Tag:        proxyTag,
 			Server:     "192.0.2.53",
@@ -163,7 +163,7 @@ func TestBindProxyTargetDNSRoutingRejectsIPDependentProxyMatchers(t *testing.T) 
 		}
 		proxyTag := stableDNSTag("proxy")
 		if _, err := BindProxyTargetDNSRouting(BoundRouting{CompiledRouting: compiled}, CompiledDNS{
-			Servers: []DNSServerConfig{{Type: "udp", Tag: proxyTag, Server: "192.0.2.53", ServerPort: 53, Detour: targets.CurrentSelectedTag}},
+			Servers:          []DNSServerConfig{{Type: "udp", Tag: proxyTag, Server: "192.0.2.53", ServerPort: 53, Detour: targets.CurrentSelectedTag}},
 			ProxyResolverTag: proxyTag,
 		}); !errors.Is(err, ErrDNSRouteResolutionAmbiguous) {
 			t.Fatalf("case %d error = %v", i, err)
