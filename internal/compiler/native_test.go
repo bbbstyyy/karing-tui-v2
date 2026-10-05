@@ -56,7 +56,7 @@ func TestCompileNativeConfigBuildsDeterministicRunnableEnvelope(t *testing.T) {
 			SetSystemProxy bool   `json:"set_system_proxy"`
 		} `json:"inbounds"`
 		Outbounds []map[string]any `json:"outbounds"`
-		Route struct {
+		Route     struct {
 			Rules []RouteRule `json:"rules"`
 		} `json:"route"`
 		Experimental struct {

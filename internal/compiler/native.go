@@ -20,14 +20,14 @@ var (
 )
 
 type NativeConfigInput struct {
-	Inbounds        domain.InboundSet
-	ControlAddress  netip.AddrPort
-	ControlSecret   string
-	LogLevel        string
-	Targets         TargetCatalog
-	Routing         BoundRouting
-	Selection       CompiledSelection
-	Nodes           CompiledNodes
+	Inbounds       domain.InboundSet
+	ControlAddress netip.AddrPort
+	ControlSecret  string
+	LogLevel       string
+	Targets        TargetCatalog
+	Routing        BoundRouting
+	Selection      CompiledSelection
+	Nodes          CompiledNodes
 }
 
 type NativeConfigArtifact struct {
@@ -37,19 +37,19 @@ type NativeConfigArtifact struct {
 }
 
 type NativeManifest struct {
-	SchemaID      string
-	ConfigSHA256  string
-	InboundTags   []string
-	OutboundTags  []string
-	RuleSets      []NativeRuleSetManifest
+	SchemaID     string
+	ConfigSHA256 string
+	InboundTags  []string
+	OutboundTags []string
+	RuleSets     []NativeRuleSetManifest
 }
 
 type NativeRuleSetManifest struct {
-	Ref        string
-	RuntimeTag string
+	Ref         string
+	RuntimeTag  string
 	RuntimePath string
-	SHA256     string
-	Format     RuleSetFormat
+	SHA256      string
+	Format      RuleSetFormat
 }
 
 type nativeLogConfig struct {
@@ -296,4 +296,3 @@ func validateRouteRuleSetTags(rules []RouteRule, available map[string]struct{}) 
 	}
 	return nil
 }
-
