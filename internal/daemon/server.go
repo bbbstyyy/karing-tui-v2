@@ -219,6 +219,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"mixed_inbound_probe":       true,
 				"routing_ir_model":          true,
 				"routing_match_ast":         true,
+				"routing_rule_lowerer":      true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,
