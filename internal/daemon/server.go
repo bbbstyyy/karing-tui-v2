@@ -221,6 +221,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_match_ast":         true,
 				"routing_rule_lowerer":      true,
 				"routing_entry_scoping":     true,
+				"routing_target_registry":   true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,
