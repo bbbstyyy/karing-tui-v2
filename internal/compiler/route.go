@@ -47,12 +47,12 @@ type RouteRule struct {
 }
 
 type RouteSourceMapEntry struct {
-	RuleIndex int
-	Layer     domain.RoutingLayer
-	GroupID   string
-	Final     bool
-	Target    domain.TargetRef
-	Action    string
+	RuleIndex    int
+	Layer        domain.RoutingLayer
+	GroupID      string
+	Final        bool
+	Target       domain.TargetRef
+	Action       string
 	Outbound     string
 	Server       string
 	DNSProfileID string
@@ -140,11 +140,11 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 
 		result.Rules = append(result.Rules, rule)
 		result.SourceMap = append(result.SourceMap, RouteSourceMapEntry{
-			RuleIndex: len(result.Rules) - 1,
-			Layer:     step.Layer,
-			GroupID:   step.GroupID,
-			Final:     step.Final,
-			Target:    step.Target,
+			RuleIndex:    len(result.Rules) - 1,
+			Layer:        step.Layer,
+			GroupID:      step.GroupID,
+			Final:        step.Final,
+			Target:       step.Target,
 			Action:       action,
 			Outbound:     outbound,
 			DNSProfileID: step.DNSProfileID,
