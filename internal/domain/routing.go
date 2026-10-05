@@ -160,7 +160,7 @@ func (p RoutingPlan) OrderedActiveSteps() ([]RouteStep, error) {
 	appendLayer(LayerGeoIP, p.GeoIP)
 	appendLayer(LayerACL, p.ACL)
 	steps = append(steps, RouteStep{
-		Layer:   LayerFinal,
+		Layer:  LayerFinal,
 		Target:  p.Final,
 		Final:   true,
 	})
