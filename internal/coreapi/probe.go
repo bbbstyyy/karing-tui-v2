@@ -17,6 +17,32 @@ import (
 
 const maxVersionResponseBytes = 64 << 10
 
+var errCoreControlRedirect = errors.New("core control API redirect refused")
+
+type transientReadinessError struct {
+	err error
+}
+
+func (e transientReadinessError) Error() string {
+	return e.err.Error()
+}
+
+func (e transientReadinessError) Unwrap() error {
+	return e.err
+}
+
+func transientReadiness(err error) error {
+	if err == nil {
+		return nil
+	}
+	return transientReadinessError{err: err}
+}
+
+func isTransientReadiness(err error) bool {
+	var transient transientReadinessError
+	return errors.As(err, &transient)
+}
+
 type ClashVersionProbe struct {
 	versionURL *url.URL
 	secret     string
@@ -71,7 +97,7 @@ func NewClashVersionProbe(endpoint, secret string) (*ClashVersionProbe, error) {
 		client: &http.Client{
 			Transport: transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return errors.New("core control API redirect refused")
+				return errCoreControlRedirect
 			},
 		},
 	}, nil
@@ -87,7 +113,13 @@ func (p *ClashVersionProbe) Ready(ctx context.Context, _ core.Process) error {
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("query authenticated core version endpoint: %w", err)
+		if errors.Is(err, errCoreControlRedirect) {
+			return fmt.Errorf("query authenticated core version endpoint: %w", err)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return transientReadiness(fmt.Errorf("query authenticated core version endpoint: %w", err))
 	}
 	defer response.Body.Close()
 

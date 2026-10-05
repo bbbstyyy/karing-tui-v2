@@ -37,7 +37,10 @@ func probeSOCKS5Greeting(ctx context.Context, inbound domain.MixedInbound) error
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "tcp", inbound.Address.String())
 	if err != nil {
-		return fmt.Errorf("%s mixed inbound %s is unavailable: %w", inbound.Role, inbound.Address, err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return transientReadiness(fmt.Errorf("%s mixed inbound %s is unavailable: %w", inbound.Role, inbound.Address, err))
 	}
 	defer conn.Close()
 
@@ -52,18 +55,26 @@ func probeSOCKS5Greeting(ctx context.Context, inbound domain.MixedInbound) error
 	}
 
 	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
-		return fmt.Errorf("write %s mixed inbound SOCKS5 greeting: %w", inbound.Role, err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return transientReadiness(fmt.Errorf("write %s mixed inbound SOCKS5 greeting: %w", inbound.Role, err))
 	}
 
 	var response [2]byte
 	if _, err := io.ReadFull(conn, response[:]); err != nil {
-		return fmt.Errorf("read %s mixed inbound SOCKS5 greeting: %w", inbound.Role, err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return transientReadiness(fmt.Errorf("read %s mixed inbound SOCKS5 greeting: %w", inbound.Role, err))
 	}
 	if response[0] != 0x05 || response[1] != 0x00 {
 		return fmt.Errorf("%s listener %s did not answer as an unauthenticated SOCKS5 mixed inbound", inbound.Role, inbound.Address)
 	}
 	return nil
 }
+
+const localHealthPollInterval = 25 * time.Millisecond
 
 type LocalHealthProbe struct {
 	control *ClashVersionProbe
@@ -86,11 +97,40 @@ func (p *LocalHealthProbe) Ready(ctx context.Context, process core.Process) erro
 	if p.control == nil || p.mixed == nil {
 		return errors.New("local core health probe is incomplete")
 	}
-	if err := p.control.Ready(ctx, process); err != nil {
-		return err
+
+	check := func() error {
+		if err := p.control.Ready(ctx, process); err != nil {
+			return err
+		}
+		if err := p.mixed.Ready(ctx, process); err != nil {
+			return err
+		}
+		return nil
 	}
-	if err := p.mixed.Ready(ctx, process); err != nil {
-		return err
+
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		return check()
 	}
-	return nil
+
+	var lastTransient error
+	for {
+		err := check()
+		if err == nil {
+			return nil
+		}
+		if !isTransientReadiness(err) {
+			return err
+		}
+		lastTransient = err
+
+		timer := time.NewTimer(localHealthPollInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return fmt.Errorf("local core readiness deadline after transient failure %v: %w", lastTransient, ctx.Err())
+		case <-timer.C:
+		}
+	}
 }
