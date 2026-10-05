@@ -20,6 +20,7 @@ var (
 	ErrDuplicateRuleSetRef = errors.New("duplicate rule-set reference")
 	ErrInvalidRuleSet      = errors.New("invalid rule-set artifact")
 	ErrUnresolvedRuleSet   = errors.New("unresolved rule-set reference")
+	ErrRuleSetNotStaged    = errors.New("rule-set artifact is not staged")
 )
 
 type RuleSetSource struct {
@@ -30,11 +31,12 @@ type RuleSetSource struct {
 }
 
 type RuleSetArtifact struct {
-	Ref        string
-	RuntimeTag string
-	Path       string
-	SHA256     string
-	Format     RuleSetFormat
+	Ref         string
+	RuntimeTag  string
+	SourcePath  string
+	RuntimePath string
+	SHA256      string
+	Format      RuleSetFormat
 }
 
 type LocalRuleSetConfig struct {
@@ -120,13 +122,41 @@ func BindRuleSetArtifacts(compiled CompiledRouting, catalog RuleSetCatalog) (Bou
 	}, nil
 }
 
-func (a RuleSetArtifact) LocalConfig() LocalRuleSetConfig {
+func BindStagedRuleSetPaths(bound BoundRouting, staged map[string]string) (BoundRouting, error) {
+	rebound := bound
+	rebound.Rules = cloneRouteRules(bound.Rules)
+	rebound.RuleSetRefs = append([]string(nil), bound.RuleSetRefs...)
+	rebound.OutboundTags = append([]string(nil), bound.OutboundTags...)
+	rebound.SourceMap = append([]RouteSourceMapEntry(nil), bound.SourceMap...)
+	rebound.RuleSets = append([]RuleSetArtifact(nil), bound.RuleSets...)
+
+	for i := range rebound.RuleSets {
+		artifact := &rebound.RuleSets[i]
+		path, exists := staged[artifact.Ref]
+		if !exists {
+			return BoundRouting{}, fmt.Errorf("%w: %q", ErrRuleSetNotStaged, artifact.Ref)
+		}
+		if err := validateRuntimeRuleSetPath(*artifact, path); err != nil {
+			return BoundRouting{}, err
+		}
+		artifact.RuntimePath = path
+	}
+	return rebound, nil
+}
+
+func (a RuleSetArtifact) LocalConfig() (LocalRuleSetConfig, error) {
+	if a.RuntimePath == "" {
+		return LocalRuleSetConfig{}, fmt.Errorf("%w: %q", ErrRuleSetNotStaged, a.Ref)
+	}
+	if err := validateRuntimeRuleSetPath(a, a.RuntimePath); err != nil {
+		return LocalRuleSetConfig{}, err
+	}
 	return LocalRuleSetConfig{
 		Type:   "local",
 		Tag:    a.RuntimeTag,
 		Format: a.Format,
-		Path:   a.Path,
-	}
+		Path:   a.RuntimePath,
+	}, nil
 }
 
 func buildRuleSetArtifact(source RuleSetSource) (RuleSetArtifact, error) {
@@ -155,10 +185,29 @@ func buildRuleSetArtifact(source RuleSetSource) (RuleSetArtifact, error) {
 	return RuleSetArtifact{
 		Ref:        source.Ref,
 		RuntimeTag: stableRuleSetTag(source.Ref),
-		Path:       source.Path,
+		SourcePath: source.Path,
 		SHA256:     sha,
 		Format:     source.Format,
 	}, nil
+}
+
+func validateRuntimeRuleSetPath(artifact RuleSetArtifact, path string) error {
+	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return fmt.Errorf("%w: runtime path for %q must be a clean absolute path", ErrInvalidRuleSet, artifact.Ref)
+	}
+	var extension string
+	switch artifact.Format {
+	case RuleSetFormatSource:
+		extension = ".json"
+	case RuleSetFormatBinary:
+		extension = ".srs"
+	default:
+		return fmt.Errorf("%w: unsupported rule-set format %q", ErrInvalidRuleSet, artifact.Format)
+	}
+	if filepath.Base(path) != artifact.SHA256+extension {
+		return fmt.Errorf("%w: runtime path for %q is not content-addressed by its SHA-256", ErrInvalidRuleSet, artifact.Ref)
+	}
+	return nil
 }
 
 func stableRuleSetTag(ref string) string {

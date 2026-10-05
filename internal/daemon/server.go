@@ -223,6 +223,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_entry_scoping":     true,
 				"routing_target_registry":   true,
 				"routing_rule_set_closure":  true,
+				"routing_rule_set_store":    true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,

@@ -35,12 +35,29 @@ func TestRuleSetCatalogBuildsStableImmutableMetadata(t *testing.T) {
 	if artifact.SHA256 != strings.Repeat("a", 64) {
 		t.Fatalf("normalized SHA-256 = %q", artifact.SHA256)
 	}
-	config := artifact.LocalConfig()
+	if artifact.SourcePath != "/state/rules/geosite-cn.srs" {
+		t.Fatalf("source path = %q", artifact.SourcePath)
+	}
+	if _, err := artifact.LocalConfig(); !errors.Is(err, ErrRuleSetNotStaged) {
+		t.Fatalf("unstaged local config error = %v", err)
+	}
+
+	runtimePath := "/state/core/rule-sets/sha256/" + artifact.SHA256 + ".srs"
+	bound, err := BindStagedRuleSetPaths(BoundRouting{RuleSets: []RuleSetArtifact{artifact}}, map[string]string{
+		"geosite:cn": runtimePath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := bound.RuleSets[0].LocalConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"type":"local","tag":"` + artifact.RuntimeTag + `","format":"binary","path":"/state/rules/geosite-cn.srs"}`
+	want := `{"type":"local","tag":"` + artifact.RuntimeTag + `","format":"binary","path":"` + runtimePath + `"}`
 	if string(encoded) != want {
 		t.Fatalf("local rule-set config = %s, want %s", encoded, want)
 	}
@@ -215,4 +232,61 @@ func routeRulesContainRuleSet(rules []RouteRule, value string) bool {
 		}
 	}
 	return false
+}
+
+
+func TestBindStagedRuleSetPathsRequiresCompleteContentAddressedClosure(t *testing.T) {
+	catalog, err := NewRuleSetCatalog([]RuleSetSource{
+		{Ref: "acl:first", Path: "/package/first.srs", SHA256: strings.Repeat("1", 64), Format: RuleSetFormatBinary},
+		{Ref: "acl:second", Path: "/package/second.json", SHA256: strings.Repeat("2", 64), Format: RuleSetFormatSource},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closure, err := catalog.Closure([]string{"acl:first", "acl:second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := BoundRouting{RuleSets: closure}
+
+	if _, err := BindStagedRuleSetPaths(bound, map[string]string{
+		"acl:first": "/state/core/rule-sets/sha256/" + strings.Repeat("1", 64) + ".srs",
+	}); !errors.Is(err, ErrRuleSetNotStaged) {
+		t.Fatalf("incomplete staged closure error = %v", err)
+	}
+
+	if _, err := BindStagedRuleSetPaths(bound, map[string]string{
+		"acl:first":  "/state/core/rule-sets/sha256/not-the-hash.srs",
+		"acl:second": "/state/core/rule-sets/sha256/" + strings.Repeat("2", 64) + ".json",
+	}); !errors.Is(err, ErrInvalidRuleSet) {
+		t.Fatalf("non-content-addressed runtime path error = %v", err)
+	}
+
+	rebound, err := BindStagedRuleSetPaths(bound, map[string]string{
+		"acl:first":  "/state/core/rule-sets/sha256/" + strings.Repeat("1", 64) + ".srs",
+		"acl:second": "/state/core/rule-sets/sha256/" + strings.Repeat("2", 64) + ".json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebound.RuleSets[0].RuntimePath == "" || rebound.RuleSets[1].RuntimePath == "" {
+		t.Fatalf("runtime paths were not bound: %+v", rebound.RuleSets)
+	}
+	if bound.RuleSets[0].RuntimePath != "" || bound.RuleSets[1].RuntimePath != "" {
+		t.Fatal("staged path binding mutated original closure")
+	}
+}
+
+func TestLocalRuleSetConfigRejectsFormatExtensionMismatch(t *testing.T) {
+	artifact := RuleSetArtifact{
+		Ref:         "acl:test",
+		RuntimeTag:  "rs-test",
+		SourcePath:  "/package/test.srs",
+		RuntimePath: "/state/core/rule-sets/sha256/" + strings.Repeat("a", 64) + ".json",
+		SHA256:      strings.Repeat("a", 64),
+		Format:      RuleSetFormatBinary,
+	}
+	if _, err := artifact.LocalConfig(); !errors.Is(err, ErrInvalidRuleSet) {
+		t.Fatalf("format/path mismatch error = %v", err)
+	}
 }
