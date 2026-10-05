@@ -44,7 +44,7 @@ func BindProxyTargetDNSRouting(bound BoundRouting, dns CompiledDNS) (BoundRoutin
 		}
 
 		entry, userRule := sourceByIndex[index]
-		if userRule && isProxyTarget(entry.Target) {
+		if userRule && entry.Action == "route" && entry.DNSProfileID == "" && isProxyTarget(entry.Target) {
 			if !routeRulePreResolveSafe(rule) {
 				return BoundRouting{}, fmt.Errorf("%w: group %q layer %q target %q depends on destination IP or opaque rule-set state", ErrDNSRouteResolutionAmbiguous, entry.GroupID, entry.Layer, entry.Target.Kind)
 			}

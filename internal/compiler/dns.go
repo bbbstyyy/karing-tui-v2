@@ -27,9 +27,18 @@ type DNSProfileBinding struct {
 	RuntimeTag string
 }
 
+type DNSGroupBinding struct {
+	GroupID        string
+	ProfileID      string
+	RuntimeTag     string
+	DetourOutbound string
+}
+
 type CompiledDNS struct {
 	Servers             []DNSServerConfig
 	ProfileBindings     []DNSProfileBinding
+	GroupBindings       []DNSGroupBinding
+	DetourOutboundTags  []string
 	OutboundResolverTag string
 	DirectResolverTag   string
 	ProxyResolverTag    string
