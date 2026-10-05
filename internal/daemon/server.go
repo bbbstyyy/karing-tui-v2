@@ -229,6 +229,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"basic_node_model":          true,
 				"basic_node_lowerer":        true,
 				"native_config_emitter":     true,
+				"dns_dependency_model":      true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,
