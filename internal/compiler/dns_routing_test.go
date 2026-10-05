@@ -119,7 +119,7 @@ func TestBindProxyTargetDNSRoutingLeavesDirectAndBlockRulesUnresolved(t *testing
 	bound := BoundRouting{CompiledRouting: compiled}
 	proxyTag := stableDNSTag("proxy")
 	rebound, err := BindProxyTargetDNSRouting(bound, CompiledDNS{
-		Servers: []DNSServerConfig{{Type: "udp", Tag: proxyTag, Server: "192.0.2.53", ServerPort: 53, Detour: targets.CurrentSelectedTag}},
+		Servers:          []DNSServerConfig{{Type: "udp", Tag: proxyTag, Server: "192.0.2.53", ServerPort: 53, Detour: targets.CurrentSelectedTag}},
 		ProxyResolverTag: proxyTag,
 	})
 	if err != nil {
