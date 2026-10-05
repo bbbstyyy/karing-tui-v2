@@ -11,9 +11,8 @@ import (
 )
 
 var (
-	ErrUnresolvedTarget      = errors.New("unresolved route target")
-	ErrInvalidOutboundTag    = errors.New("invalid generated outbound tag")
-	ErrDNSBindingUnsupported = errors.New("group DNS binding is not compiled yet")
+	ErrUnresolvedTarget   = errors.New("unresolved route target")
+	ErrInvalidOutboundTag = errors.New("invalid generated outbound tag")
 )
 
 type TargetResolver interface {
@@ -54,8 +53,9 @@ type RouteSourceMapEntry struct {
 	Final     bool
 	Target    domain.TargetRef
 	Action    string
-	Outbound  string
-	Server    string
+	Outbound     string
+	Server       string
+	DNSProfileID string
 }
 
 type CompiledRouting struct {
@@ -116,10 +116,6 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 	}
 
 	for _, step := range steps {
-		if step.DNSProfileID != "" {
-			return CompiledRouting{}, fmt.Errorf("%w: group %q references DNS profile %q", ErrDNSBindingUnsupported, step.GroupID, step.DNSProfileID)
-		}
-
 		var rule RouteRule
 		if !step.Final {
 			if step.Match == nil {
@@ -149,8 +145,9 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 			GroupID:   step.GroupID,
 			Final:     step.Final,
 			Target:    step.Target,
-			Action:    action,
-			Outbound:  outbound,
+			Action:       action,
+			Outbound:     outbound,
+			DNSProfileID: step.DNSProfileID,
 		})
 	}
 

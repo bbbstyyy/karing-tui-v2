@@ -13,7 +13,7 @@ func TestDNSPlanValidatesExplicitRoleAndBootstrapGraph(t *testing.T) {
 			{ID: "direct", Role: DNSRoleDirect, Transport: DNSTransportUDP, Server: "198.51.100.53", Port: 53},
 			{ID: "proxy", Role: DNSRoleProxy, Transport: DNSTransportTCP, Server: "203.0.113.53", Port: 53},
 			{ID: "fallback", Role: DNSRoleFallback, Transport: DNSTransportUDP, Server: "192.0.2.54", Port: 53},
-			{ID: "group-a", Role: DNSRoleGroup, Transport: DNSTransportUDP, Server: "192.0.2.55", Port: 53},
+			{ID: "group-a", Role: DNSRoleGroup, Transport: DNSTransportUDP, Server: "192.0.2.55", Port: 53, DetourTarget: TargetRef{Kind: TargetDirect}},
 		},
 		OutboundProfileID: "outbound",
 		DirectProfileID:   "direct",
@@ -105,6 +105,9 @@ func TestDNSProfileRequiresExplicitSupportedTransportAndPort(t *testing.T) {
 		{ID: "dns", Role: DNSRoleDirect, Transport: DNSTransportUDP, Server: "192.0.2.53", Port: 0},
 		{ID: "dns", Role: DNSRoleDirect, Transport: DNSTransportUDP, Server: "0.0.0.0", Port: 53},
 		{ID: "dns", Role: DNSRoleDirect, Transport: DNSTransportUDP, Server: "192.0.2.53", Port: 53, BootstrapProfileID: "unused"},
+		{ID: "group", Role: DNSRoleGroup, Transport: DNSTransportUDP, Server: "192.0.2.54", Port: 53},
+		{ID: "group", Role: DNSRoleGroup, Transport: DNSTransportUDP, Server: "192.0.2.54", Port: 53, DetourTarget: TargetRef{Kind: TargetBlock}},
+		{ID: "direct", Role: DNSRoleDirect, Transport: DNSTransportUDP, Server: "192.0.2.55", Port: 53, DetourTarget: TargetRef{Kind: TargetCurrentSelected}},
 	}
 	for i, profile := range cases {
 		if err := profile.Validate(); !errors.Is(err, ErrInvalidDNSPlan) {
@@ -142,13 +145,14 @@ func TestDNSPlanValidatesEnabledRouteGroupDNSBindings(t *testing.T) {
 		Final: TargetRef{Kind: TargetDirect},
 	}
 	plan := DNSPlan{Profiles: []DNSProfile{
-		{ID: "group-dns", Role: DNSRoleGroup, Transport: DNSTransportUDP, Server: "192.0.2.53", Port: 53},
+		{ID: "group-dns", Role: DNSRoleGroup, Transport: DNSTransportUDP, Server: "192.0.2.53", Port: 53, DetourTarget: TargetRef{Kind: TargetDirect}},
 	}}
 	if err := plan.ValidateActiveRouteBindings(routing); err != nil {
 		t.Fatal(err)
 	}
 
 	plan.Profiles[0].Role = DNSRoleDirect
+	plan.Profiles[0].DetourTarget = TargetRef{}
 	if err := plan.ValidateActiveRouteBindings(routing); !errors.Is(err, ErrInvalidDNSRouteBind) {
 		t.Fatalf("wrong group DNS role error = %v", err)
 	}

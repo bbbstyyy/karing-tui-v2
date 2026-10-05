@@ -139,7 +139,7 @@ func TestCompileRoutingCollectsDependenciesInFirstUseOrder(t *testing.T) {
 	}
 }
 
-func TestCompileRoutingRefusesToDropGroupDNSBinding(t *testing.T) {
+func TestCompileRoutingPreservesGroupDNSBindingForLaterLowering(t *testing.T) {
 	match := domain.Atom(domain.Predicate{Kind: domain.PredicateDomain, Value: "dns.example"})
 	plan := domain.RoutingPlan{
 		Custom: []domain.RouteGroup{{
@@ -150,13 +150,20 @@ func TestCompileRoutingRefusesToDropGroupDNSBinding(t *testing.T) {
 			Binding: domain.RouteBinding{
 				Enabled:      true,
 				Target:       domain.TargetRef{Kind: domain.TargetDirect},
-				DNSProfileID: "direct-dns",
+				DNSProfileID: "group-dns",
 			},
 		}},
 		Final: domain.TargetRef{Kind: domain.TargetDirect},
 	}
-	if _, err := CompileRouting(plan, testResolver()); !errors.Is(err, ErrDNSBindingUnsupported) {
-		t.Fatalf("DNS binding error = %v", err)
+	compiled, err := CompileRouting(plan, testResolver())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled.SourceMap) != 2 ||
+		compiled.SourceMap[0].GroupID != "dns-bound" ||
+		compiled.SourceMap[0].DNSProfileID != "group-dns" ||
+		compiled.SourceMap[1].DNSProfileID != "" {
+		t.Fatalf("group DNS binding was not preserved in source map: %+v", compiled.SourceMap)
 	}
 }
 

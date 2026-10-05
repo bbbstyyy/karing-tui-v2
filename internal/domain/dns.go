@@ -38,6 +38,7 @@ type DNSProfile struct {
 	Server             string
 	Port               uint16
 	BootstrapProfileID string
+	DetourTarget       TargetRef
 }
 
 func (p DNSProfile) Validate() error {
@@ -45,7 +46,20 @@ func (p DNSProfile) Validate() error {
 		return fmt.Errorf("%w: profile ID %q: %v", ErrInvalidDNSPlan, p.ID, err)
 	}
 	switch p.Role {
-	case DNSRoleBootstrap, DNSRoleOutbound, DNSRoleDirect, DNSRoleProxy, DNSRoleGroup, DNSRoleFallback:
+	case DNSRoleBootstrap, DNSRoleOutbound, DNSRoleDirect, DNSRoleProxy, DNSRoleFallback:
+		if p.DetourTarget.Kind != "" {
+			return fmt.Errorf("%w: profile %q role %q must not declare an explicit detour target", ErrInvalidDNSPlan, p.ID, p.Role)
+		}
+	case DNSRoleGroup:
+		if p.DetourTarget.Kind == "" {
+			return fmt.Errorf("%w: Group DNS profile %q requires an explicit detour target", ErrInvalidDNSPlan, p.ID)
+		}
+		if err := p.DetourTarget.Validate(); err != nil {
+			return fmt.Errorf("%w: Group DNS profile %q detour: %v", ErrInvalidDNSPlan, p.ID, err)
+		}
+		if p.DetourTarget.Kind == TargetBlock {
+			return fmt.Errorf("%w: Group DNS profile %q cannot use BLOCK as a detour", ErrInvalidDNSPlan, p.ID)
+		}
 	default:
 		return fmt.Errorf("%w: profile %q has unsupported role %q", ErrInvalidDNSPlan, p.ID, p.Role)
 	}
