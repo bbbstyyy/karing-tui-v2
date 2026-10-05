@@ -226,6 +226,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_rule_set_store":    true,
 				"selection_group_model":     true,
 				"selection_group_lowerer":   true,
+				"basic_node_model":          true,
+				"basic_node_lowerer":        true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,
