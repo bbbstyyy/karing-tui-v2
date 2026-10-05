@@ -59,3 +59,27 @@ func TestInboundSetAllowsExplicitIPv6Loopback(t *testing.T) {
 		t.Fatalf("selected address = %q", got)
 	}
 }
+
+
+func TestInboundRuntimeTagsAreStable(t *testing.T) {
+	cases := []struct {
+		role InboundRole
+		want string
+	}{
+		{role: InboundRule, want: InboundTagRule},
+		{role: InboundDirect, want: InboundTagDirect},
+		{role: InboundSelected, want: InboundTagSelected},
+	}
+	for _, tc := range cases {
+		got, err := tc.role.RuntimeTag()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s runtime tag = %q, want %q", tc.role, got, tc.want)
+		}
+	}
+	if _, err := InboundRole("unknown").RuntimeTag(); err == nil {
+		t.Fatal("unknown inbound role unexpectedly produced a runtime tag")
+	}
+}

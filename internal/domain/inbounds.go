@@ -14,6 +14,25 @@ const (
 	InboundSelected InboundRole = "selected"
 )
 
+const (
+	InboundTagRule     = "in-rule"
+	InboundTagDirect   = "in-direct"
+	InboundTagSelected = "in-selected"
+)
+
+func (r InboundRole) RuntimeTag() (string, error) {
+	switch r {
+	case InboundRule:
+		return InboundTagRule, nil
+	case InboundDirect:
+		return InboundTagDirect, nil
+	case InboundSelected:
+		return InboundTagSelected, nil
+	default:
+		return "", fmt.Errorf("unknown proxy inbound role %q", r)
+	}
+}
+
 type InboundSet struct {
 	Listen       netip.Addr
 	RulePort     uint16

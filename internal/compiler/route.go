@@ -31,6 +31,7 @@ type RouteRule struct {
 	Mode          string      `json:"mode,omitempty"`
 	Rules         []RouteRule `json:"rules,omitempty"`
 	Invert        bool        `json:"invert,omitempty"`
+	Inbound       []string    `json:"inbound,omitempty"`
 	Domain        []string    `json:"domain,omitempty"`
 	DomainSuffix  []string    `json:"domain_suffix,omitempty"`
 	DomainKeyword []string    `json:"domain_keyword,omitempty"`
@@ -84,6 +85,34 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 	ruleSetSeen := make(map[string]struct{})
 	outboundSeen := make(map[string]struct{})
 
+	for _, synthetic := range []struct {
+		role   domain.InboundRole
+		target domain.TargetRef
+	}{
+		{role: domain.InboundDirect, target: domain.TargetRef{Kind: domain.TargetDirect}},
+		{role: domain.InboundSelected, target: domain.TargetRef{Kind: domain.TargetCurrentSelected}},
+	} {
+		inbound, err := synthetic.role.RuntimeTag()
+		if err != nil {
+			return CompiledRouting{}, err
+		}
+		action, outbound, err := lowerTarget(synthetic.target, resolver)
+		if err != nil {
+			return CompiledRouting{}, fmt.Errorf("resolve %s inbound target: %w", synthetic.role, err)
+		}
+		result.Rules = append(result.Rules, RouteRule{
+			Inbound:  []string{inbound},
+			Action:   action,
+			Outbound: outbound,
+		})
+		recordOutbound(&result, outboundSeen, outbound)
+	}
+
+	ruleInbound, err := domain.InboundRule.RuntimeTag()
+	if err != nil {
+		return CompiledRouting{}, err
+	}
+
 	for _, step := range steps {
 		if step.DNSProfileID != "" {
 			return CompiledRouting{}, fmt.Errorf("%w: group %q references DNS profile %q", ErrDNSBindingUnsupported, step.GroupID, step.DNSProfileID)
@@ -98,6 +127,9 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 			if err != nil {
 				return CompiledRouting{}, fmt.Errorf("lower route group %q: %w", step.GroupID, err)
 			}
+			rule = scopeToInbound(rule, ruleInbound)
+		} else {
+			rule.Inbound = []string{ruleInbound}
 		}
 
 		action, outbound, err := lowerTarget(step.Target, resolver)
@@ -106,12 +138,7 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 		}
 		rule.Action = action
 		rule.Outbound = outbound
-		if outbound != "" {
-			if _, exists := outboundSeen[outbound]; !exists {
-				outboundSeen[outbound] = struct{}{}
-				result.OutboundTags = append(result.OutboundTags, outbound)
-			}
-		}
+		recordOutbound(&result, outboundSeen, outbound)
 
 		result.Rules = append(result.Rules, rule)
 		result.SourceMap = append(result.SourceMap, RouteSourceMapEntry{
@@ -126,6 +153,28 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 	}
 
 	return result, nil
+}
+
+func scopeToInbound(rule RouteRule, inbound string) RouteRule {
+	return RouteRule{
+		Type: "logical",
+		Mode: "and",
+		Rules: []RouteRule{
+			{Inbound: []string{inbound}},
+			rule,
+		},
+	}
+}
+
+func recordOutbound(result *CompiledRouting, seen map[string]struct{}, outbound string) {
+	if outbound == "" {
+		return
+	}
+	if _, exists := seen[outbound]; exists {
+		return
+	}
+	seen[outbound] = struct{}{}
+	result.OutboundTags = append(result.OutboundTags, outbound)
 }
 
 func lowerMatch(expr domain.MatchExpr, result *CompiledRouting, ruleSetSeen map[string]struct{}) (RouteRule, error) {

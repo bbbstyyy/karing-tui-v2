@@ -59,3 +59,23 @@ This lowerer is not yet the full native configuration compiler. Remaining gates 
 7. validation with the exact approved core before managed apply.
 
 Only after those pieces are integrated can the daemon advertise `routing_ir=true`.
+
+
+## Three-entry scoping
+
+The lowerer also owns the route boundary between the three fixed Mixed inbounds.
+
+Stable generated inbound tags are:
+
+- Rule: `in-rule`
+- Direct: `in-direct`
+- Selected: `in-selected`
+
+The emitted rule order starts with two synthetic terminal routes:
+
+1. `in-direct` -> DIRECT target;
+2. `in-selected` -> CurrentSelected target.
+
+Every user five-layer rule is then wrapped in an explicit logical AND with `inbound: in-rule`. FINAL is an action-only catch-all **within `in-rule`**, not a global catch-all.
+
+This prevents Direct/Selected traffic from falling into Custom/GeoSite/GeoIP/ACL/FINAL if the compiler grows additional inbounds later. Synthetic entry rules are infrastructure and are not presented as user route-source entries; source-map rule indexes still point at their actual positions after those synthetic rules.

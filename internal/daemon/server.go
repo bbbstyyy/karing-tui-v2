@@ -220,6 +220,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_ir_model":          true,
 				"routing_match_ast":         true,
 				"routing_rule_lowerer":      true,
+				"routing_entry_scoping":     true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,
