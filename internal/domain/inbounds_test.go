@@ -60,7 +60,6 @@ func TestInboundSetAllowsExplicitIPv6Loopback(t *testing.T) {
 	}
 }
 
-
 func TestInboundRuntimeTagsAreStable(t *testing.T) {
 	cases := []struct {
 		role InboundRole

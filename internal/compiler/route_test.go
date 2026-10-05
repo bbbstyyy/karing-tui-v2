@@ -302,7 +302,6 @@ func testResolver() TargetResolver {
 	})
 }
 
-
 func TestCompileRoutingCreatesFixedDirectAndSelectedEntryRules(t *testing.T) {
 	plan := domain.RoutingPlan{Final: domain.TargetRef{Kind: domain.TargetBlock}}
 	result, err := CompileRouting(plan, testResolver())
