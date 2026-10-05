@@ -67,7 +67,9 @@ func BindProxyTargetDNSRouting(bound BoundRouting, dns CompiledDNS) (BoundRoutin
 		rules = append(rules, rule)
 		if userRule {
 			entry.RuleIndex = routeIndex
-			entry.Server = ""
+			if entry.Action == "route" {
+				entry.Server = ""
+			}
 			sourceMap = append(sourceMap, entry)
 		}
 	}
