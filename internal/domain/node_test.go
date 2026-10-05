@@ -80,8 +80,7 @@ func TestSOCKSOptionsAreExplicitAndVersionAware(t *testing.T) {
 		{Version: SOCKS4, Network: ProxyNetworkBoth},
 		{Version: SOCKS4A, Network: ProxyNetworkUDP},
 		{Version: SOCKS5, Password: "needs-user", Network: ProxyNetworkBoth},
-		{Version: SOCKS5, Username: "bad
-user", Network: ProxyNetworkBoth},
+		{Version: SOCKS5, Username: "bad\nuser", Network: ProxyNetworkBoth},
 	}
 	for i, options := range cases {
 		if err := options.Validate(); !errors.Is(err, ErrInvalidNode) {
