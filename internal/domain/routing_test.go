@@ -13,7 +13,7 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 				ID:    "custom-a",
 				Layer: LayerCustom,
 				Order: 10,
-				Match:   matchDomain("custom.example"),
+				Match: matchDomain("custom.example"),
 				Binding: RouteBinding{
 					Enabled: true,
 					Target:  TargetRef{Kind: TargetDirect},
@@ -33,7 +33,7 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 			ID:    "geosite-a",
 			Layer: LayerGeoSite,
 			Order: 10,
-			Match:   matchRuleSet("geosite:example"),
+			Match: matchRuleSet("geosite:example"),
 			Binding: RouteBinding{
 				Enabled: true,
 				Target:  TargetRef{Kind: TargetCurrentSelected},
@@ -43,7 +43,7 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 			ID:    "geoip-a",
 			Layer: LayerGeoIP,
 			Order: 10,
-			Match:   matchRuleSet("geoip:jp"),
+			Match: matchRuleSet("geoip:jp"),
 			Binding: RouteBinding{
 				Enabled: true,
 				Target: TargetRef{
@@ -56,7 +56,7 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 			ID:    "acl-a",
 			Layer: LayerACL,
 			Order: 10,
-			Match:   matchRuleSet("acl:example"),
+			Match: matchRuleSet("acl:example"),
 			Binding: RouteBinding{
 				Enabled:      true,
 				Target:       TargetRef{Kind: TargetGlobalURLTest},
@@ -200,7 +200,7 @@ func TestBlockTargetCannotCarryGroupDNS(t *testing.T) {
 			ID:    "block",
 			Layer: LayerACL,
 			Order: 1,
-			Match:   matchDomain("blocked.example"),
+			Match: matchDomain("blocked.example"),
 			Binding: RouteBinding{
 				Enabled:      true,
 				Target:       TargetRef{Kind: TargetBlock},
@@ -220,7 +220,6 @@ func TestFinalMustBeAnExplicitTarget(t *testing.T) {
 		t.Fatalf("empty final error = %v", err)
 	}
 }
-
 
 func TestEnabledRouteGroupRequiresExplicitMatcher(t *testing.T) {
 	plan := RoutingPlan{

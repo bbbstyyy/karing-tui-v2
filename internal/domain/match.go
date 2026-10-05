@@ -54,11 +54,11 @@ type PortRange struct {
 }
 
 type Predicate struct {
-	Kind      PredicateKind
-	Value     string
-	CIDR      string
-	Port      PortRange
-	Network   NetworkType
+	Kind    PredicateKind
+	Value   string
+	CIDR    string
+	Port    PortRange
+	Network NetworkType
 }
 
 type MatchExpr struct {
