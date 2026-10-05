@@ -230,6 +230,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"basic_node_lowerer":        true,
 				"native_config_emitter":     true,
 				"dns_dependency_model":      true,
+				"outbound_dns_lowerer":      true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,

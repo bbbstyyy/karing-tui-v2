@@ -13,14 +13,15 @@ var (
 )
 
 type NodeOutboundConfig struct {
-	Type       string `json:"type"`
-	Tag        string `json:"tag"`
-	Server     string `json:"server"`
-	ServerPort uint16 `json:"server_port"`
-	Version    string `json:"version,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Password   string `json:"password,omitempty"`
-	Network    string `json:"network,omitempty"`
+	Type           string `json:"type"`
+	Tag            string `json:"tag"`
+	Server         string `json:"server"`
+	ServerPort     uint16 `json:"server_port"`
+	Version        string `json:"version,omitempty"`
+	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
+	Network        string `json:"network,omitempty"`
+	DomainResolver string `json:"domain_resolver,omitempty"`
 }
 
 type CompiledNodes struct {
