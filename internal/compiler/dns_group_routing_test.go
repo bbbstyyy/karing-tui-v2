@@ -96,7 +96,6 @@ func TestBindGroupDNSRoutingRejectsPreResolutionAmbiguity(t *testing.T) {
 	}
 }
 
-
 func TestGroupDNSAndProxyDNSDoNotDoubleResolve(t *testing.T) {
 	targets, err := NewTargetCatalog(nil, nil)
 	if err != nil {
