@@ -161,7 +161,7 @@ func (p RoutingPlan) OrderedActiveSteps() ([]RouteStep, error) {
 	appendLayer(LayerACL, p.ACL)
 	steps = append(steps, RouteStep{
 		Layer:  LayerFinal,
-		Target:  p.Final,
+		Target: p.Final,
 		Final:   true,
 	})
 	return steps, nil
