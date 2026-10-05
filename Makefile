@@ -13,4 +13,4 @@ vet:
 	go vet ./...
 
 fmt-check:
-	@test -z "$$(gofmt -l .)" || (echo "gofmt required:"; gofmt -l .; exit 1)
+	@test -z "$(gofmt -l .)" || (echo "gofmt required:"; gofmt -l .; gofmt -d $(gofmt -l .); exit 1)
