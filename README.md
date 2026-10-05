@@ -91,3 +91,6 @@ Build approval is narrower than product completion: core distribution/licensing,
 ## License
 
 Project licensing and upstream/resource license closure are still M0 work. Do not redistribute upstream code or rule assets from this repository until the relevant license audit is complete.
+
+
+Direct/Proxy target DNS lowering is now implemented through explicit runtime resolver tags and fail-closed route resolution; Group/Fallback DNS remains pending.

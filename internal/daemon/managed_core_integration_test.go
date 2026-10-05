@@ -272,20 +272,42 @@ func integrationCoreConfig(t *testing.T, inbounds domain.InboundSet, controlPort
 	if err != nil {
 		t.Fatal(err)
 	}
-	dns, err := compiler.CompileOutboundDNS(domain.DNSPlan{
-		Profiles: []domain.DNSProfile{{
-			ID:        "integration-outbound-dns",
-			Role:      domain.DNSRoleOutbound,
-			Transport: domain.DNSTransportUDP,
-			Server:    "127.0.0.1",
-			Port:      9,
-		}},
+	dns, err := compiler.CompileRuntimeDNS(domain.DNSPlan{
+		Profiles: []domain.DNSProfile{
+			{
+				ID:        "integration-outbound-dns",
+				Role:      domain.DNSRoleOutbound,
+				Transport: domain.DNSTransportUDP,
+				Server:    "127.0.0.1",
+				Port:      9,
+			},
+			{
+				ID:        "integration-direct-dns",
+				Role:      domain.DNSRoleDirect,
+				Transport: domain.DNSTransportUDP,
+				Server:    "127.0.0.1",
+				Port:      9,
+			},
+			{
+				ID:        "integration-proxy-dns",
+				Role:      domain.DNSRoleProxy,
+				Transport: domain.DNSTransportUDP,
+				Server:    "127.0.0.1",
+				Port:      9,
+			},
+		},
 		OutboundProfileID: "integration-outbound-dns",
+		DirectProfileID:   "integration-direct-dns",
+		ProxyProfileID:    "integration-proxy-dns",
 	}, targets)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nodes, err = compiler.BindNodeDomainResolver(nodes, dns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err = compiler.BindProxyTargetDNSRouting(bound, dns)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,10 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 )
 
-var ErrDNSClosure = errors.New("DNS dependency closure is incomplete")
+var (
+	ErrDNSClosure         = errors.New("DNS dependency closure is incomplete")
+	ErrDNSRoleUnsupported = errors.New("DNS role is not compiled yet")
+)
 
 type DNSServerConfig struct {
 	Type           string `json:"type"`
@@ -28,6 +31,8 @@ type CompiledDNS struct {
 	Servers             []DNSServerConfig
 	ProfileBindings     []DNSProfileBinding
 	OutboundResolverTag string
+	DirectResolverTag   string
+	ProxyResolverTag    string
 }
 
 func CompileOutboundDNS(plan domain.DNSPlan, targets TargetCatalog) (CompiledDNS, error) {
@@ -89,6 +94,91 @@ func CompileOutboundDNS(plan domain.DNSPlan, targets TargetCatalog) (CompiledDNS
 		return CompiledDNS{}, err
 	}
 	result.OutboundResolverTag = stableDNSTag(plan.OutboundProfileID)
+	return result, nil
+}
+
+func CompileRuntimeDNS(plan domain.DNSPlan, targets TargetCatalog) (CompiledDNS, error) {
+	if err := plan.Validate(); err != nil {
+		return CompiledDNS{}, err
+	}
+	if err := targets.Validate(); err != nil {
+		return CompiledDNS{}, err
+	}
+	if plan.OutboundProfileID == "" {
+		return CompiledDNS{}, fmt.Errorf("%w: outbound DNS profile is not configured", ErrDNSClosure)
+	}
+	if plan.FallbackProfileID != "" {
+		return CompiledDNS{}, fmt.Errorf("%w: fallback DNS profile %q", ErrDNSRoleUnsupported, plan.FallbackProfileID)
+	}
+
+	byID := make(map[string]domain.DNSProfile, len(plan.Profiles))
+	for _, profile := range plan.Profiles {
+		byID[profile.ID] = profile
+	}
+
+	var result CompiledDNS
+	emitted := make(map[string]struct{}, len(plan.Profiles))
+	var emit func(string) error
+	emit = func(id string) error {
+		if _, exists := emitted[id]; exists {
+			return nil
+		}
+		profile, exists := byID[id]
+		if !exists {
+			return fmt.Errorf("%w: DNS profile %q does not exist", ErrDNSClosure, id)
+		}
+		if profile.BootstrapProfileID != "" {
+			if err := emit(profile.BootstrapProfileID); err != nil {
+				return err
+			}
+		}
+
+		tag := stableDNSTag(profile.ID)
+		if err := validateGeneratedTag(tag); err != nil {
+			return err
+		}
+		server := DNSServerConfig{
+			Type:       string(profile.Transport),
+			Tag:        tag,
+			Server:     profile.Server,
+			ServerPort: profile.Port,
+		}
+		switch profile.Role {
+		case domain.DNSRoleBootstrap, domain.DNSRoleOutbound, domain.DNSRoleDirect:
+		case domain.DNSRoleProxy:
+			server.Detour = targets.CurrentSelectedTag
+		default:
+			return fmt.Errorf("%w: profile %q has role %q", ErrDNSRoleUnsupported, profile.ID, profile.Role)
+		}
+		if profile.BootstrapProfileID != "" {
+			server.DomainResolver = stableDNSTag(profile.BootstrapProfileID)
+		}
+		result.Servers = append(result.Servers, server)
+		result.ProfileBindings = append(result.ProfileBindings, DNSProfileBinding{
+			ProfileID:  profile.ID,
+			RuntimeTag: tag,
+		})
+		emitted[id] = struct{}{}
+		return nil
+	}
+
+	if err := emit(plan.OutboundProfileID); err != nil {
+		return CompiledDNS{}, err
+	}
+	result.OutboundResolverTag = stableDNSTag(plan.OutboundProfileID)
+
+	if plan.DirectProfileID != "" {
+		if err := emit(plan.DirectProfileID); err != nil {
+			return CompiledDNS{}, err
+		}
+		result.DirectResolverTag = stableDNSTag(plan.DirectProfileID)
+	}
+	if plan.ProxyProfileID != "" {
+		if err := emit(plan.ProxyProfileID); err != nil {
+			return CompiledDNS{}, err
+		}
+		result.ProxyResolverTag = stableDNSTag(plan.ProxyProfileID)
+	}
 	return result, nil
 }
 

@@ -44,6 +44,7 @@ type RouteRule struct {
 	ProcessName   []string    `json:"process_name,omitempty"`
 	Action        string      `json:"action,omitempty"`
 	Outbound      string      `json:"outbound,omitempty"`
+	Server        string      `json:"server,omitempty"`
 }
 
 type RouteSourceMapEntry struct {
@@ -54,6 +55,7 @@ type RouteSourceMapEntry struct {
 	Target    domain.TargetRef
 	Action    string
 	Outbound  string
+	Server    string
 }
 
 type CompiledRouting struct {

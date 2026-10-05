@@ -232,6 +232,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"dns_dependency_model":      true,
 				"outbound_dns_lowerer":      true,
 				"native_outbound_dns":       true,
+				"direct_proxy_dns_lowerer": true,
+				"proxy_dns_route_binding":  true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,

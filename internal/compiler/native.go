@@ -71,8 +71,9 @@ type nativeInboundConfig struct {
 }
 
 type nativeDirectOutbound struct {
-	Type string `json:"type"`
-	Tag  string `json:"tag"`
+	Type           string `json:"type"`
+	Tag            string `json:"tag"`
+	DomainResolver string `json:"domain_resolver,omitempty"`
 }
 
 type nativePredefinedDNSServer struct {
@@ -154,7 +155,7 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 		return NativeConfigArtifact{}, err
 	}
 
-	nativeDNS, dnsTags, err := compileNativeDNS(input.DNS)
+	nativeDNS, dnsTags, err := compileNativeDNS(input.DNS, input.Targets)
 	if err != nil {
 		return NativeConfigArtifact{}, err
 	}
@@ -179,7 +180,14 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 		return nil
 	}
 
-	if err := addOutbound(input.Targets.DirectTag, nativeDirectOutbound{Type: "direct", Tag: input.Targets.DirectTag}); err != nil {
+	directOutbound := nativeDirectOutbound{Type: "direct", Tag: input.Targets.DirectTag}
+	if input.DNS.DirectResolverTag != "" {
+		if _, exists := dnsTagSet[input.DNS.DirectResolverTag]; !exists {
+			return NativeConfigArtifact{}, fmt.Errorf("%w: direct resolver %q is unavailable", ErrNativeConfigClosure, input.DNS.DirectResolverTag)
+		}
+		directOutbound.DomainResolver = input.DNS.DirectResolverTag
+	}
+	if err := addOutbound(input.Targets.DirectTag, directOutbound); err != nil {
 		return NativeConfigArtifact{}, err
 	}
 
@@ -229,6 +237,20 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 			return NativeConfigArtifact{}, fmt.Errorf("%w: route requires unavailable outbound %q", ErrNativeConfigClosure, required)
 		}
 	}
+	for _, server := range input.DNS.Servers {
+		if server.Detour == "" {
+			continue
+		}
+		if _, exists := outboundSeen[server.Detour]; !exists {
+			return NativeConfigArtifact{}, fmt.Errorf("%w: DNS server %q detour %q is unavailable", ErrNativeConfigClosure, server.Tag, server.Detour)
+		}
+	}
+	if err := validateRouteDNSResolverTags(input.Routing.Rules, dnsTagSet); err != nil {
+		return NativeConfigArtifact{}, err
+	}
+	if input.DNS.ProxyResolverTag != "" && !routeRulesUseResolver(input.Routing.Rules, input.DNS.ProxyResolverTag) {
+		return NativeConfigArtifact{}, fmt.Errorf("%w: proxy resolver %q is not bound to route resolution", ErrNativeConfigClosure, input.DNS.ProxyResolverTag)
+	}
 
 	config := nativeConfig{
 		Log: nativeLogConfig{
@@ -272,7 +294,7 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 	}, nil
 }
 
-func compileNativeDNS(compiled CompiledDNS) (*nativeDNSConfig, []string, error) {
+func compileNativeDNS(compiled CompiledDNS, targets TargetCatalog) (*nativeDNSConfig, []string, error) {
 	if len(compiled.Servers) == 0 {
 		if compiled.OutboundResolverTag != "" || len(compiled.ProfileBindings) != 0 {
 			return nil, nil, fmt.Errorf("%w: empty DNS server closure carries metadata", ErrNativeConfigClosure)
@@ -291,7 +313,12 @@ func compileNativeDNS(compiled CompiledDNS) (*nativeDNSConfig, []string, error) 
 			return nil, nil, fmt.Errorf("%w: duplicate DNS server tag %q", ErrNativeConfigClosure, server.Tag)
 		}
 		if server.Detour != "" {
-			return nil, nil, fmt.Errorf("%w: Outbound/Bootstrap DNS server %q must use the approved core's direct dial path without a detour, got %q", ErrNativeConfigClosure, server.Tag, server.Detour)
+			if server.Tag != compiled.ProxyResolverTag {
+				return nil, nil, fmt.Errorf("%w: only the compiled Proxy DNS server may use an outbound detour, got %q on %q", ErrNativeConfigClosure, server.Detour, server.Tag)
+			}
+			if server.Detour != targets.CurrentSelectedTag {
+				return nil, nil, fmt.Errorf("%w: Proxy DNS server %q detour %q is not CurrentSelected %q", ErrNativeConfigClosure, server.Tag, server.Detour, targets.CurrentSelectedTag)
+			}
 		}
 		if server.ServerPort == 0 {
 			return nil, nil, fmt.Errorf("%w: DNS server %q has zero port", ErrNativeConfigClosure, server.Tag)
@@ -320,6 +347,17 @@ func compileNativeDNS(compiled CompiledDNS) (*nativeDNSConfig, []string, error) 
 	}
 	if _, exists := seen[compiled.OutboundResolverTag]; !exists {
 		return nil, nil, fmt.Errorf("%w: outbound DNS resolver %q is unavailable", ErrNativeConfigClosure, compiled.OutboundResolverTag)
+	}
+	for name, tag := range map[string]string{
+		"direct": compiled.DirectResolverTag,
+		"proxy":  compiled.ProxyResolverTag,
+	} {
+		if tag == "" {
+			continue
+		}
+		if _, exists := seen[tag]; !exists {
+			return nil, nil, fmt.Errorf("%w: %s DNS resolver %q is unavailable", ErrNativeConfigClosure, name, tag)
+		}
 	}
 	if _, exists := seen[nativeDNSFailClosedTag]; exists {
 		return nil, nil, fmt.Errorf("%w: fail-closed DNS tag collides with compiled DNS", ErrNativeConfigClosure)
@@ -384,6 +422,35 @@ func validateNativeLogLevel(level string) error {
 	default:
 		return fmt.Errorf("unsupported core log level %q", level)
 	}
+}
+
+func validateRouteDNSResolverTags(rules []RouteRule, available map[string]struct{}) error {
+	for _, rule := range rules {
+		if rule.Server != "" {
+			if rule.Action != "resolve" {
+				return fmt.Errorf("%w: route action %q unexpectedly carries DNS server %q", ErrNativeConfigClosure, rule.Action, rule.Server)
+			}
+			if _, exists := available[rule.Server]; !exists {
+				return fmt.Errorf("%w: route resolve references unavailable DNS server %q", ErrNativeConfigClosure, rule.Server)
+			}
+		}
+		if err := validateRouteDNSResolverTags(rule.Rules, available); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func routeRulesUseResolver(rules []RouteRule, resolver string) bool {
+	for _, rule := range rules {
+		if rule.Action == "resolve" && rule.Server == resolver {
+			return true
+		}
+		if routeRulesUseResolver(rule.Rules, resolver) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateRouteRuleSetTags(rules []RouteRule, available map[string]struct{}) error {
