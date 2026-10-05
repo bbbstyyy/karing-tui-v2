@@ -87,7 +87,7 @@ func TestBindGroupDNSRoutingRejectsPreResolutionAmbiguity(t *testing.T) {
 		}
 		tag := stableDNSTag("group-dns")
 		dns := CompiledDNS{
-			Servers: []DNSServerConfig{{Type: "udp", Tag: tag, Server: "192.0.2.53", ServerPort: 53}},
+			Servers:       []DNSServerConfig{{Type: "udp", Tag: tag, Server: "192.0.2.53", ServerPort: 53}},
 			GroupBindings: []DNSGroupBinding{{GroupID: "ambiguous", ProfileID: "group-dns", RuntimeTag: tag}},
 		}
 		if _, err := BindGroupDNSRouting(BoundRouting{CompiledRouting: compiled}, dns); !errors.Is(err, ErrDNSRouteResolutionAmbiguous) {
