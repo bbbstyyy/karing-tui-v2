@@ -98,6 +98,8 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["routing_target_registry"] ||
 		!caps.Capabilities["routing_rule_set_closure"] ||
 		!caps.Capabilities["routing_rule_set_store"] ||
+		!caps.Capabilities["selection_group_model"] ||
+		!caps.Capabilities["selection_group_lowerer"] ||
 		caps.Capabilities["proxy_inbounds"] ||
 		caps.Capabilities["routing_ir"] {
 		t.Fatalf("unexpected capabilities: %+v", caps.Capabilities)
