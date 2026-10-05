@@ -138,7 +138,6 @@ func ioReadFull(conn net.Conn, buffer []byte) (int, error) {
 	return total, nil
 }
 
-
 func TestLocalHealthProbeRetriesTransientControlStartup(t *testing.T) {
 	const secret = "local-secret"
 
