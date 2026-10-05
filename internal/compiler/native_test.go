@@ -146,9 +146,11 @@ func TestCompileNativeConfigAllowsDomainNodeWithExplicitOutboundDNS(t *testing.T
 		t.Fatalf("DNS servers = %d, want outbound + fail-closed", len(decoded.DNS.Servers))
 	}
 	if decoded.DNS.Servers[0]["type"] != "udp" ||
-		decoded.DNS.Servers[0]["tag"] != dns.OutboundResolverTag ||
-		decoded.DNS.Servers[0]["detour"] != input.Targets.DirectTag {
+		decoded.DNS.Servers[0]["tag"] != dns.OutboundResolverTag {
 		t.Fatalf("unexpected outbound DNS server: %+v", decoded.DNS.Servers[0])
+	}
+	if _, exists := decoded.DNS.Servers[0]["detour"]; exists {
+		t.Fatalf("approved core direct-dial DNS server must omit detour: %+v", decoded.DNS.Servers[0])
 	}
 	if decoded.DNS.Servers[1]["type"] != "predefined" ||
 		decoded.DNS.Servers[1]["tag"] != nativeDNSFailClosedTag ||
@@ -172,7 +174,6 @@ func TestCompileNativeConfigRejectsDNSClosureOutOfDependencyOrder(t *testing.T) 
 				Tag:            "dns-outbound",
 				Server:         "resolver.example.com",
 				ServerPort:     53,
-				Detour:         input.Targets.DirectTag,
 				DomainResolver: "dns-bootstrap",
 			},
 			{
@@ -180,7 +181,6 @@ func TestCompileNativeConfigRejectsDNSClosureOutOfDependencyOrder(t *testing.T) 
 				Tag:        "dns-bootstrap",
 				Server:     "192.0.2.53",
 				ServerPort: 53,
-				Detour:     input.Targets.DirectTag,
 			},
 		},
 		OutboundResolverTag: "dns-outbound",

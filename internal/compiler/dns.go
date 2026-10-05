@@ -15,7 +15,7 @@ type DNSServerConfig struct {
 	Tag            string `json:"tag"`
 	Server         string `json:"server"`
 	ServerPort     uint16 `json:"server_port"`
-	Detour         string `json:"detour"`
+	Detour         string `json:"detour,omitempty"`
 	DomainResolver string `json:"domain_resolver,omitempty"`
 }
 
@@ -72,7 +72,6 @@ func CompileOutboundDNS(plan domain.DNSPlan, targets TargetCatalog) (CompiledDNS
 			Tag:        tag,
 			Server:     profile.Server,
 			ServerPort: profile.Port,
-			Detour:     targets.DirectTag,
 		}
 		if profile.BootstrapProfileID != "" {
 			server.DomainResolver = stableDNSTag(profile.BootstrapProfileID)

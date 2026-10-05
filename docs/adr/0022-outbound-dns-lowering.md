@@ -20,16 +20,18 @@ The first DNS lowerer handles only the Outbound / Node DNS role and the Bootstra
 3. walks only that profile's Bootstrap dependency chain;
 4. emits dependencies before dependents;
 5. derives stable runtime tags as hashed internal identifiers;
-6. emits explicit UDP/TCP server type, server, port, and `detour: out-direct`;
+6. emits explicit UDP/TCP server type, server, and port while leaving `detour` empty so the approved core uses its native direct dial path;
 7. attaches `domain_resolver` to any DNS server whose own endpoint is a domain name.
 
 Profiles for Direct, Proxy, Group, and Fallback roles may exist in the declaration plan but are not emitted by this stage.
 
-## Why the DNS transport detour is DIRECT
+## Why the DNS transport uses the core's direct dial path
 
-Node/bootstrap DNS must be able to start before a selected proxy path is guaranteed usable. The initial lowerer therefore sends the Outbound/Bootstrap resolver chain through the stable DIRECT outbound.
+Node/bootstrap DNS must be able to start before a selected proxy path is guaranteed usable. The initial lowerer therefore requires direct dialing for the Outbound/Bootstrap resolver chain.
 
-This is a deliberate narrow bootstrap policy, not a claim that all future DNS roles must be direct.
+The exact approved 1.13.19 core rejects `detour: out-direct` when `out-direct` is an otherwise empty DIRECT outbound, reporting that detouring to an empty direct outbound makes no sense. At the native JSON boundary, direct dialing is therefore represented by **omitting `detour`**.
+
+The compiler still treats any non-empty detour in this closure as invalid. This is a deliberate narrow bootstrap policy, not an implicit fallback and not a claim that all future DNS roles must be direct.
 
 Proxy-aware target DNS and Group DNS will have separate detour semantics once their dependency graphs are compiled and tested.
 

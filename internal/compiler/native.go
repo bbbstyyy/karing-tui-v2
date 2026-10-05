@@ -154,7 +154,7 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 		return NativeConfigArtifact{}, err
 	}
 
-	nativeDNS, dnsTags, err := compileNativeDNS(input.DNS, input.Targets.DirectTag)
+	nativeDNS, dnsTags, err := compileNativeDNS(input.DNS)
 	if err != nil {
 		return NativeConfigArtifact{}, err
 	}
@@ -272,7 +272,7 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 	}, nil
 }
 
-func compileNativeDNS(compiled CompiledDNS, directTag string) (*nativeDNSConfig, []string, error) {
+func compileNativeDNS(compiled CompiledDNS) (*nativeDNSConfig, []string, error) {
 	if len(compiled.Servers) == 0 {
 		if compiled.OutboundResolverTag != "" || len(compiled.ProfileBindings) != 0 {
 			return nil, nil, fmt.Errorf("%w: empty DNS server closure carries metadata", ErrNativeConfigClosure)
@@ -290,8 +290,8 @@ func compileNativeDNS(compiled CompiledDNS, directTag string) (*nativeDNSConfig,
 		if _, exists := seen[server.Tag]; exists {
 			return nil, nil, fmt.Errorf("%w: duplicate DNS server tag %q", ErrNativeConfigClosure, server.Tag)
 		}
-		if server.Detour != directTag {
-			return nil, nil, fmt.Errorf("%w: DNS server %q detour %q is not DIRECT", ErrNativeConfigClosure, server.Tag, server.Detour)
+		if server.Detour != "" {
+			return nil, nil, fmt.Errorf("%w: Outbound/Bootstrap DNS server %q must use the approved core's direct dial path without a detour, got %q", ErrNativeConfigClosure, server.Tag, server.Detour)
 		}
 		if server.ServerPort == 0 {
 			return nil, nil, fmt.Errorf("%w: DNS server %q has zero port", ErrNativeConfigClosure, server.Tag)

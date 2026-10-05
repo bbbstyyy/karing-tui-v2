@@ -44,7 +44,7 @@ Native DNS assembly requires:
 - unique generated DNS tags;
 - non-zero explicit ports;
 - only the currently approved UDP/TCP server types;
-- DIRECT detour for every Outbound/Bootstrap DNS transport;
+- the approved core's direct dial representation for every Outbound/Bootstrap DNS transport, which requires an empty/omitted `detour` rather than `detour: out-direct`;
 - IP-literal DNS endpoints to carry no bootstrap resolver;
 - domain-valued DNS endpoints to reference a resolver that was emitted earlier in dependency order;
 - the declared Outbound resolver tag to exist in the closure.
@@ -57,7 +57,7 @@ The native manifest records the emitted DNS server tags, including the fail-clos
 
 ## Real-core compatibility gate
 
-The managed-core integration fixture uses a domain-valued HTTP proxy node, binds it to an explicit IP-literal Outbound DNS server, emits the fail-closed root DNS envelope, and sends the resulting config through the exact approved core's existing `check/run` path.
+The managed-core integration fixture uses a domain-valued HTTP proxy node, binds it to an explicit IP-literal Outbound DNS server, emits the fail-closed root DNS envelope, and sends the resulting config through the exact approved core's existing `check/run` path. The first compatibility run exposed that the core rejects `detour: out-direct` for an empty DIRECT outbound; the compiler now emits the core-native direct dial form with no detour and keeps that restriction explicit in validation.
 
 The test does not require external DNS reachability: readiness remains local and does not dial the selected proxy node.
 

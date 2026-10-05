@@ -62,7 +62,7 @@ func TestCompileOutboundDNSBuildsDependencyFirstClosure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantFirst := `{"type":"udp","tag":"` + stableDNSTag("bootstrap") + `","server":"192.0.2.53","server_port":53,"detour":"out-direct"}`
+	wantFirst := `{"type":"udp","tag":"` + stableDNSTag("bootstrap") + `","server":"192.0.2.53","server_port":53}`
 	if string(first) != wantFirst {
 		t.Fatalf("bootstrap JSON = %s, want %s", first, wantFirst)
 	}
@@ -70,7 +70,7 @@ func TestCompileOutboundDNSBuildsDependencyFirstClosure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantSecond := `{"type":"tcp","tag":"` + stableDNSTag("outbound") + `","server":"resolver.example.com","server_port":53,"detour":"out-direct","domain_resolver":"` + stableDNSTag("bootstrap") + `"}`
+	wantSecond := `{"type":"tcp","tag":"` + stableDNSTag("outbound") + `","server":"resolver.example.com","server_port":53,"domain_resolver":"` + stableDNSTag("bootstrap") + `"}`
 	if string(second) != wantSecond {
 		t.Fatalf("outbound DNS JSON = %s, want %s", second, wantSecond)
 	}
@@ -201,4 +201,49 @@ func TestBindNodeDomainResolverAllowsIPOnlyClosureWithoutDNS(t *testing.T) {
 	if !reflect.DeepEqual(bound, nodes) {
 		t.Fatalf("IP-only closure changed after empty DNS bind: %+v / %+v", bound, nodes)
 	}
+}
+
+func TestCompileOutboundDNSUsesCoreDirectDialWithoutEmptyDirectDetour(t *testing.T) {
+	targets, err := NewTargetCatalog(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := CompileOutboundDNS(domain.DNSPlan{
+		Profiles: []domain.DNSProfile{{
+			ID:        "outbound",
+			Role:      domain.DNSRoleOutbound,
+			Transport: domain.DNSTransportUDP,
+			Server:    "192.0.2.53",
+			Port:      53,
+		}},
+		OutboundProfileID: "outbound",
+	}, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled.Servers) != 1 {
+		t.Fatalf("servers = %d, want 1", len(compiled.Servers))
+	}
+	if compiled.Servers[0].Detour != "" {
+		t.Fatalf("outbound DNS detour = %q, want empty core direct dial", compiled.Servers[0].Detour)
+	}
+	encoded, err := json.Marshal(compiled.Servers[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) == "" || string(encoded) == "{}" {
+		t.Fatalf("empty DNS server JSON: %s", encoded)
+	}
+	if containsJSONField(encoded, "detour") {
+		t.Fatalf("native DNS server must omit detour for the approved core: %s", encoded)
+	}
+}
+
+func containsJSONField(payload []byte, field string) bool {
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err != nil {
+		return false
+	}
+	_, exists := object[field]
+	return exists
 }
