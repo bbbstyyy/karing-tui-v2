@@ -1,0 +1,217 @@
+package domain
+
+import (
+	"errors"
+	"reflect"
+	"testing"
+)
+
+func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
+	plan := RoutingPlan{
+		Custom: []RouteGroup{
+			{
+				ID:    "custom-a",
+				Layer: LayerCustom,
+				Order: 10,
+				Binding: RouteBinding{
+					Enabled: true,
+					Target:  TargetRef{Kind: TargetDirect},
+				},
+			},
+			{
+				ID:    "custom-disabled",
+				Layer: LayerCustom,
+				Order: 20,
+				Binding: RouteBinding{
+					Enabled: false,
+					Target:  TargetRef{Kind: TargetBlock},
+				},
+			},
+		},
+		GeoSite: []RouteGroup{{
+			ID:    "geosite-a",
+			Layer: LayerGeoSite,
+			Order: 10,
+			Binding: RouteBinding{
+				Enabled: true,
+				Target:  TargetRef{Kind: TargetCurrentSelected},
+			},
+		}},
+		GeoIP: []RouteGroup{{
+			ID:    "geoip-a",
+			Layer: LayerGeoIP,
+			Order: 10,
+			Binding: RouteBinding{
+				Enabled: true,
+				Target: TargetRef{
+					Kind:    TargetCustomURLTest,
+					GroupID: "jp-auto",
+				},
+			},
+		}},
+		ACL: []RouteGroup{{
+			ID:    "acl-a",
+			Layer: LayerACL,
+			Order: 10,
+			Binding: RouteBinding{
+				Enabled:      true,
+				Target:       TargetRef{Kind: TargetGlobalURLTest},
+				DNSProfileID: "proxy-dns",
+			},
+		}},
+		Final: TargetRef{
+			Kind:      TargetSpecificNode,
+			ProfileID: "profile-a",
+			NodeID:    "node-1",
+		},
+	}
+
+	steps, err := plan.OrderedActiveSteps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(steps))
+	for _, step := range steps {
+		got = append(got, string(step.Layer)+":"+step.GroupID+":"+string(step.Target.Kind))
+	}
+	want := []string{
+		"custom:custom-a:direct",
+		"geosite:geosite-a:current_selected",
+		"geoip:geoip-a:custom_urltest",
+		"acl:acl-a:global_urltest",
+		"final::specific_node",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ordered steps = %#v, want %#v", got, want)
+	}
+	if !steps[len(steps)-1].Final {
+		t.Fatal("last route step is not FINAL")
+	}
+}
+
+func TestRoutingPlanRejectsNonNormalizedLayerOrder(t *testing.T) {
+	plan := RoutingPlan{
+		Custom: []RouteGroup{
+			{ID: "a", Layer: LayerCustom, Order: 10},
+			{ID: "b", Layer: LayerCustom, Order: 10},
+		},
+		Final: TargetRef{Kind: TargetDirect},
+	}
+	if err := plan.Validate(); !errors.Is(err, ErrInvalidRouteOrder) {
+		t.Fatalf("duplicate order error = %v", err)
+	}
+
+	plan.Custom[1].Order = 5
+	if err := plan.Validate(); !errors.Is(err, ErrInvalidRouteOrder) {
+		t.Fatalf("descending order error = %v", err)
+	}
+}
+
+func TestRoutingPlanRejectsDuplicateGroupAcrossLayers(t *testing.T) {
+	plan := RoutingPlan{
+		Custom: []RouteGroup{{
+			ID:    "same",
+			Layer: LayerCustom,
+			Order: 1,
+		}},
+		GeoIP: []RouteGroup{{
+			ID:    "same",
+			Layer: LayerGeoIP,
+			Order: 1,
+		}},
+		Final: TargetRef{Kind: TargetDirect},
+	}
+	if err := plan.Validate(); !errors.Is(err, ErrDuplicateRouteGroup) {
+		t.Fatalf("duplicate group error = %v", err)
+	}
+}
+
+func TestRoutingPlanRejectsLayerMismatch(t *testing.T) {
+	plan := RoutingPlan{
+		GeoSite: []RouteGroup{{
+			ID:    "wrong-layer",
+			Layer: LayerACL,
+			Order: 1,
+		}},
+		Final: TargetRef{Kind: TargetDirect},
+	}
+	if err := plan.Validate(); !errors.Is(err, ErrInvalidRoutingLayer) {
+		t.Fatalf("layer mismatch error = %v", err)
+	}
+}
+
+func TestTargetRefRequiresTypedIdentity(t *testing.T) {
+	valid := []TargetRef{
+		{Kind: TargetDirect},
+		{Kind: TargetBlock},
+		{Kind: TargetCurrentSelected},
+		{Kind: TargetGlobalURLTest},
+		{Kind: TargetCustomURLTest, GroupID: "us-auto"},
+		{Kind: TargetSpecificNode, ProfileID: "profile-a", NodeID: "node-a"},
+	}
+	for _, target := range valid {
+		if err := target.Validate(); err != nil {
+			t.Fatalf("valid target %+v: %v", target, err)
+		}
+	}
+
+	invalid := []TargetRef{
+		{},
+		{Kind: TargetKind("none")},
+		{Kind: TargetDirect, GroupID: "unexpected"},
+		{Kind: TargetCustomURLTest},
+		{Kind: TargetCustomURLTest, GroupID: "group", NodeID: "unexpected"},
+		{Kind: TargetSpecificNode, NodeID: "node-only"},
+		{Kind: TargetSpecificNode, ProfileID: "profile-only"},
+	}
+	for _, target := range invalid {
+		if err := target.Validate(); !errors.Is(err, ErrInvalidRouteTarget) {
+			t.Fatalf("invalid target %+v error = %v", target, err)
+		}
+	}
+}
+
+func TestDisabledRouteGroupIsNotAnImplicitTarget(t *testing.T) {
+	plan := RoutingPlan{
+		Custom: []RouteGroup{{
+			ID:      "disabled",
+			Layer:   LayerCustom,
+			Order:   1,
+			Binding: RouteBinding{Enabled: false},
+		}},
+		Final: TargetRef{Kind: TargetDirect},
+	}
+	steps, err := plan.OrderedActiveSteps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || !steps[0].Final {
+		t.Fatalf("disabled group leaked into active routing: %+v", steps)
+	}
+}
+
+func TestBlockTargetCannotCarryGroupDNS(t *testing.T) {
+	plan := RoutingPlan{
+		ACL: []RouteGroup{{
+			ID:    "block",
+			Layer: LayerACL,
+			Order: 1,
+			Binding: RouteBinding{
+				Enabled:      true,
+				Target:       TargetRef{Kind: TargetBlock},
+				DNSProfileID: "dns-should-not-apply",
+			},
+		}},
+		Final: TargetRef{Kind: TargetDirect},
+	}
+	if err := plan.Validate(); !errors.Is(err, ErrInvalidRouteTarget) {
+		t.Fatalf("BLOCK DNS error = %v", err)
+	}
+}
+
+func TestFinalMustBeAnExplicitTarget(t *testing.T) {
+	plan := RoutingPlan{}
+	if err := plan.Validate(); !errors.Is(err, ErrInvalidFinalRoute) {
+		t.Fatalf("empty final error = %v", err)
+	}
+}

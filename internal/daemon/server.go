@@ -217,6 +217,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"core_lifecycle_api":        coreEnabled,
 				"proxy_inbound_model":       true,
 				"mixed_inbound_probe":       true,
+				"routing_ir_model":          true,
 				"bounded_core_log_buffer":   true,
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,
