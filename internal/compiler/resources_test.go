@@ -234,7 +234,6 @@ func routeRulesContainRuleSet(rules []RouteRule, value string) bool {
 	return false
 }
 
-
 func TestBindStagedRuleSetPathsRequiresCompleteContentAddressedClosure(t *testing.T) {
 	catalog, err := NewRuleSetCatalog([]RuleSetSource{
 		{Ref: "acl:first", Path: "/package/first.srs", SHA256: strings.Repeat("1", 64), Format: RuleSetFormatBinary},
