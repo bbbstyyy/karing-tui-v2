@@ -153,7 +153,6 @@ func TestVerifyGenerationConfigRequiresAbsolutePath(t *testing.T) {
 	}
 }
 
-
 func TestStorePrunesOldUnprotectedStagedGenerations(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	store, err := NewStore(root)

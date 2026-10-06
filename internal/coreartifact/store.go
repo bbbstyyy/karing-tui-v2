@@ -118,7 +118,6 @@ func (s *Store) Stage(ctx context.Context, generationID int64, config []byte, ex
 	return configPath, nil
 }
 
-
 func (s *Store) PruneStagedGenerations(ctx context.Context, protectedIDs []int64, keepRecent int) ([]int64, error) {
 	if keepRecent < 0 {
 		return nil, errors.New("generation retention must not be negative")

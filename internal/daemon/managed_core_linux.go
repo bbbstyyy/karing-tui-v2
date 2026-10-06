@@ -314,7 +314,6 @@ func (m *ManagedCore) stageAndBind(ctx context.Context, generation Generation) e
 	return nil
 }
 
-
 func (m *ManagedCore) pruneStagedGenerations(ctx context.Context, generationID int64) error {
 	pruner, ok := m.files.(generationPruner)
 	if !ok {
