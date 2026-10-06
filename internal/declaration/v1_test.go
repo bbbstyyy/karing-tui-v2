@@ -61,7 +61,8 @@ func TestValidateV1RejectsUnknownFields(t *testing.T) {
 func TestValidateV1RejectsRuleSetUntilResourceClosureIsWired(t *testing.T) {
 	document := strings.Replace(
 		string(minimalDeclaration()),
-		`"routing":{\n    "custom":[]`,
+		`"routing":{
+    "custom":[]`,
 		`"routing":{\n    "custom":[{"id":"rs","order":1,"enabled":true,"target":{"kind":"direct"},"match":{"op":"atom","predicate":{"kind":"rule_set","value":"geosite:cn"}}}]`,
 		1,
 	)
