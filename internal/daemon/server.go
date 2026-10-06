@@ -275,7 +275,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"cn_preset_offline_bundle":    false,
 				"cn_preset_overrides":         true,
 				"cn_preset_linux_lowerer":     true,
-				"cn_preset_linux_process_name": true,
+				"cn_preset_process_name":      true,
 				"cn_preset_interleaving":      true,
 				"region_append_model":         true,
 				"region_append_lowerer":       true,
