@@ -73,7 +73,7 @@ func TestLowerCNCustomRoutingPreservesDefaultLinuxActiveSet(t *testing.T) {
 		t.Fatalf("active CN rule-set closure = %#v, want %#v", got, want)
 	}
 	if len(compiled.SourceMap) != CNExpectedEnabled+1 {
-		t.Fatalf("source-map entries = %d, want %d active groups + FINAL", len(compiled.SourceMap), CNExpectedEnabled)
+		t.Fatalf("source-map entries = %d, want %d active groups + FINAL", len(compiled.SourceMap), CNExpectedEnabled+1)
 	}
 	for i := 0; i < CNExpectedEnabled; i++ {
 		if compiled.SourceMap[i].Layer != domain.LayerCustom {
