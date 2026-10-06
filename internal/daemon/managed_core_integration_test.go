@@ -3,7 +3,9 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"net/netip"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
@@ -68,10 +71,22 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	ruleSets, err := coreartifact.NewStore(filepath.Join(stateDir, "core"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleSetContent := []byte(`{"version":4,"rules":[{"domain_suffix":["example.invalid"]}]}`)
+	ruleSetSHA256 := fmt.Sprintf("%x", sha256.Sum256(ruleSetContent))
+	ruleSetPath, _, err := ruleSets.PutRuleSet(ctx, bytes.NewReader(ruleSetContent), ruleSetSHA256, "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	schemaCompiler, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
 		Inbounds:       inbounds,
 		ControlAddress: netip.AddrPortFrom(inbounds.Listen, ports[3]),
 		ControlSecret:  secret,
+		RuleSets:       ruleSets,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +114,7 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatal("managed apply runtime was not composed")
 	}
 
-	firstDeclaration, err := store.CommitDeclaration(ctx, 0, integrationDeclarationDocument("warn"), "integration:first")
+	firstDeclaration, err := store.CommitDeclaration(ctx, 0, integrationDeclarationDocument("warn", ruleSetSHA256), "integration:first")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +127,16 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	if firstArtifact.Manifest.DeclarationRevision != firstDeclaration.Revision ||
 		firstArtifact.Manifest.DeclarationSHA256 != firstDeclaration.SHA256 {
 		t.Fatalf("first declaration provenance mismatch: artifact=%+v declaration=%+v", firstArtifact.Manifest, firstDeclaration)
+	}
+	if len(firstArtifact.Manifest.RuleSets) != 1 {
+		t.Fatalf("first declaration rule-set closure = %+v", firstArtifact.Manifest.RuleSets)
+	}
+	firstRuleSet := firstArtifact.Manifest.RuleSets[0]
+	if firstRuleSet.Ref != "integration:example" ||
+		firstRuleSet.SHA256 != ruleSetSHA256 ||
+		firstRuleSet.Format != compiler.RuleSetFormatSource ||
+		firstRuleSet.RuntimePath != ruleSetPath {
+		t.Fatalf("first declaration rule-set binding mismatch: %+v", firstRuleSet)
 	}
 
 	snapshot, err := store.Snapshot(ctx)
@@ -131,6 +156,22 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	if len(firstGeneration.ManifestJSON) == 0 || firstGeneration.ManifestSHA256 == "" ||
 		len(firstGeneration.SourceMapJSON) == 0 || firstGeneration.SourceMapSHA256 == "" {
 		t.Fatalf("strict compiler apply did not persist metadata: %+v", firstGeneration)
+	}
+
+	if err := os.Remove(ruleSetPath); err != nil {
+		t.Fatal(err)
+	}
+	missingResourceCtx, missingResourceCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	missingResourceErr := runtime.Start(missingResourceCtx)
+	missingResourceCancel()
+	if missingResourceErr == nil {
+		t.Fatal("committed generation unexpectedly started without its bound rule-set resource")
+	}
+	if got := managed.Snapshot(); got.State != core.StateStopped || got.PID != 0 {
+		t.Fatalf("missing rule-set resource disturbed stopped core state: %+v", got)
+	}
+	if _, _, err := ruleSets.PutRuleSet(ctx, bytes.NewReader(ruleSetContent), ruleSetSHA256, "source"); err != nil {
+		t.Fatalf("restore missing rule-set resource: %v", err)
 	}
 
 	startCtx, startCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -173,7 +214,7 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatalf("failed pre-activation check disturbed running core: before=%+v after=%+v", restarted, afterBad)
 	}
 
-	secondDeclaration, err := store.CommitDeclaration(ctx, firstDeclaration.Revision, integrationDeclarationDocument("error"), "integration:second")
+	secondDeclaration, err := store.CommitDeclaration(ctx, firstDeclaration.Revision, integrationDeclarationDocument("error", ruleSetSHA256), "integration:second")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,10 +266,15 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	}
 }
 
-func integrationDeclarationDocument(logLevel string) []byte {
+func integrationDeclarationDocument(logLevel, ruleSetSHA256 string) []byte {
 	return []byte(fmt.Sprintf(`{
   "schema_version":1,
   "log_level":%q,
+  "rule_sets":[{
+    "ref":"integration:example",
+    "sha256":%q,
+    "format":"source"
+  }],
   "nodes":[{
     "profile_id":"integration-profile",
     "node_id":"integration-node",
@@ -245,7 +291,13 @@ func integrationDeclarationDocument(logLevel string) []byte {
     "custom":[]
   },
   "routing":{
-    "custom":[],
+    "custom":[{
+      "id":"integration-rule-set",
+      "order":1,
+      "enabled":true,
+      "target":{"kind":"block"},
+      "match":{"op":"atom","predicate":{"kind":"rule_set","value":"integration:example"}}
+    }],
     "geosite":[],
     "geoip":[],
     "acl":[],
@@ -261,7 +313,7 @@ func integrationDeclarationDocument(logLevel string) []byte {
     }],
     "outbound_profile_id":"integration-outbound-dns"
   }
-}`, logLevel))
+}`, logLevel, ruleSetSHA256))
 }
 
 func reserveLoopbackPorts(t *testing.T, count int) []uint16 {
