@@ -86,9 +86,9 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatal("managed apply runtime was not composed")
 	}
 
-	firstConfig := integrationCoreConfig(t, inbounds, ports[3], secret, "warn")
+	firstArtifact := integrationCoreArtifact(t, inbounds, ports[3], secret, "warn")
 	applyCtx, applyCancel := context.WithTimeout(context.Background(), 40*time.Second)
-	firstAttempt, err := runtime.ApplyCompiled(applyCtx, 0, firstConfig)
+	firstAttempt, err := runtime.ApplyNativeArtifact(applyCtx, 0, firstArtifact)
 	applyCancel()
 	if err != nil {
 		t.Fatalf("first real-core apply: %v; stderr=%s", err, managed.StderrTail())
@@ -103,6 +103,14 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	}
 	if got := managed.Snapshot(); got.State != core.StateStopped || got.DesiredRunning {
 		t.Fatalf("apply while stopped did not restore stopped intent: %+v", got)
+	}
+	firstGeneration, err := store.GenerationArtifacts(ctx, firstAttempt.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstGeneration.ManifestJSON) == 0 || firstGeneration.ManifestSHA256 == "" ||
+		len(firstGeneration.SourceMapJSON) == 0 || firstGeneration.SourceMapSHA256 == "" {
+		t.Fatalf("strict compiler apply did not persist metadata: %+v", firstGeneration)
 	}
 
 	startCtx, startCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -145,9 +153,9 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatalf("failed pre-activation check disturbed running core: before=%+v after=%+v", restarted, afterBad)
 	}
 
-	secondConfig := integrationCoreConfig(t, inbounds, ports[3], secret, "error")
+	secondArtifact := integrationCoreArtifact(t, inbounds, ports[3], secret, "error")
 	secondCtx, secondCancel := context.WithTimeout(context.Background(), 40*time.Second)
-	secondAttempt, err := runtime.ApplyCompiled(secondCtx, 1, secondConfig)
+	secondAttempt, err := runtime.ApplyNativeArtifact(secondCtx, 1, secondArtifact)
 	secondCancel()
 	if err != nil {
 		t.Fatalf("second real-core apply: %v; stderr=%s", err, managed.StderrTail())
@@ -214,7 +222,7 @@ func reserveLoopbackPorts(t *testing.T, count int) []uint16 {
 	return ports
 }
 
-func integrationCoreConfig(t *testing.T, inbounds domain.InboundSet, controlPort uint16, secret, logLevel string) []byte {
+func integrationCoreArtifact(t *testing.T, inbounds domain.InboundSet, controlPort uint16, secret, logLevel string) compiler.NativeConfigArtifact {
 	t.Helper()
 
 	nodePort := uint16(9)
@@ -326,7 +334,7 @@ func integrationCoreConfig(t *testing.T, inbounds domain.InboundSet, controlPort
 	if err != nil {
 		t.Fatal(err)
 	}
-	return artifact.JSON
+	return artifact
 }
 
 func waitManagedCoreState(t *testing.T, managed *ManagedCore, timeout time.Duration, accept func(core.Snapshot) bool) core.Snapshot {

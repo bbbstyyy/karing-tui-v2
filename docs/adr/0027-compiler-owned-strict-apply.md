@@ -46,3 +46,10 @@ The candidate passed to the core is built from the same copied config bytes whos
 - remove or further quarantine the legacy config-only apply path once migration compatibility no longer needs it;
 - verify persisted manifest resources during restart/rollback;
 - persist compiler diagnostics and declaration revision identity alongside the generation.
+
+
+## Integration coverage
+
+The real managed-core integration now applies successful compiler candidates through `serverRuntime.ApplyNativeArtifact`, not the legacy config-only path. The fixture asserts that manifest/source-map bytes and hashes are present in SQLite before explicitly starting the committed generation.
+
+That explicit start then passes through persisted-generation resource re-verification before the approved core is launched, so the integration exercises the strict handoff across compiler, SQLite transaction, generation staging, core `check`, activation, restart, and lifecycle control.
