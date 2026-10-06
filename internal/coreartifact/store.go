@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -114,6 +116,156 @@ func (s *Store) Stage(ctx context.Context, generationID int64, config []byte, ex
 		}
 	}
 	return configPath, nil
+}
+
+
+func (s *Store) PruneStagedGenerations(ctx context.Context, protectedIDs []int64, keepRecent int) ([]int64, error) {
+	if keepRecent < 0 {
+		return nil, errors.New("generation retention must not be negative")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	generationsDir := filepath.Join(s.root, "generations")
+	if _, err := os.Lstat(generationsDir); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("inspect generation store: %w", err)
+	}
+	if err := ensurePrivateDir(s.root); err != nil {
+		return nil, err
+	}
+	if err := ensurePrivateDir(generationsDir); err != nil {
+		return nil, err
+	}
+
+	protected := make(map[int64]struct{}, len(protectedIDs)+keepRecent)
+	for _, id := range protectedIDs {
+		if id <= 0 {
+			return nil, fmt.Errorf("protected generation id must be positive: %d", id)
+		}
+		protected[id] = struct{}{}
+	}
+
+	entries, err := os.ReadDir(generationsDir)
+	if err != nil {
+		return nil, fmt.Errorf("list staged generations: %w", err)
+	}
+	ids := make([]int64, 0, len(entries))
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		id, err := strconv.ParseInt(entry.Name(), 10, 64)
+		if err != nil || id <= 0 || entry.Type()&os.ModeSymlink != 0 || !entry.IsDir() {
+			return nil, fmt.Errorf("%w: unexpected generation-store entry %q", ErrUnsafeGenerationPath, entry.Name())
+		}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] })
+
+	for index, id := range ids {
+		if index >= keepRecent {
+			break
+		}
+		protected[id] = struct{}{}
+	}
+
+	type prunePlan struct {
+		id      int64
+		dir     string
+		entries []string
+	}
+	plans := make([]prunePlan, 0)
+	for _, id := range ids {
+		if _, keep := protected[id]; keep {
+			continue
+		}
+		dir := filepath.Join(generationsDir, strconv.FormatInt(id, 10))
+		names, err := validatePrunableGenerationDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, prunePlan{id: id, dir: dir, entries: names})
+	}
+
+	removed := make([]int64, 0, len(plans))
+	for _, plan := range plans {
+		if err := ctx.Err(); err != nil {
+			return removed, err
+		}
+		for _, name := range plan.entries {
+			if err := os.Remove(filepath.Join(plan.dir, name)); err != nil {
+				return removed, fmt.Errorf("remove staged generation %d entry %q: %w", plan.id, name, err)
+			}
+		}
+		if err := syncDir(plan.dir); err != nil {
+			return removed, err
+		}
+		if err := os.Remove(plan.dir); err != nil {
+			return removed, fmt.Errorf("remove staged generation %d directory: %w", plan.id, err)
+		}
+		removed = append(removed, plan.id)
+	}
+	if len(removed) != 0 {
+		if err := syncDir(generationsDir); err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+func validatePrunableGenerationDir(path string) ([]string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect staged generation directory %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("%w: %s is not a real directory", ErrUnsafeGenerationPath, path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("%w: directory %s mode %04o is too permissive", ErrUnsafeGenerationPath, path, info.Mode().Perm())
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("%w: cannot verify ownership of %s", ErrUnsafeGenerationPath, path)
+	}
+	if int(stat.Uid) != os.Getuid() {
+		return nil, fmt.Errorf("%w: directory %s is owned by uid %d", ErrUnsafeGenerationPath, path, stat.Uid)
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, fmt.Errorf("list staged generation directory %s: %w", path, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != "config.json" && !(strings.HasPrefix(name, ".config-") && strings.HasSuffix(name, ".tmp")) {
+			return nil, fmt.Errorf("%w: unexpected entry %q in %s", ErrUnsafeGenerationPath, name, path)
+		}
+		entryPath := filepath.Join(path, name)
+		entryInfo, err := os.Lstat(entryPath)
+		if err != nil {
+			return nil, fmt.Errorf("inspect staged generation entry %s: %w", entryPath, err)
+		}
+		if entryInfo.Mode()&os.ModeSymlink != 0 || !entryInfo.Mode().IsRegular() {
+			return nil, fmt.Errorf("%w: %s is not a regular file", ErrUnsafeGenerationPath, entryPath)
+		}
+		if entryInfo.Mode().Perm()&0o077 != 0 {
+			return nil, fmt.Errorf("%w: file %s mode %04o is too permissive", ErrUnsafeGenerationPath, entryPath, entryInfo.Mode().Perm())
+		}
+		entryStat, ok := entryInfo.Sys().(*syscall.Stat_t)
+		if !ok {
+			return nil, fmt.Errorf("%w: cannot verify ownership of %s", ErrUnsafeGenerationPath, entryPath)
+		}
+		if int(entryStat.Uid) != os.Getuid() {
+			return nil, fmt.Errorf("%w: file %s is owned by uid %d", ErrUnsafeGenerationPath, entryPath, entryStat.Uid)
+		}
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 func (s *Store) ConfigPath(generationID int64) (string, error) {

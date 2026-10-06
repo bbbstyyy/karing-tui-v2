@@ -25,6 +25,8 @@ import (
 
 var ErrNoAppliedGeneration = errors.New("no applied generation is available")
 
+const stagedGenerationRetention = 8
+
 type managedCoreState interface {
 	Snapshot(context.Context) (storage.Snapshot, error)
 	GenerationConfig(context.Context, int64) ([]byte, string, error)
@@ -36,6 +38,10 @@ type managedCoreArtifactState interface {
 
 type generationFiles interface {
 	Stage(context.Context, int64, []byte, string) (string, error)
+}
+
+type generationPruner interface {
+	PruneStagedGenerations(context.Context, []int64, int) ([]int64, error)
 }
 
 type generationBinder interface {
@@ -201,6 +207,9 @@ func (m *ManagedCore) Check(ctx context.Context, generation Generation) error {
 	if err := m.verifyGenerationArtifacts(ctx, generation); err != nil {
 		return err
 	}
+	if err := m.pruneStagedGenerations(ctx, generation.ID); err != nil {
+		return err
+	}
 	path, err := m.files.Stage(ctx, generation.ID, generation.Config, generation.SHA256)
 	if err != nil {
 		return fmt.Errorf("stage generation for check: %w", err)
@@ -292,12 +301,52 @@ func (m *ManagedCore) stageAndBind(ctx context.Context, generation Generation) e
 	if err := m.verifyGenerationArtifacts(ctx, generation); err != nil {
 		return err
 	}
+	if err := m.pruneStagedGenerations(ctx, generation.ID); err != nil {
+		return err
+	}
 	path, err := m.files.Stage(ctx, generation.ID, generation.Config, generation.SHA256)
 	if err != nil {
 		return fmt.Errorf("stage generation %d: %w", generation.ID, err)
 	}
 	if err := m.binder.BindConfig(path, generation.SHA256); err != nil {
 		return fmt.Errorf("bind generation %d: %w", generation.ID, err)
+	}
+	return nil
+}
+
+
+func (m *ManagedCore) pruneStagedGenerations(ctx context.Context, generationID int64) error {
+	pruner, ok := m.files.(generationPruner)
+	if !ok {
+		return nil
+	}
+	snapshot, err := m.state.Snapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("read state before staged generation cleanup: %w", err)
+	}
+
+	protected := make([]int64, 0, 3)
+	seen := make(map[int64]struct{}, 3)
+	addProtected := func(id int64) {
+		if id <= 0 {
+			return
+		}
+		if _, exists := seen[id]; exists {
+			return
+		}
+		seen[id] = struct{}{}
+		protected = append(protected, id)
+	}
+	addProtected(generationID)
+	if snapshot.AppliedGenerationID != nil {
+		addProtected(*snapshot.AppliedGenerationID)
+	}
+	if snapshot.LastKnownGoodGenerationID != nil {
+		addProtected(*snapshot.LastKnownGoodGenerationID)
+	}
+
+	if _, err := pruner.PruneStagedGenerations(ctx, protected, stagedGenerationRetention); err != nil {
+		return fmt.Errorf("prune staged generations: %w", err)
 	}
 	return nil
 }

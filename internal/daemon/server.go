@@ -232,6 +232,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"core_build_approved":         true,
 				"core_artifact_verifier":      true,
 				"generation_artifacts":        true,
+				"staged_generation_gc":        true,
 				"core_verified_exec_runner":   true,
 				"generation_bound_runner":     true,
 				"managed_core_adapter":        true,

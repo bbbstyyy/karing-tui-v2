@@ -152,3 +152,108 @@ func TestVerifyGenerationConfigRequiresAbsolutePath(t *testing.T) {
 		t.Fatalf("relative generation config error = %v", err)
 	}
 }
+
+
+func TestStorePrunesOldUnprotectedStagedGenerations(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	configs := [][]byte{
+		[]byte(`{"id":1}`),
+		[]byte(`{"id":2}`),
+		[]byte(`{"id":3}`),
+		[]byte(`{"id":4}`),
+		[]byte(`{"id":5}`),
+	}
+	hashes := make(map[int64]string, len(configs))
+	for index, config := range configs {
+		id := int64(index + 1)
+		sum := sha256.Sum256(config)
+		hash := hex.EncodeToString(sum[:])
+		hashes[id] = hash
+		if _, err := store.Stage(context.Background(), id, config, hash); err != nil {
+			t.Fatalf("stage generation %d: %v", id, err)
+		}
+	}
+
+	removed, err := store.PruneStagedGenerations(context.Background(), []int64{2}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 2 || removed[0] != 3 || removed[1] != 1 {
+		t.Fatalf("removed generations = %#v, want [3 1]", removed)
+	}
+
+	for _, id := range []int64{1, 3} {
+		path, err := store.ConfigPath(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("pruned generation %d config still exists: %v", id, err)
+		}
+	}
+	for _, id := range []int64{2, 4, 5} {
+		path, err := store.ConfigPath(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := VerifyGenerationConfig(path, hashes[id]); err != nil {
+			t.Fatalf("kept generation %d failed verification: %v", id, err)
+		}
+	}
+}
+
+func TestStorePruneFailsClosedOnUnexpectedGenerationEntry(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, config := range map[int64][]byte{
+		1: []byte(`{"id":1}`),
+		2: []byte(`{"id":2}`),
+	} {
+		sum := sha256.Sum256(config)
+		if _, err := store.Stage(context.Background(), id, config, hex.EncodeToString(sum[:])); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	unexpected := filepath.Join(root, "generations", "1", "unexpected")
+	if err := os.WriteFile(unexpected, []byte("do not remove"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PruneStagedGenerations(context.Background(), nil, 1); !errors.Is(err, ErrUnsafeGenerationPath) {
+		t.Fatalf("unexpected-entry prune error = %v, want ErrUnsafeGenerationPath", err)
+	}
+	configPath, err := store.ConfigPath(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("failed prune removed generation before validation completed: %v", err)
+	}
+}
+
+func TestStorePruneHonorsCanceledContext(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{"id":1}`)
+	sum := sha256.Sum256(config)
+	if _, err := store.Stage(context.Background(), 1, config, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.PruneStagedGenerations(ctx, nil, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled prune error = %v, want context.Canceled", err)
+	}
+}

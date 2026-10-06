@@ -66,6 +66,21 @@ func (f *fakeGenerationFiles) Stage(_ context.Context, id int64, _ []byte, hash 
 	return f.path, nil
 }
 
+type fakePruningGenerationFiles struct {
+	fakeGenerationFiles
+	pruneCount int
+	protected  []int64
+	keepRecent int
+	pruneErr   error
+}
+
+func (f *fakePruningGenerationFiles) PruneStagedGenerations(_ context.Context, protected []int64, keepRecent int) ([]int64, error) {
+	f.pruneCount++
+	f.protected = append([]int64(nil), protected...)
+	f.keepRecent = keepRecent
+	return nil, f.pruneErr
+}
+
 type fakeBinder struct {
 	path string
 	hash string
@@ -208,6 +223,52 @@ func TestManagedCoreCheckStagesExactGeneration(t *testing.T) {
 	}
 	if files.lastID != 9 || files.lastHash != "def" || checkedPath != files.path || checkedHash != "def" {
 		t.Fatalf("check did not preserve generation identity: files=%+v path=%q hash=%q", files, checkedPath, checkedHash)
+	}
+}
+
+
+
+func TestManagedCoreCheckPrunesStagedGenerationsWithProtectedState(t *testing.T) {
+	applied := int64(5)
+	lastKnownGood := int64(4)
+	files := &fakePruningGenerationFiles{
+		fakeGenerationFiles: fakeGenerationFiles{path: "/state/generations/9/config.json"},
+	}
+	managed := newManagedCore(
+		&fakeManagedState{snapshot: storage.Snapshot{
+			AppliedGenerationID:       &applied,
+			LastKnownGoodGenerationID: &lastKnownGood,
+		}},
+		files,
+		&fakeBinder{},
+		&fakeSupervisor{},
+		&fakeProbe{},
+		func(context.Context, string, string, io.Writer, io.Writer) error { return nil },
+		nil,
+		nil,
+	)
+
+	if err := managed.Check(context.Background(), Generation{ID: 9, Config: []byte("{}"), SHA256: "def"}); err != nil {
+		t.Fatal(err)
+	}
+	if files.pruneCount != 1 || files.keepRecent != stagedGenerationRetention {
+		t.Fatalf("unexpected prune call: count=%d keep=%d", files.pruneCount, files.keepRecent)
+	}
+	want := map[int64]bool{9: true, 5: true, 4: true}
+	if len(files.protected) != len(want) {
+		t.Fatalf("protected generations = %#v", files.protected)
+	}
+	for _, id := range files.protected {
+		if !want[id] {
+			t.Fatalf("unexpected protected generation %d in %#v", id, files.protected)
+		}
+		delete(want, id)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing protected generations: %#v", want)
+	}
+	if files.stageCount != 1 || files.lastID != 9 {
+		t.Fatalf("candidate was not staged after cleanup: %+v", files.fakeGenerationFiles)
 	}
 }
 
