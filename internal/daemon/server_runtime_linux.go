@@ -154,6 +154,9 @@ func (r *serverRuntime) ApplyNativeArtifact(
 	if r == nil || r.apply == nil {
 		return storage.Attempt{}, errors.New("managed apply runtime is not configured")
 	}
+	if err := artifact.ValidateDeclarationBinding(true); err != nil {
+		return storage.Attempt{}, fmt.Errorf("validate declaration provenance: %w", err)
+	}
 	manifest, sourceMap, err := artifact.MetadataJSON()
 	if err != nil {
 		return storage.Attempt{}, fmt.Errorf("serialize compiled generation metadata: %w", err)

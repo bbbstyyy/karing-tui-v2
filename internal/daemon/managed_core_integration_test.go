@@ -334,6 +334,16 @@ func integrationCoreArtifact(t *testing.T, inbounds domain.InboundSet, controlPo
 	if err != nil {
 		t.Fatal(err)
 	}
+	declarationRevision := uint64(1)
+	declarationSHA256 := "1111111111111111111111111111111111111111111111111111111111111111"
+	if logLevel == "error" {
+		declarationRevision = 2
+		declarationSHA256 = "2222222222222222222222222222222222222222222222222222222222222222"
+	}
+	artifact, err = artifact.BindDeclaration(declarationRevision, declarationSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return artifact
 }
 

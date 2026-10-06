@@ -349,6 +349,9 @@ func (m *ManagedCore) verifyGenerationArtifacts(ctx context.Context, generation 
 	if manifest.ConfigSHA256 != generation.SHA256 {
 		return fmt.Errorf("generation %d manifest config hash mismatch: %s", generation.ID, manifest.ConfigSHA256)
 	}
+	if err := manifest.ValidateDeclarationBinding(false); err != nil {
+		return fmt.Errorf("generation %d declaration provenance: %w", generation.ID, err)
+	}
 	for _, ruleSet := range manifest.RuleSets {
 		extension := ""
 		switch ruleSet.Format {

@@ -103,3 +103,6 @@ CN preset user overrides now have a typed overlay model. Overrides are keyed by 
 
 
 SQLite schema v4 now separates immutable **declaration revisions** from compiled core generations. `CommitDeclaration` accepts bounded valid JSON with an explicit source label under CAS (`expected revision`), stores the exact bytes plus SHA-256 and parent revision, and advances a separate singleton declaration head. Historical declarations remain immutable/readable across reopen. This is intentionally distinct from `daemon_state.config_revision`, which continues to represent committed core apply generations.
+
+
+Compiler-owned strict apply now requires declaration provenance on new native artifacts. The generation manifest records both the exact declaration revision and the SHA-256 of the declaration bytes. Compiler-only artifacts may remain unbound for isolated validation/tests, while `ApplyNativeArtifact` rejects unbound or partially bound provenance. Managed-core restart/rollback verification accepts historical manifests that predate declaration tracking, but validates any declaration provenance fields that are present. This closes the audit link between immutable declaration intent and immutable runtime generation without conflating declaration revision numbers with committed runtime config revisions.
