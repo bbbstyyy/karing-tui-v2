@@ -231,10 +231,34 @@ func TestParseCNRejectsUnsupportedTarget(t *testing.T) {
 
 func cnExpectedID(index int) string {
 	return []string{
-		"cn-01", "cn-02", "cn-03", "cn-04", "cn-05", "cn-06", "cn-07",
-		"cn-08", "cn-09", "cn-10", "cn-11", "cn-12", "cn-13", "cn-14",
-		"cn-15", "cn-16", "cn-17", "cn-18", "cn-19", "cn-20", "cn-21",
-		"cn-22", "cn-23", "cn-24", "cn-25", "cn-26", "cn-27", "cn-28",
+		"cn.ad-block",
+		"cn.app-cleanup",
+		"cn.malware",
+		"cn.apple-push",
+		"cn.apple-services",
+		"cn.youtube",
+		"cn.google-gemini",
+		"cn.google-play",
+		"cn.google-fcm",
+		"cn.google",
+		"cn.facebook",
+		"cn.x",
+		"cn.tiktok",
+		"cn.instagram",
+		"cn.netflix",
+		"cn.whatsapp",
+		"cn.telegram",
+		"cn.claude",
+		"cn.openai",
+		"cn.github",
+		"cn.bing",
+		"cn.onedrive",
+		"cn.microsoft",
+		"cn.gaming",
+		"cn.bilibili",
+		"cn.netease-music",
+		"cn.domestic-direct",
+		"cn.foreign-proxy",
 	}[index]
 }
 

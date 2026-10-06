@@ -22,6 +22,37 @@ const (
 //go:embed cn.json
 var cnFS embed.FS
 
+var cnStableGroupIDs = [...]string{
+	"cn.ad-block",
+	"cn.app-cleanup",
+	"cn.malware",
+	"cn.apple-push",
+	"cn.apple-services",
+	"cn.youtube",
+	"cn.google-gemini",
+	"cn.google-play",
+	"cn.google-fcm",
+	"cn.google",
+	"cn.facebook",
+	"cn.x",
+	"cn.tiktok",
+	"cn.instagram",
+	"cn.netflix",
+	"cn.whatsapp",
+	"cn.telegram",
+	"cn.claude",
+	"cn.openai",
+	"cn.github",
+	"cn.bing",
+	"cn.onedrive",
+	"cn.microsoft",
+	"cn.gaming",
+	"cn.bilibili",
+	"cn.netease-music",
+	"cn.domestic-direct",
+	"cn.foreign-proxy",
+}
+
 var (
 	ErrInvalidCNPreset         = errors.New("invalid CN preset snapshot")
 	ErrUnsupportedPresetTarget = errors.New("unsupported preset target")
@@ -100,7 +131,7 @@ func ParseCN(raw []byte) (CNSnapshot, error) {
 			enabled++
 		}
 		groups = append(groups, CNGroup{
-			ID:          fmt.Sprintf("cn-%02d", i+1),
+			ID:          cnStableGroupIDs[i],
 			Order:       uint32(i + 1),
 			DisplayName: rule.Name,
 			Enabled:     rule.Switch,

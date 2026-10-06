@@ -67,3 +67,23 @@ Preset updates are treated as new immutable snapshots. A future updater must com
 `cn_preset_snapshot=true` means the exact pinned preset source is available and validated.
 
 `cn_preset=false` remains correct until semantic conversion, required rule-set resource closure, region auto-append behavior, declaration persistence, and actual routing fixtures are complete.
+
+
+## Stable group identity
+
+The upstream preset has no durable group identifier suitable for persistence. Ordinal-only IDs such as `cn-01` are not acceptable because an upstream insertion or reorder would silently retarget user overrides.
+
+This project therefore assigns a reviewed semantic ID to each of the 28 pinned groups, including:
+
+- `cn.ad-block`
+- `cn.apple-services`
+- `cn.google`
+- `cn.openai`
+- `cn.telegram`
+- `cn.bilibili`
+- `cn.domestic-direct`
+- `cn.foreign-proxy`
+
+The complete mapping is explicit in `cnStableGroupIDs` and is tested against the pinned group order.
+
+These IDs are project persistence identity, not display names and not upstream data. A future preset upgrade must explicitly map old and new upstream groups to these stable IDs during the three-way upgrade preview; it must never regenerate IDs from the new ordinal.
