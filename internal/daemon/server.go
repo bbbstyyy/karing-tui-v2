@@ -242,6 +242,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"core_supervision":          coreEnabled,
 				"proxy_inbounds":            false,
 				"routing_ir":                false,
+				"cn_preset_snapshot":        true,
 				"cn_preset":                 false,
 				"subscriptions":             false,
 				"tui":                       false,
