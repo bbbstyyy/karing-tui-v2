@@ -42,14 +42,14 @@ type NativeConfigArtifact struct {
 }
 
 type NativeManifest struct {
-	SchemaID             string                  `json:"schema_id"`
-	ConfigSHA256         string                  `json:"config_sha256"`
+	SchemaID            string                  `json:"schema_id"`
+	ConfigSHA256        string                  `json:"config_sha256"`
 	DeclarationRevision uint64                  `json:"declaration_revision,omitempty"`
 	DeclarationSHA256   string                  `json:"declaration_sha256,omitempty"`
-	InboundTags   []string                `json:"inbound_tags"`
-	OutboundTags  []string                `json:"outbound_tags"`
-	DNSServerTags []string                `json:"dns_server_tags,omitempty"`
-	RuleSets      []NativeRuleSetManifest `json:"rule_sets,omitempty"`
+	InboundTags         []string                `json:"inbound_tags"`
+	OutboundTags        []string                `json:"outbound_tags"`
+	DNSServerTags       []string                `json:"dns_server_tags,omitempty"`
+	RuleSets            []NativeRuleSetManifest `json:"rule_sets,omitempty"`
 }
 
 type NativeRuleSetManifest struct {
