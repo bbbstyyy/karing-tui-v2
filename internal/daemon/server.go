@@ -229,6 +229,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"basic_node_model":          true,
 				"basic_node_lowerer":        true,
 				"native_config_emitter":     true,
+				"generation_metadata_store": true,
 				"dns_dependency_model":      true,
 				"outbound_dns_lowerer":      true,
 				"native_outbound_dns":       true,

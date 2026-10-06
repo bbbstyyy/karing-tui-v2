@@ -103,6 +103,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["basic_node_model"] ||
 		!caps.Capabilities["basic_node_lowerer"] ||
 		!caps.Capabilities["native_config_emitter"] ||
+		!caps.Capabilities["generation_metadata_store"] ||
 		!caps.Capabilities["dns_dependency_model"] ||
 		!caps.Capabilities["outbound_dns_lowerer"] ||
 		!caps.Capabilities["native_outbound_dns"] ||

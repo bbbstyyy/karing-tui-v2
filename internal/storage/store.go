@@ -17,7 +17,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const MaxGenerationConfigBytes = 64 << 20
+const (
+	MaxGenerationConfigBytes   = 64 << 20
+	MaxGenerationMetadataBytes = 16 << 20
+)
 
 var (
 	ErrInvalidConfig     = errors.New("invalid compiled configuration")
@@ -26,7 +29,9 @@ var (
 	ErrApplyInProgress   = errors.New("configuration apply already in progress")
 	ErrRecoveryRequired  = errors.New("configuration recovery required")
 	ErrAttemptNotFound   = errors.New("apply attempt not found")
-	ErrInvalidTransition = errors.New("invalid apply journal transition")
+	ErrInvalidTransition        = errors.New("invalid apply journal transition")
+	ErrInvalidGenerationMetadata = errors.New("invalid generation metadata")
+	ErrGenerationMetadataTooLarge = errors.New("generation metadata exceeds size limit")
 )
 
 var ErrInvalidCoreDesiredState = errors.New("invalid core desired state")
@@ -75,6 +80,15 @@ type Recovery struct {
 	InterruptedAttemptIDs []int64
 	NeedsReconcile        bool
 	AppliedGenerationID   *int64
+}
+
+type GenerationArtifacts struct {
+	ConfigJSON       []byte
+	ConfigSHA256     string
+	ManifestJSON     []byte
+	ManifestSHA256   string
+	SourceMapJSON    []byte
+	SourceMapSHA256  string
 }
 
 type Store struct {
@@ -178,6 +192,38 @@ func (s *Store) SetCoreDesiredState(ctx context.Context, state CoreDesiredState)
 }
 
 func (s *Store) PrepareApply(ctx context.Context, expectedRevision uint64, config []byte) (Attempt, error) {
+	return s.prepareApply(ctx, expectedRevision, config, nil, nil)
+}
+
+func (s *Store) PrepareApplyWithMetadata(
+	ctx context.Context,
+	expectedRevision uint64,
+	config []byte,
+	manifest []byte,
+	sourceMap []byte,
+) (Attempt, error) {
+	if len(manifest) == 0 || !json.Valid(manifest) {
+		return Attempt{}, fmt.Errorf("%w: manifest must be non-empty valid JSON", ErrInvalidGenerationMetadata)
+	}
+	if len(sourceMap) == 0 || !json.Valid(sourceMap) {
+		return Attempt{}, fmt.Errorf("%w: source map must be non-empty valid JSON", ErrInvalidGenerationMetadata)
+	}
+	if len(manifest) > MaxGenerationMetadataBytes {
+		return Attempt{}, fmt.Errorf("%w: manifest %d bytes > %d bytes", ErrGenerationMetadataTooLarge, len(manifest), MaxGenerationMetadataBytes)
+	}
+	if len(sourceMap) > MaxGenerationMetadataBytes {
+		return Attempt{}, fmt.Errorf("%w: source map %d bytes > %d bytes", ErrGenerationMetadataTooLarge, len(sourceMap), MaxGenerationMetadataBytes)
+	}
+	return s.prepareApply(ctx, expectedRevision, config, manifest, sourceMap)
+}
+
+func (s *Store) prepareApply(
+	ctx context.Context,
+	expectedRevision uint64,
+	config []byte,
+	manifest []byte,
+	sourceMap []byte,
+) (Attempt, error) {
 	if len(config) == 0 || !json.Valid(config) {
 		return Attempt{}, ErrInvalidConfig
 	}
@@ -220,13 +266,42 @@ func (s *Store) PrepareApply(ctx context.Context, expectedRevision uint64, confi
 
 	now := time.Now().UTC()
 	targetRevision := expectedRevision + 1
-	hashBytes := sha256.Sum256(config)
-	hash := hex.EncodeToString(hashBytes[:])
+	configHashBytes := sha256.Sum256(config)
+	configHash := hex.EncodeToString(configHashBytes[:])
+	var manifestHash, sourceMapHash any
+	if len(manifest) != 0 {
+		sum := sha256.Sum256(manifest)
+		manifestHash = hex.EncodeToString(sum[:])
+	}
+	if len(sourceMap) != 0 {
+		sum := sha256.Sum256(sourceMap)
+		sourceMapHash = hex.EncodeToString(sum[:])
+	}
 
 	generationResult, err := tx.ExecContext(ctx, `
-		INSERT INTO generations(base_revision, target_revision, config_json, config_sha256, created_at)
-		VALUES(?, ?, ?, ?, ?)
-	`, expectedRevision, targetRevision, config, hash, now.Format(time.RFC3339Nano))
+		INSERT INTO generations(
+			base_revision,
+			target_revision,
+			config_json,
+			config_sha256,
+			manifest_json,
+			manifest_sha256,
+			source_map_json,
+			source_map_sha256,
+			created_at
+		)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		expectedRevision,
+		targetRevision,
+		config,
+		configHash,
+		nullableBytes(manifest),
+		manifestHash,
+		nullableBytes(sourceMap),
+		sourceMapHash,
+		now.Format(time.RFC3339Nano),
+	)
 	if err != nil {
 		return Attempt{}, fmt.Errorf("insert generation: %w", err)
 	}
@@ -270,7 +345,7 @@ func (s *Store) PrepareApply(ctx context.Context, expectedRevision uint64, confi
 		BaseRevision:         expectedRevision,
 		TargetRevision:       targetRevision,
 		Phase:                PhasePrepared,
-		ConfigSHA256:         hash,
+		ConfigSHA256:         configHash,
 		StartedAt:            now,
 		UpdatedAt:            now,
 	}, nil
@@ -500,21 +575,53 @@ func (s *Store) ResolveRecovery(ctx context.Context) error {
 }
 
 func (s *Store) GenerationConfig(ctx context.Context, generationID int64) ([]byte, string, error) {
+	artifacts, err := s.GenerationArtifacts(ctx, generationID)
+	if err != nil {
+		return nil, "", err
+	}
+	return artifacts.ConfigJSON, artifacts.ConfigSHA256, nil
+}
+
+func (s *Store) GenerationArtifacts(ctx context.Context, generationID int64) (GenerationArtifacts, error) {
 	var (
-		config []byte
-		hash   string
+		config         []byte
+		configHash     string
+		manifest       []byte
+		manifestHash   sql.NullString
+		sourceMap      []byte
+		sourceMapHash  sql.NullString
 	)
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT config_json, config_sha256
+		SELECT
+			config_json,
+			config_sha256,
+			manifest_json,
+			manifest_sha256,
+			source_map_json,
+			source_map_sha256
 		FROM generations
 		WHERE id = ?
-	`, generationID).Scan(&config, &hash); err != nil {
+	`, generationID).Scan(
+		&config,
+		&configHash,
+		&manifest,
+		&manifestHash,
+		&sourceMap,
+		&sourceMapHash,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, "", fmt.Errorf("generation %d not found", generationID)
+			return GenerationArtifacts{}, fmt.Errorf("generation %d not found", generationID)
 		}
-		return nil, "", fmt.Errorf("read generation %d: %w", generationID, err)
+		return GenerationArtifacts{}, fmt.Errorf("read generation %d artifacts: %w", generationID, err)
 	}
-	return append([]byte(nil), config...), hash, nil
+	return GenerationArtifacts{
+		ConfigJSON:      append([]byte(nil), config...),
+		ConfigSHA256:    configHash,
+		ManifestJSON:    append([]byte(nil), manifest...),
+		ManifestSHA256:  manifestHash.String,
+		SourceMapJSON:   append([]byte(nil), sourceMap...),
+		SourceMapSHA256: sourceMapHash.String,
+	}, nil
 }
 
 func (s *Store) Attempt(ctx context.Context, attemptID int64) (Attempt, error) {
@@ -650,7 +757,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -727,6 +834,23 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(2, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 2: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 3 {
+		statements := []string{
+			`ALTER TABLE generations ADD COLUMN manifest_json BLOB`,
+			`ALTER TABLE generations ADD COLUMN manifest_sha256 TEXT CHECK(manifest_sha256 IS NULL OR length(manifest_sha256) = 64)`,
+			`ALTER TABLE generations ADD COLUMN source_map_json BLOB`,
+			`ALTER TABLE generations ADD COLUMN source_map_sha256 TEXT CHECK(source_map_sha256 IS NULL OR length(source_map_sha256) = 64)`,
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply sqlite migration 3: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(3, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 3: %w", err)
 		}
 	}
 
@@ -809,6 +933,13 @@ func nullInt64Ptr(value sql.NullInt64) *int64 {
 	}
 	v := value.Int64
 	return &v
+}
+
+func nullableBytes(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
 }
 
 func nullableValue(value sql.NullInt64) any {
