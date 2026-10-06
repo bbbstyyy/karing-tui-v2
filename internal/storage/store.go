@@ -757,7 +757,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -851,6 +851,32 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(3, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 3: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 4 {
+		statements := []string{
+			`CREATE TABLE declaration_revisions (
+				revision INTEGER PRIMARY KEY CHECK(revision > 0),
+				parent_revision INTEGER REFERENCES declaration_revisions(revision) ON DELETE RESTRICT,
+				document_json BLOB NOT NULL,
+				document_sha256 TEXT NOT NULL CHECK(length(document_sha256) = 64),
+				source TEXT NOT NULL,
+				created_at TEXT NOT NULL
+			)`,
+			`CREATE TABLE declaration_state (
+				singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+				current_revision INTEGER REFERENCES declaration_revisions(revision) ON DELETE RESTRICT
+			)`,
+			`INSERT INTO declaration_state(singleton, current_revision) VALUES(1, NULL)`,
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply sqlite migration 4: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(4, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 4: %w", err)
 		}
 	}
 

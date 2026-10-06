@@ -73,6 +73,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	}
 	if !caps.Capabilities["daemon"] ||
 		!caps.Capabilities["sqlite_state"] ||
+		!caps.Capabilities["declaration_revisions"] ||
 		!caps.Capabilities["apply_journal"] ||
 		!caps.Capabilities["apply_coordinator"] ||
 		caps.Capabilities["managed_apply"] ||

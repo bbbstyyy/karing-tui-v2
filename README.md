@@ -100,3 +100,6 @@ CN region auto-append is now modeled independently from the 28 custom preset gro
 
 
 CN preset user overrides now have a typed overlay model. Overrides are keyed by the project-owned stable CN group ID and may change only enabled state, typed route target, and optional DNS profile binding. Applying overrides preserves group order, display name/emoji, and a deep copy of the exact upstream match source; unknown IDs, duplicate overrides, invalid targets, and unsafe DNS profile identifiers fail closed.
+
+
+SQLite schema v4 now separates immutable **declaration revisions** from compiled core generations. `CommitDeclaration` accepts bounded valid JSON with an explicit source label under CAS (`expected revision`), stores the exact bytes plus SHA-256 and parent revision, and advances a separate singleton declaration head. Historical declarations remain immutable/readable across reopen. This is intentionally distinct from `daemon_state.config_revision`, which continues to represent committed core apply generations.
