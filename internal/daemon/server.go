@@ -195,6 +195,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"proxy_only_import_guard":   true,
 				"sqlite_state":              true,
 				"declaration_revisions":     true,
+				"declaration_generation_link": true,
 				"apply_journal":             true,
 				"apply_coordinator":         true,
 				"managed_apply":             false,
