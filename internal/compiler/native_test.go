@@ -417,7 +417,7 @@ func TestNativeConfigArtifactMetadataJSONIsDeterministic(t *testing.T) {
 	if !strings.Contains(string(sourceMapA), `"rule_index":2`) ||
 		!strings.Contains(string(sourceMapA), `"layer":"custom"`) ||
 		!strings.Contains(string(sourceMapA), `"group_id":"custom-a"`) ||
-		!strings.Contains(string(sourceMapA), `"target":{"kind":"DIRECT"}`) {
+		!strings.Contains(string(sourceMapA), `"target":{"kind":"direct"}`) {
 		t.Fatalf("unexpected source-map JSON: %s", sourceMapA)
 	}
 }
