@@ -52,7 +52,7 @@ The fixed 2026 Karing tree imports configuration-builder utilities that are abse
 
 The last-public model defaulted an omitted group `or` flag to true, and the builder lowered each non-empty field family into children of a logical OR rule. It also emitted package predicates only on Android. This is enough to implement and test a conservative Linux lowerer for the six pinned default-enabled groups. The legacy preset `processName` conversion is still unresolved for Linux; enabling one of the three affected groups fails closed instead of silently dropping or guessing that predicate.
 
-Full `cn_preset` capability remains false. CN preset overlay persistence, complete trusted/offline resource closure, Linux `processName` compatibility, and actual route-outcome fixtures are still required.
+Full `cn_preset` capability remains false. CN preset overlay persistence, complete trusted/offline resource closure, Linux `processName` compatibility, and CN-specific route-outcome fixtures are still required.
 
 ### M1 standalone core build is approved
 
@@ -96,6 +96,7 @@ Implemented now:
 - a Linux process-group runner that rejects unsafe executable paths, plus readiness gating and fixed-capacity stdout/stderr buffers; concurrent bounded-log writes are exercised under the CI race detector;
 - an authenticated loopback-only Clash `/version` probe validated against the fixed KaringX/sing-box source, including Bearer auth and the expected `sing-box`/`premium`/`meta` response contract;
 - a first-class Rule/Direct/Selected inbound model with the plan defaults, strict loopback/distinct-port validation, and a SOCKS5 greeting probe for expected Mixed listeners;
+- a real-core route-outcome fixture proving Rule can reject a matched destination, Direct bypasses Rule routing and reaches the local target, and Selected traverses the CurrentSelected proxy rather than silently falling back to DIRECT;
 - a lifecycle coordinator that orders durable start/stop intent before supervisor actions and blocks restored starts while apply recovery is unresolved;
 - secure opt-in runtime options that accept only an absolute SHA-pinned core path, create a private random loopback control secret, and reject control-port collisions;
 - conditional local lifecycle API/CLI wiring that starts the supervisor engine, restores persisted intent, serializes start/stop operations, and reports real core state/PID/circuit diagnostics;
@@ -109,4 +110,4 @@ Implemented now:
 - an exact embedded 28-group CN snapshot, typed overlay model, and evidence-bounded Linux lowering for the pinned default active set while unresolved process semantics remain fail-closed;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
-Still open before the stable-service foundation can be treated as release-ready: route-behavior verification beyond listener/control readiness, generation retention/garbage collection, packaging/license closure for core distribution, and broader process-level crash/power-loss fault injection across the real external core/SQLite boundary. Database online backup remains a later recovery/backup milestone rather than a reason to weaken the current immutable generation/apply guarantees.
+Still open before the stable-service foundation can be treated as release-ready: generation retention/garbage collection, packaging/license closure for core distribution, and broader process-level crash/power-loss fault injection across the real external core/SQLite boundary. Database online backup remains a later recovery/backup milestone rather than a reason to weaken the current immutable generation/apply guarantees.
