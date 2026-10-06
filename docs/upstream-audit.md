@@ -52,7 +52,9 @@ The fixed 2026 Karing tree imports configuration-builder utilities that are abse
 
 The last-public model defaulted an omitted group `or` flag to true, and the builder lowered each non-empty field family into children of a logical OR rule. It also emitted package predicates only on Android. This is enough to implement and test a conservative Linux lowerer for the six pinned default-enabled groups. The legacy preset `processName` conversion is still unresolved for Linux; enabling one of the three affected groups fails closed instead of silently dropping or guessing that predicate.
 
-Full `cn_preset` capability remains false. CN preset overlay persistence, complete trusted/offline resource closure, Linux `processName` compatibility, and CN-specific route-outcome fixtures are still required.
+Declaration v1 now persists the pinned CN snapshot identity, typed overlay, and complete L1 interleaving order separately from ordinary Custom groups. The merged order may place CN groups anywhere among ordinary Custom groups while preserving ordinary groups' own relative order and the immutable upstream CN ordinal for audit.
+
+Full `cn_preset` capability remains false. Complete trusted/offline resource closure, Linux `processName` compatibility, and CN-specific route-outcome fixtures are still required.
 
 ### M1 standalone core build is approved
 
@@ -107,7 +109,7 @@ Implemented now:
 - immutable rule-set upload/storage with bounded streaming input, SHA-256 content addressing, declaration `ref + digest + format` binding, active resource closure, and real-core rejection when a bound resource disappears;
 - independent Custom/GeoSite/GeoIP/ACL source-layer switches that preserve per-group state while excluding disabled sources from active routes, DNS bindings, source maps, and resource closure;
 - deterministic region GeoSite/GeoIP auto-append lowering plus declaration-v1 region-policy persistence, placing synthetic DIRECT rules after explicit entries while preserving duplicate user priority and independent whole-layer switches;
-- an exact embedded 28-group CN snapshot, typed overlay model, and evidence-bounded Linux lowering for the pinned default active set while unresolved process semantics remain fail-closed;
+- an exact embedded 28-group CN snapshot, typed overlay model, declaration-v1 snapshot/overlay persistence, arbitrary validated L1 interleaving with ordinary Custom groups, and evidence-bounded Linux lowering for the pinned default active set while unresolved process semantics remain fail-closed;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
 Still open before the stable-service foundation can be treated as release-ready: generation retention/garbage collection, packaging/license closure for core distribution, and broader process-level crash/power-loss fault injection across the real external core/SQLite boundary. Database online backup remains a later recovery/backup milestone rather than a reason to weaken the current immutable generation/apply guarantees.

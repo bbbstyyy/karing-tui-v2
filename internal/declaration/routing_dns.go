@@ -4,19 +4,39 @@ import (
 	"fmt"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
+	"github.com/bbbstyyy/karing-tui-v2/internal/preset"
 )
 
 type routingV1 struct {
-	CustomEnabled  *bool            `json:"custom_enabled,omitempty"`
-	GeoSiteEnabled *bool            `json:"geosite_enabled,omitempty"`
-	GeoIPEnabled   *bool            `json:"geoip_enabled,omitempty"`
-	ACLEnabled     *bool            `json:"acl_enabled,omitempty"`
-	RegionAppend   *regionAppendV1  `json:"region_append,omitempty"`
-	Custom         []routeGroupV1   `json:"custom,omitempty"`
-	GeoSite        []routeGroupV1   `json:"geosite,omitempty"`
-	GeoIP          []routeGroupV1   `json:"geoip,omitempty"`
-	ACL            []routeGroupV1   `json:"acl,omitempty"`
-	Final          domain.TargetRef `json:"final"`
+	CustomEnabled  *bool                `json:"custom_enabled,omitempty"`
+	GeoSiteEnabled *bool                `json:"geosite_enabled,omitempty"`
+	GeoIPEnabled   *bool                `json:"geoip_enabled,omitempty"`
+	ACLEnabled     *bool                `json:"acl_enabled,omitempty"`
+	CNPreset       *cnPresetV1          `json:"cn_preset,omitempty"`
+	CustomOrder    []customOrderEntryV1 `json:"custom_order,omitempty"`
+	RegionAppend   *regionAppendV1      `json:"region_append,omitempty"`
+	Custom         []routeGroupV1       `json:"custom,omitempty"`
+	GeoSite        []routeGroupV1       `json:"geosite,omitempty"`
+	GeoIP          []routeGroupV1       `json:"geoip,omitempty"`
+	ACL            []routeGroupV1       `json:"acl,omitempty"`
+	Final          domain.TargetRef     `json:"final"`
+}
+
+type cnPresetV1 struct {
+	SourceCommit string               `json:"source_commit"`
+	Overrides    []cnPresetOverrideV1 `json:"overrides,omitempty"`
+}
+
+type cnPresetOverrideV1 struct {
+	GroupID      string            `json:"group_id"`
+	Enabled      *bool             `json:"enabled,omitempty"`
+	Target       *domain.TargetRef `json:"target,omitempty"`
+	DNSProfileID *string           `json:"dns_profile_id,omitempty"`
+}
+
+type customOrderEntryV1 struct {
+	Kind    preset.CNCustomOrderKind `json:"kind"`
+	GroupID string                   `json:"group_id"`
 }
 
 type regionAppendV1 struct {
@@ -77,6 +97,46 @@ func (r routingV1) toDomain() (domain.RoutingPlan, error) {
 		return domain.RoutingPlan{}, err
 	}
 	return result, nil
+}
+
+func (r routingV1) cnPresetPlan() (*CNPresetPlan, error) {
+	if r.CNPreset == nil {
+		if len(r.CustomOrder) != 0 {
+			return nil, fmt.Errorf("%w: routing.custom_order requires routing.cn_preset", ErrInvalidDocument)
+		}
+		return nil, nil
+	}
+	if r.CNPreset.SourceCommit != preset.CNSourceCommit {
+		return nil, fmt.Errorf(
+			"%w: routing.cn_preset source_commit %q is unsupported; want %q",
+			ErrInvalidDocument,
+			r.CNPreset.SourceCommit,
+			preset.CNSourceCommit,
+		)
+	}
+
+	overrides := make([]preset.CNOverride, len(r.CNPreset.Overrides))
+	for i, override := range r.CNPreset.Overrides {
+		converted := preset.CNOverride{
+			GroupID:      override.GroupID,
+			Enabled:      override.Enabled,
+			Target:       override.Target,
+			DNSProfileID: override.DNSProfileID,
+		}
+		overrides[i] = converted
+	}
+	order := make([]preset.CNCustomOrderEntry, len(r.CustomOrder))
+	for i, entry := range r.CustomOrder {
+		order[i] = preset.CNCustomOrderEntry{
+			Kind:    entry.Kind,
+			GroupID: entry.GroupID,
+		}
+	}
+	return &CNPresetPlan{
+		SourceCommit: r.CNPreset.SourceCommit,
+		Overrides:    overrides,
+		CustomOrder:  order,
+	}, nil
 }
 
 func (r routingV1) regionAppendPlan() (*domain.RegionAppendPlan, error) {

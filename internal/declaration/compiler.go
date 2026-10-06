@@ -12,6 +12,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
+	"github.com/bbbstyyy/karing-tui-v2/internal/preset"
 )
 
 const SchemaVersionV1 = 1
@@ -29,12 +30,19 @@ type RuleSetResource struct {
 	Format compiler.RuleSetFormat
 }
 
+type CNPresetPlan struct {
+	SourceCommit string
+	Overrides    []preset.CNOverride
+	CustomOrder  []preset.CNCustomOrderEntry
+}
+
 type Model struct {
 	LogLevel     string
 	RuleSets     []RuleSetResource
 	Nodes        []domain.Node
 	Selection    domain.SelectionPlan
 	Routing      domain.RoutingPlan
+	CNPreset     *CNPresetPlan
 	RegionAppend *domain.RegionAppendPlan
 	DNS          domain.DNSPlan
 }
@@ -175,16 +183,17 @@ func ParseV1(document []byte) (Model, error) {
 	if err := routing.Validate(); err != nil {
 		return Model{}, fmt.Errorf("%w: routing: %v", ErrInvalidDocument, err)
 	}
+	cnPreset, err := wire.Routing.cnPresetPlan()
+	if err != nil {
+		return Model{}, err
+	}
 	regionAppend, err := wire.Routing.regionAppendPlan()
 	if err != nil {
 		return Model{}, err
 	}
-	effectiveRouting := routing
-	if regionAppend != nil {
-		effectiveRouting, err = domain.ApplyRegionAppend(routing, *regionAppend)
-		if err != nil {
-			return Model{}, fmt.Errorf("%w: routing.region_append: %v", ErrInvalidDocument, err)
-		}
+	effectiveRouting, err := applyDeclarationRoutingPolicies(routing, cnPreset, regionAppend)
+	if err != nil {
+		return Model{}, err
 	}
 	dns, err := wire.DNS.toDomain()
 	if err != nil {
@@ -200,9 +209,50 @@ func ParseV1(document []byte) (Model, error) {
 		Nodes:        nodes,
 		Selection:    selection,
 		Routing:      routing,
+		CNPreset:     cnPreset,
 		RegionAppend: regionAppend,
 		DNS:          dns,
 	}, nil
+}
+
+func applyDeclarationRoutingPolicies(
+	routing domain.RoutingPlan,
+	cnPreset *CNPresetPlan,
+	regionAppend *domain.RegionAppendPlan,
+) (domain.RoutingPlan, error) {
+	result := routing
+	if cnPreset != nil {
+		if cnPreset.SourceCommit != preset.CNSourceCommit {
+			return domain.RoutingPlan{}, fmt.Errorf(
+				"%w: routing.cn_preset source commit %q is unsupported",
+				ErrInvalidDocument,
+				cnPreset.SourceCommit,
+			)
+		}
+		snapshot, err := preset.LoadCN()
+		if err != nil {
+			return domain.RoutingPlan{}, fmt.Errorf("%w: load CN preset snapshot: %v", ErrInvalidDocument, err)
+		}
+		cnGroups, err := preset.LowerCNCustomRouting(snapshot, cnPreset.Overrides)
+		if err != nil {
+			return domain.RoutingPlan{}, fmt.Errorf("%w: routing.cn_preset: %v", ErrInvalidDocument, err)
+		}
+		result.Custom, err = preset.MergeCNCustomRouting(result.Custom, cnGroups, cnPreset.CustomOrder)
+		if err != nil {
+			return domain.RoutingPlan{}, fmt.Errorf("%w: routing.custom_order: %v", ErrInvalidDocument, err)
+		}
+	}
+	if regionAppend != nil {
+		var err error
+		result, err = domain.ApplyRegionAppend(result, *regionAppend)
+		if err != nil {
+			return domain.RoutingPlan{}, fmt.Errorf("%w: routing.region_append: %v", ErrInvalidDocument, err)
+		}
+	}
+	if err := result.Validate(); err != nil {
+		return domain.RoutingPlan{}, fmt.Errorf("%w: effective routing: %v", ErrInvalidDocument, err)
+	}
+	return result, nil
 }
 
 type semanticCompilation struct {
@@ -234,12 +284,9 @@ func compileSemantic(
 	if err != nil {
 		return semanticCompilation{}, fmt.Errorf("%w: target catalog: %v", ErrInvalidDocument, err)
 	}
-	routingPlan := model.Routing
-	if model.RegionAppend != nil {
-		routingPlan, err = domain.ApplyRegionAppend(model.Routing, *model.RegionAppend)
-		if err != nil {
-			return semanticCompilation{}, fmt.Errorf("%w: routing.region_append: %v", ErrInvalidDocument, err)
-		}
+	routingPlan, err := applyDeclarationRoutingPolicies(model.Routing, model.CNPreset, model.RegionAppend)
+	if err != nil {
+		return semanticCompilation{}, err
 	}
 	routing, err := compiler.CompileRouting(routingPlan, targets)
 	if err != nil {

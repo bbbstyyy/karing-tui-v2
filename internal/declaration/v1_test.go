@@ -2,6 +2,7 @@ package declaration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
+	"github.com/bbbstyyy/karing-tui-v2/internal/preset"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -197,6 +199,101 @@ func TestValidateV1DisabledLayerDoesNotRequireRuleSetClosure(t *testing.T) {
 	}
 }
 
+func TestParseV1PreservesCNPresetSeparatelyAndCompilesInterleavedCustomOrder(t *testing.T) {
+	document := declarationWithCNPresetInterleave(t, true)
+	model, err := ParseV1(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.CNPreset == nil || model.CNPreset.SourceCommit != preset.CNSourceCommit {
+		t.Fatalf("CN preset policy = %+v", model.CNPreset)
+	}
+	if len(model.Routing.Custom) != 1 || model.Routing.Custom[0].ID != "user.special" {
+		t.Fatalf("CN preset was prematurely materialized into persisted custom routing: %+v", model.Routing.Custom)
+	}
+
+	effective, err := applyDeclarationRoutingPolicies(model.Routing, model.CNPreset, model.RegionAppend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effective.Custom) != preset.CNExpectedGroups+1 {
+		t.Fatalf("effective custom groups = %d, want %d", len(effective.Custom), preset.CNExpectedGroups+1)
+	}
+	if effective.Custom[3].ID != "cn.apple-push" ||
+		effective.Custom[4].ID != "user.special" ||
+		effective.Custom[3].Order != 4 ||
+		effective.Custom[4].Order != 5 {
+		t.Fatalf("unexpected CN/custom interleave around insertion: %+v", effective.Custom[2:6])
+	}
+
+	compiled, err := compileSemantic(context.Background(), model, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled.routing.RuleSetRefs) != 0 {
+		t.Fatalf("domain/IP-only CN fixture unexpectedly required rule sets: %#v", compiled.routing.RuleSetRefs)
+	}
+	if len(compiled.routing.SourceMap) != 3 ||
+		compiled.routing.SourceMap[0].GroupID != "cn.apple-push" ||
+		compiled.routing.SourceMap[1].GroupID != "user.special" ||
+		!compiled.routing.SourceMap[2].Final {
+		t.Fatalf("interleaved source map = %+v", compiled.routing.SourceMap)
+	}
+}
+
+func TestParseV1CNPresetRequiresExplicitInterleaveWhenOrdinaryCustomExists(t *testing.T) {
+	document := declarationWithCNPresetInterleave(t, false)
+	if _, err := ParseV1(document); !errors.Is(err, ErrInvalidDocument) {
+		t.Fatalf("missing custom_order error = %v", err)
+	}
+}
+
+func TestParseV1CNPresetRejectsUnknownSnapshotCommit(t *testing.T) {
+	document := string(minimalDeclaration())
+	document = strings.Replace(
+		document,
+		`"routing":{`,
+		`"routing":{
+    "cn_preset":{"source_commit":"deadbeef"},`,
+		1,
+	)
+	if _, err := ParseV1([]byte(document)); !errors.Is(err, ErrInvalidDocument) {
+		t.Fatalf("unsupported CN snapshot error = %v", err)
+	}
+}
+
+func TestParseV1RejectsCustomOrderWithoutCNPreset(t *testing.T) {
+	document := string(minimalDeclaration())
+	document = strings.Replace(
+		document,
+		`"routing":{`,
+		`"routing":{
+    "custom_order":[{"kind":"custom","group_id":"missing"}],`,
+		1,
+	)
+	if _, err := ParseV1([]byte(document)); !errors.Is(err, ErrInvalidDocument) {
+		t.Fatalf("orphan custom_order error = %v", err)
+	}
+}
+
+func TestValidateV1CNPresetParticipatesInActiveResourceClosure(t *testing.T) {
+	document := declarationWithCNPresetOnly()
+	if err := ValidateV1(document); !errors.Is(err, ErrRuleSetResourceMissing) {
+		t.Fatalf("active CN preset resource error = %v", err)
+	}
+
+	disabled := strings.Replace(
+		string(document),
+		`"routing":{`,
+		`"routing":{
+    "custom_enabled":false,`,
+		1,
+	)
+	if err := ValidateV1([]byte(disabled)); err != nil {
+		t.Fatalf("disabled Custom layer unexpectedly required CN resources: %v", err)
+	}
+}
+
 func TestParseV1PreservesRegionAppendPolicySeparately(t *testing.T) {
 	document := declarationWithRegionAppend(true, true, false, false)
 	model, err := ParseV1(document)
@@ -285,6 +382,95 @@ func TestValidateV1RejectsUnresolvedNodeReference(t *testing.T) {
 	if err := ValidateV1([]byte(document)); !errors.Is(err, ErrInvalidDocument) {
 		t.Fatalf("unresolved node error = %v", err)
 	}
+}
+
+func declarationWithCNPresetInterleave(t *testing.T, includeOrder bool) []byte {
+	t.Helper()
+	document := string(minimalDeclaration())
+	document = strings.Replace(
+		document,
+		`"routing":{
+    "custom":[]`,
+		`"routing":{
+    "custom":[{
+      "id":"user.special",
+      "order":10,
+      "enabled":true,
+      "target":{"kind":"direct"},
+      "match":{"op":"atom","predicate":{"kind":"domain","value":"user.invalid"}}
+    }]`,
+		1,
+	)
+
+	presetJSON := fmt.Sprintf(
+		`"cn_preset":{"source_commit":%q,"overrides":[`+
+			`{"group_id":"cn.apple-services","enabled":false},`+
+			`{"group_id":"cn.google-play","enabled":false},`+
+			`{"group_id":"cn.google","enabled":false},`+
+			`{"group_id":"cn.bilibili","enabled":false},`+
+			`{"group_id":"cn.domestic-direct","enabled":false},`+
+			`{"group_id":"cn.foreign-proxy","enabled":false},`+
+			`{"group_id":"cn.apple-push","enabled":true}]}`,
+		preset.CNSourceCommit,
+	)
+	extra := presetJSON + ","
+	if includeOrder {
+		order := cnPresetInterleaveOrder(t, "user.special", 4)
+		raw, err := json.Marshal(order)
+		if err != nil {
+			t.Fatal(err)
+		}
+		extra += `"custom_order":` + string(raw) + ","
+	}
+	document = strings.Replace(
+		document,
+		`"routing":{`,
+		`"routing":{`+extra,
+		1,
+	)
+	return []byte(document)
+}
+
+func declarationWithCNPresetOnly() []byte {
+	document := string(minimalDeclaration())
+	document = strings.Replace(
+		document,
+		`"routing":{`,
+		fmt.Sprintf(`"routing":{"cn_preset":{"source_commit":%q},`, preset.CNSourceCommit),
+		1,
+	)
+	return []byte(document)
+}
+
+func cnPresetInterleaveOrder(t *testing.T, customID string, insertAt int) []customOrderEntryV1 {
+	t.Helper()
+	snapshot, err := preset.LoadCN()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if insertAt < 0 || insertAt > len(snapshot.Groups) {
+		t.Fatalf("invalid custom insertion index %d", insertAt)
+	}
+	order := make([]customOrderEntryV1, 0, len(snapshot.Groups)+1)
+	for i, group := range snapshot.Groups {
+		if i == insertAt {
+			order = append(order, customOrderEntryV1{
+				Kind:    preset.CNCustomOrderUser,
+				GroupID: customID,
+			})
+		}
+		order = append(order, customOrderEntryV1{
+			Kind:    preset.CNCustomOrderPreset,
+			GroupID: group.ID,
+		})
+	}
+	if insertAt == len(snapshot.Groups) {
+		order = append(order, customOrderEntryV1{
+			Kind:    preset.CNCustomOrderUser,
+			GroupID: customID,
+		})
+	}
+	return order
 }
 
 func declarationWithRegionAppend(
