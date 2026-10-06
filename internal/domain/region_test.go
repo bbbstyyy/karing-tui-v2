@@ -76,7 +76,6 @@ func TestRegionAppendRejectsAmbiguousOrNonDirectPolicy(t *testing.T) {
 	}
 }
 
-
 func TestApplyRegionAppendPlacesSyntheticEntriesAfterExplicitLayerEntries(t *testing.T) {
 	geoSiteMatch := Atom(Predicate{Kind: PredicateRuleSet, Value: "geosite:cn"})
 	geoIPMatch := Atom(Predicate{Kind: PredicateRuleSet, Value: "geoip:cn"})

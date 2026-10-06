@@ -52,7 +52,6 @@ func (p RegionAppendPlan) RuleSetRefs() ([]string, error) {
 	return refs, nil
 }
 
-
 func ApplyRegionAppend(routing RoutingPlan, region RegionAppendPlan) (RoutingPlan, error) {
 	if err := routing.Validate(); err != nil {
 		return RoutingPlan{}, err
