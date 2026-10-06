@@ -17,11 +17,10 @@ type documentV1 struct {
 	LogLevel      string              `json:"log_level"`
 	RuleSets      []ruleSetResourceV1 `json:"rule_sets,omitempty"`
 	Nodes         []nodeV1            `json:"nodes"`
-	Selection     selectionV1 `json:"selection"`
-	Routing       routingV1   `json:"routing"`
-	DNS           dnsV1       `json:"dns"`
+	Selection     selectionV1         `json:"selection"`
+	Routing       routingV1           `json:"routing"`
+	DNS           dnsV1               `json:"dns"`
 }
-
 
 type ruleSetResourceV1 struct {
 	Ref    string                 `json:"ref"`

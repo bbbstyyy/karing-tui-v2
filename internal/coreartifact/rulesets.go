@@ -23,7 +23,6 @@ var (
 	ErrRuleSetTooLarge     = errors.New("rule-set artifact exceeds size limit")
 )
 
-
 func (s *Store) PutRuleSet(
 	ctx context.Context,
 	content io.Reader,

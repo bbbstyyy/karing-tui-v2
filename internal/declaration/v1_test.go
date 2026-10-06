@@ -141,7 +141,6 @@ func TestValidateV1RejectsUnresolvedNodeReference(t *testing.T) {
 	}
 }
 
-
 func declarationWithRuleSet(hash string, includeResource bool) []byte {
 	document := string(minimalDeclaration())
 	if includeResource {

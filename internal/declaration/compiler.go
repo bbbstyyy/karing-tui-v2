@@ -17,10 +17,10 @@ import (
 const SchemaVersionV1 = 1
 
 var (
-	ErrInvalidDocument             = errors.New("invalid declaration document")
-	ErrUnsupportedSchema           = errors.New("unsupported declaration schema")
-	ErrRuleSetResourceMissing      = errors.New("declaration rule-set resource metadata is missing")
-	ErrRuleSetResourceUnavailable  = errors.New("declaration rule-set resource is unavailable")
+	ErrInvalidDocument            = errors.New("invalid declaration document")
+	ErrUnsupportedSchema          = errors.New("unsupported declaration schema")
+	ErrRuleSetResourceMissing     = errors.New("declaration rule-set resource metadata is missing")
+	ErrRuleSetResourceUnavailable = errors.New("declaration rule-set resource is unavailable")
 )
 
 type RuleSetResource struct {
