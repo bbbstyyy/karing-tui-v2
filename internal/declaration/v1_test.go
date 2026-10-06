@@ -63,7 +63,8 @@ func TestValidateV1RejectsRuleSetUntilResourceClosureIsWired(t *testing.T) {
 		string(minimalDeclaration()),
 		`"routing":{
     "custom":[]`,
-		`"routing":{\n    "custom":[{"id":"rs","order":1,"enabled":true,"target":{"kind":"direct"},"match":{"op":"atom","predicate":{"kind":"rule_set","value":"geosite:cn"}}}]`,
+		`"routing":{
+    "custom":[{"id":"rs","order":1,"enabled":true,"target":{"kind":"direct"},"match":{"op":"atom","predicate":{"kind":"rule_set","value":"geosite:cn"}}}]`,
 		1,
 	)
 	if err := ValidateV1([]byte(document)); !errors.Is(err, ErrRuleSetsUnsupportedInV1) {
