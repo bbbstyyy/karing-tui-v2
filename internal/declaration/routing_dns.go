@@ -7,11 +7,15 @@ import (
 )
 
 type routingV1 struct {
-	Custom  []routeGroupV1   `json:"custom,omitempty"`
-	GeoSite []routeGroupV1   `json:"geosite,omitempty"`
-	GeoIP   []routeGroupV1   `json:"geoip,omitempty"`
-	ACL     []routeGroupV1   `json:"acl,omitempty"`
-	Final   domain.TargetRef `json:"final"`
+	CustomEnabled  *bool             `json:"custom_enabled,omitempty"`
+	GeoSiteEnabled *bool             `json:"geosite_enabled,omitempty"`
+	GeoIPEnabled   *bool             `json:"geoip_enabled,omitempty"`
+	ACLEnabled     *bool             `json:"acl_enabled,omitempty"`
+	Custom         []routeGroupV1    `json:"custom,omitempty"`
+	GeoSite        []routeGroupV1    `json:"geosite,omitempty"`
+	GeoIP          []routeGroupV1    `json:"geoip,omitempty"`
+	ACL            []routeGroupV1    `json:"acl,omitempty"`
+	Final          domain.TargetRef  `json:"final"`
 }
 
 type routeGroupV1 struct {
@@ -43,7 +47,15 @@ type portRangeV1 struct {
 }
 
 func (r routingV1) toDomain() (domain.RoutingPlan, error) {
-	result := domain.RoutingPlan{Final: r.Final}
+	result := domain.RoutingPlan{
+		Layers: domain.RoutingLayerSwitches{
+			CustomDisabled:  explicitlyDisabled(r.CustomEnabled),
+			GeoSiteDisabled: explicitlyDisabled(r.GeoSiteEnabled),
+			GeoIPDisabled:   explicitlyDisabled(r.GeoIPEnabled),
+			ACLDisabled:     explicitlyDisabled(r.ACLEnabled),
+		},
+		Final: r.Final,
+	}
 	var err error
 	if result.Custom, err = convertRouteGroups(domain.LayerCustom, r.Custom); err != nil {
 		return domain.RoutingPlan{}, err
@@ -165,4 +177,8 @@ func (d dnsV1) toDomain() (domain.DNSPlan, error) {
 		return domain.DNSPlan{}, fmt.Errorf("%w: outbound_profile_id is required", ErrInvalidDocument)
 	}
 	return result, nil
+}
+
+func explicitlyDisabled(enabled *bool) bool {
+	return enabled != nil && !*enabled
 }

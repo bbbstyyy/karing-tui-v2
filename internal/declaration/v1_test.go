@@ -134,6 +134,67 @@ func TestNativeCompilerFailsClosedWhenRuleSetResolverIsUnavailable(t *testing.T)
 	}
 }
 
+func TestValidateV1RoutingLayerSwitchDefaultsEnabled(t *testing.T) {
+	model, err := ParseV1(minimalDeclaration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, layer := range []domain.RoutingLayer{
+		domain.LayerCustom,
+		domain.LayerGeoSite,
+		domain.LayerGeoIP,
+		domain.LayerACL,
+		domain.LayerFinal,
+	} {
+		if !model.Routing.Layers.Enabled(layer) {
+			t.Fatalf("omitted routing layer switch disabled %q", layer)
+		}
+	}
+}
+
+func TestValidateV1DisabledLayerDoesNotRequireRuleSetClosure(t *testing.T) {
+	document := string(declarationWithRuleSet("", false))
+	document = strings.Replace(
+		document,
+		`"routing":{`,
+		`"routing":{
+    "custom_enabled":false,`,
+		1,
+	)
+	if err := ValidateV1([]byte(document)); err != nil {
+		t.Fatalf("disabled custom layer unexpectedly required active rule-set closure: %v", err)
+	}
+	model, err := ParseV1([]byte(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.Routing.Layers.Enabled(domain.LayerCustom) {
+		t.Fatal("custom layer remained enabled after explicit false switch")
+	}
+	if !model.Routing.Custom[0].Binding.Enabled {
+		t.Fatal("layer switch rewrote persisted group enabled state")
+	}
+
+	engine, err := NewNativeCompiler(NativeCompilerOptions{
+		Inbounds:       domain.DefaultInboundSet(),
+		ControlAddress: netip.MustParseAddrPort("127.0.0.1:3057"),
+		ControlSecret:  testSecret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := engine.CompileDeclaration(context.Background(), []byte(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Manifest.RuleSets) != 0 {
+		t.Fatalf("disabled layer leaked rule-set closure: %+v", artifact.Manifest.RuleSets)
+	}
+	if len(artifact.SourceMap) != 1 || !artifact.SourceMap[0].Final {
+		t.Fatalf("disabled layer leaked route source map entries: %+v", artifact.SourceMap)
+	}
+}
+
 func TestValidateV1RejectsUnresolvedNodeReference(t *testing.T) {
 	document := strings.Replace(string(minimalDeclaration()), `"node_id":"n1"`, `"node_id":"missing"`, 2)
 	if err := ValidateV1([]byte(document)); !errors.Is(err, ErrInvalidDocument) {

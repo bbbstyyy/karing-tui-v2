@@ -116,6 +116,28 @@ func TestDNSProfileRequiresExplicitSupportedTransportAndPort(t *testing.T) {
 	}
 }
 
+func TestDNSPlanIgnoresBindingsInDisabledRoutingLayer(t *testing.T) {
+	match := Atom(Predicate{Kind: PredicateDomain, Value: "example.com"})
+	routing := RoutingPlan{
+		Layers: RoutingLayerSwitches{CustomDisabled: true},
+		Custom: []RouteGroup{{
+			ID:    "disabled-source",
+			Layer: LayerCustom,
+			Order: 1,
+			Match: &match,
+			Binding: RouteBinding{
+				Enabled:      true,
+				Target:       TargetRef{Kind: TargetDirect},
+				DNSProfileID: "missing-because-layer-is-disabled",
+			},
+		}},
+		Final: TargetRef{Kind: TargetDirect},
+	}
+	if err := (DNSPlan{}).ValidateActiveRouteBindings(routing); err != nil {
+		t.Fatalf("disabled routing layer unexpectedly required group DNS: %v", err)
+	}
+}
+
 func TestDNSPlanValidatesEnabledRouteGroupDNSBindings(t *testing.T) {
 	match := Atom(Predicate{Kind: PredicateDomain, Value: "example.com"})
 	routing := RoutingPlan{

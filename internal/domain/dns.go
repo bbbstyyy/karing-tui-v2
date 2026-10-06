@@ -165,8 +165,19 @@ func (p DNSPlan) ValidateActiveRouteBindings(routing RoutingPlan) error {
 	if err := routing.Validate(); err != nil {
 		return err
 	}
-	for _, groups := range [][]RouteGroup{routing.Custom, routing.GeoSite, routing.GeoIP, routing.ACL} {
-		for _, group := range groups {
+	for _, layer := range []struct {
+		kind   RoutingLayer
+		groups []RouteGroup
+	}{
+		{kind: LayerCustom, groups: routing.Custom},
+		{kind: LayerGeoSite, groups: routing.GeoSite},
+		{kind: LayerGeoIP, groups: routing.GeoIP},
+		{kind: LayerACL, groups: routing.ACL},
+	} {
+		if !routing.Layers.Enabled(layer.kind) {
+			continue
+		}
+		for _, group := range layer.groups {
 			if !group.Binding.Enabled || group.Binding.DNSProfileID == "" {
 				continue
 			}

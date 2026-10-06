@@ -15,6 +15,30 @@ const (
 	LayerFinal   RoutingLayer = "final"
 )
 
+type RoutingLayerSwitches struct {
+	CustomDisabled  bool
+	GeoSiteDisabled bool
+	GeoIPDisabled   bool
+	ACLDisabled     bool
+}
+
+func (s RoutingLayerSwitches) Enabled(layer RoutingLayer) bool {
+	switch layer {
+	case LayerCustom:
+		return !s.CustomDisabled
+	case LayerGeoSite:
+		return !s.GeoSiteDisabled
+	case LayerGeoIP:
+		return !s.GeoIPDisabled
+	case LayerACL:
+		return !s.ACLDisabled
+	case LayerFinal:
+		return true
+	default:
+		return false
+	}
+}
+
 type TargetKind string
 
 const (
@@ -110,6 +134,7 @@ func (g RouteGroup) Validate(expectedLayer RoutingLayer) error {
 }
 
 type RoutingPlan struct {
+	Layers  RoutingLayerSwitches
 	Custom  []RouteGroup
 	GeoSite []RouteGroup
 	GeoIP   []RouteGroup
@@ -153,6 +178,9 @@ func (p RoutingPlan) OrderedActiveSteps() ([]RouteStep, error) {
 	}
 	steps := make([]RouteStep, 0, len(p.Custom)+len(p.GeoSite)+len(p.GeoIP)+len(p.ACL)+1)
 	appendLayer := func(layer RoutingLayer, groups []RouteGroup) {
+		if !p.Layers.Enabled(layer) {
+			return
+		}
 		for _, group := range groups {
 			if !group.Binding.Enabled {
 				continue

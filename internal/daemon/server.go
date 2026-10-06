@@ -244,6 +244,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_match_ast":           true,
 				"routing_rule_lowerer":        true,
 				"routing_entry_scoping":       true,
+				"routing_layer_switches":      true,
 				"routing_target_registry":     true,
 				"routing_rule_set_closure":    true,
 				"routing_rule_set_store":      s.ruleSets != nil,

@@ -93,6 +93,71 @@ func TestRoutingPlanPreservesFiveLayerOrder(t *testing.T) {
 	}
 }
 
+func TestRoutingPlanLayerSwitchesSuppressWholeSources(t *testing.T) {
+	customMatch := Atom(Predicate{Kind: PredicateDomain, Value: "custom.example"})
+	geoSiteMatch := Atom(Predicate{Kind: PredicateRuleSet, Value: "geosite:example"})
+	geoIPMatch := Atom(Predicate{Kind: PredicateRuleSet, Value: "geoip:example"})
+	aclMatch := Atom(Predicate{Kind: PredicateRuleSet, Value: "acl:example"})
+	plan := RoutingPlan{
+		Layers: RoutingLayerSwitches{
+			GeoSiteDisabled: true,
+			ACLDisabled:     true,
+		},
+		Custom: []RouteGroup{{
+			ID:    "custom",
+			Layer: LayerCustom,
+			Order: 1,
+			Match: &customMatch,
+			Binding: RouteBinding{Enabled: true, Target: TargetRef{Kind: TargetDirect}},
+		}},
+		GeoSite: []RouteGroup{{
+			ID:    "geosite",
+			Layer: LayerGeoSite,
+			Order: 1,
+			Match: &geoSiteMatch,
+			Binding: RouteBinding{Enabled: true, Target: TargetRef{Kind: TargetDirect}},
+		}},
+		GeoIP: []RouteGroup{{
+			ID:    "geoip",
+			Layer: LayerGeoIP,
+			Order: 1,
+			Match: &geoIPMatch,
+			Binding: RouteBinding{Enabled: true, Target: TargetRef{Kind: TargetDirect}},
+		}},
+		ACL: []RouteGroup{{
+			ID:    "acl",
+			Layer: LayerACL,
+			Order: 1,
+			Match: &aclMatch,
+			Binding: RouteBinding{Enabled: true, Target: TargetRef{Kind: TargetDirect}},
+		}},
+		Final: TargetRef{Kind: TargetBlock},
+	}
+
+	steps, err := plan.OrderedActiveSteps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(steps))
+	for _, step := range steps {
+		got = append(got, string(step.Layer)+":"+step.GroupID)
+	}
+	want := []string{"custom:custom", "geoip:geoip", "final:"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("active steps = %#v, want %#v", got, want)
+	}
+	if !plan.GeoSite[0].Binding.Enabled || !plan.ACL[0].Binding.Enabled {
+		t.Fatal("layer switch mutated persisted group enable state")
+	}
+	if !plan.Layers.Enabled(LayerCustom) ||
+		plan.Layers.Enabled(LayerGeoSite) ||
+		!plan.Layers.Enabled(LayerGeoIP) ||
+		plan.Layers.Enabled(LayerACL) ||
+		!plan.Layers.Enabled(LayerFinal) {
+		t.Fatalf("unexpected layer switch evaluation: %+v", plan.Layers)
+	}
+}
+
 func TestRoutingPlanRejectsNonNormalizedLayerOrder(t *testing.T) {
 	plan := RoutingPlan{
 		Custom: []RouteGroup{
