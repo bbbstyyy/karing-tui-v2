@@ -35,8 +35,8 @@ type managedCoreRuntime interface {
 }
 
 type serverRuntime struct {
-	core      daemonCoreRuntime
-	lifecycle *LifecycleCoordinator
+	core         daemonCoreRuntime
+	lifecycle    *LifecycleCoordinator
 	apply        *ApplyCoordinator
 	declarations *DeclarationCompileCoordinator
 	gate         *OperationGate
