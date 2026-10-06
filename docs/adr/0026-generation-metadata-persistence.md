@@ -55,4 +55,4 @@ Network I/O and core process operations remain outside that transaction.
 - serialize the compiler's native manifest and route source map into this strict prepare call;
 - stage/verify the persisted metadata as generation files if needed for offline inspection;
 - make recovery verify the manifest's referenced content-addressed artifacts before starting or rolling back a generation;
-- add a dedicated historical v2 database fixture for migration regression testing.
+A dedicated historical v2 database fixture now exercises the additive v3 migration and verifies that config revision, applied/last-known-good generation, core desired state, committed journal, and legacy config bytes/hashes survive unchanged while new metadata columns remain empty.

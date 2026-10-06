@@ -3,12 +3,14 @@ package storage
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestApplyLifecycleKeepsRevisionOnRollback(t *testing.T) {
@@ -387,6 +389,153 @@ func TestPrepareApplyWithMetadataRejectsInvalidOrOversizedMetadata(t *testing.T)
 				t.Fatalf("invalid metadata changed durable state: %+v", snapshot)
 			}
 		})
+	}
+}
+
+func TestSchemaV3MigratesRealV2DatabaseWithoutChangingState(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "state.db")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	config := []byte(`{"v2":true}`)
+	hash := sha256String(config)
+	statements := []string{
+		`PRAGMA foreign_keys = ON`,
+		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
+		`CREATE TABLE generations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			base_revision INTEGER NOT NULL CHECK(base_revision >= 0),
+			target_revision INTEGER NOT NULL CHECK(target_revision = base_revision + 1),
+			config_json BLOB NOT NULL,
+			config_sha256 TEXT NOT NULL CHECK(length(config_sha256) = 64),
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE daemon_state (
+			singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+			config_revision INTEGER NOT NULL DEFAULT 0 CHECK(config_revision >= 0),
+			applied_generation_id INTEGER REFERENCES generations(id) ON DELETE RESTRICT,
+			last_known_good_generation_id INTEGER REFERENCES generations(id) ON DELETE RESTRICT,
+			recovery_required INTEGER NOT NULL DEFAULT 0 CHECK(recovery_required IN (0, 1)),
+			core_desired_state TEXT NOT NULL DEFAULT 'stopped'
+				CHECK(core_desired_state IN ('stopped', 'running'))
+		)`,
+		`CREATE TABLE apply_journal (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			generation_id INTEGER NOT NULL REFERENCES generations(id) ON DELETE RESTRICT,
+			previous_generation_id INTEGER REFERENCES generations(id) ON DELETE RESTRICT,
+			base_revision INTEGER NOT NULL CHECK(base_revision >= 0),
+			target_revision INTEGER NOT NULL CHECK(target_revision = base_revision + 1),
+			phase TEXT NOT NULL CHECK(phase IN ('prepared', 'activating', 'verifying', 'rolling_back', 'committed', 'rolled_back', 'failed', 'interrupted')),
+			active_slot INTEGER CHECK(active_slot IS NULL OR active_slot = 1),
+			error TEXT NOT NULL DEFAULT '',
+			started_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX apply_journal_one_active ON apply_journal(active_slot) WHERE active_slot IS NOT NULL`,
+		`CREATE INDEX apply_journal_generation ON apply_journal(generation_id)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			_ = db.Close()
+			t.Fatalf("create v2 fixture: %v", err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(1, ?), (2, ?)`, now, now); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	result, err := db.ExecContext(ctx, `
+		INSERT INTO generations(base_revision, target_revision, config_json, config_sha256, created_at)
+		VALUES(0, 1, ?, ?, ?)
+	`, config, hash, now)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	generationID, err := result.LastInsertId()
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO daemon_state(
+			singleton,
+			config_revision,
+			applied_generation_id,
+			last_known_good_generation_id,
+			recovery_required,
+			core_desired_state
+		)
+		VALUES(1, 1, ?, ?, 0, 'running')
+	`, generationID, generationID); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO apply_journal(
+			generation_id,
+			previous_generation_id,
+			base_revision,
+			target_revision,
+			phase,
+			active_slot,
+			error,
+			started_at,
+			updated_at
+		)
+		VALUES(?, NULL, 0, 1, 'committed', NULL, '', ?, ?)
+	`, generationID, now, now); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != 1 ||
+		snapshot.AppliedGenerationID == nil || *snapshot.AppliedGenerationID != generationID ||
+		snapshot.LastKnownGoodGenerationID == nil || *snapshot.LastKnownGoodGenerationID != generationID ||
+		snapshot.RecoveryRequired ||
+		snapshot.CoreDesiredState != CoreDesiredRunning ||
+		snapshot.ActiveAttemptID != nil {
+		t.Fatalf("v2 state changed during v3 migration: %+v", snapshot)
+	}
+
+	artifacts, err := store.GenerationArtifacts(ctx, generationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(artifacts.ConfigJSON) != string(config) || artifacts.ConfigSHA256 != hash {
+		t.Fatalf("v2 generation changed during migration: %+v", artifacts)
+	}
+	if len(artifacts.ManifestJSON) != 0 || artifacts.ManifestSHA256 != "" ||
+		len(artifacts.SourceMapJSON) != 0 || artifacts.SourceMapSHA256 != "" {
+		t.Fatalf("v2 generation gained fabricated metadata: %+v", artifacts)
 	}
 }
 
