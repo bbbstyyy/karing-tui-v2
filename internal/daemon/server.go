@@ -272,6 +272,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"cn_preset_overrides":         true,
 				"cn_preset_linux_lowerer":     true,
 				"region_append_model":         true,
+				"region_append_lowerer":       true,
 				"cn_preset":                   false,
 				"subscriptions":               false,
 				"tui":                         false,

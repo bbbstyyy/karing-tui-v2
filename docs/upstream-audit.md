@@ -52,7 +52,7 @@ The fixed 2026 Karing tree imports configuration-builder utilities that are abse
 
 The last-public model defaulted an omitted group `or` flag to true, and the builder lowered each non-empty field family into children of a logical OR rule. It also emitted package predicates only on Android. This is enough to implement and test a conservative Linux lowerer for the six pinned default-enabled groups. The legacy preset `processName` conversion is still unresolved for Linux; enabling one of the three affected groups fails closed instead of silently dropping or guessing that predicate.
 
-Full `cn_preset` capability remains false. Declaration overlay persistence, complete trusted/offline resource closure, Linux `processName` compatibility, region auto-append, and actual route-outcome fixtures are still required.
+Full `cn_preset` capability remains false. Declaration overlay/region-policy persistence, complete trusted/offline resource closure, Linux `processName` compatibility, and actual route-outcome fixtures are still required.
 
 ### M1 standalone core build is approved
 
@@ -105,6 +105,7 @@ Implemented now:
 - deterministic native compilation for the three proxy-only inbounds, typed targets, selection groups, basic nodes, five-layer routing IR, DNS dependencies/group bindings, source maps, and generation manifests;
 - immutable rule-set upload/storage with bounded streaming input, SHA-256 content addressing, declaration `ref + digest + format` binding, active resource closure, and real-core rejection when a bound resource disappears;
 - independent Custom/GeoSite/GeoIP/ACL source-layer switches that preserve per-group state while excluding disabled sources from active routes, DNS bindings, source maps, and resource closure;
+- deterministic region GeoSite/GeoIP auto-append lowering that places synthetic DIRECT rules after explicit entries, preserves duplicate user priority, and remains independently gated from whole-layer switches;
 - an exact embedded 28-group CN snapshot, typed overlay model, and evidence-bounded Linux lowering for the pinned default active set while unresolved process semantics remain fail-closed;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
