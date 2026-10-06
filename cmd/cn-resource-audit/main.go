@@ -109,13 +109,13 @@ func buildAudit(assetRoot string) (auditDocument, error) {
 	}
 
 	document := auditDocument{
-		SchemaVersion: 1,
-		PresetSource: auditSource{
+		SchemaVersion:      1,
+		PresetSource:       auditSource{
 			Repository: preset.CNSourceRepository,
 			Commit:     preset.CNSourceCommit,
 			Path:       preset.CNSourcePath,
 		},
-		AssetSource: auditAssetSource{
+		AssetSource:        auditAssetSource{
 			Repository: preset.CNSourceRepository,
 			Commit:     preset.CNSourceCommit,
 			Root:       "assets/datas",
