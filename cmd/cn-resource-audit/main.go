@@ -15,13 +15,13 @@ import (
 )
 
 type auditDocument struct {
-	SchemaVersion      int              `json:"schema_version"`
-	PresetSource       auditSource      `json:"preset_source"`
-	AssetSource        auditAssetSource `json:"asset_source"`
+	SchemaVersion     int              `json:"schema_version"`
+	PresetSource      auditSource      `json:"preset_source"`
+	AssetSource       auditAssetSource `json:"asset_source"`
 	DistributionReady bool             `json:"distribution_ready"`
-	LicenseStatus      string           `json:"license_status"`
-	Summary            auditSummary     `json:"summary"`
-	Resources          []auditResource  `json:"resources"`
+	LicenseStatus     string           `json:"license_status"`
+	Summary           auditSummary     `json:"summary"`
+	Resources         []auditResource  `json:"resources"`
 }
 
 type auditSource struct {
