@@ -23,13 +23,13 @@ const (
 )
 
 var (
-	ErrInvalidConfig     = errors.New("invalid compiled configuration")
-	ErrConfigTooLarge    = errors.New("compiled configuration exceeds size limit")
-	ErrRevisionConflict  = errors.New("configuration revision conflict")
-	ErrApplyInProgress   = errors.New("configuration apply already in progress")
-	ErrRecoveryRequired  = errors.New("configuration recovery required")
-	ErrAttemptNotFound   = errors.New("apply attempt not found")
-	ErrInvalidTransition        = errors.New("invalid apply journal transition")
+	ErrInvalidConfig              = errors.New("invalid compiled configuration")
+	ErrConfigTooLarge             = errors.New("compiled configuration exceeds size limit")
+	ErrRevisionConflict           = errors.New("configuration revision conflict")
+	ErrApplyInProgress            = errors.New("configuration apply already in progress")
+	ErrRecoveryRequired           = errors.New("configuration recovery required")
+	ErrAttemptNotFound            = errors.New("apply attempt not found")
+	ErrInvalidTransition          = errors.New("invalid apply journal transition")
 	ErrInvalidGenerationMetadata = errors.New("invalid generation metadata")
 	ErrGenerationMetadataTooLarge = errors.New("generation metadata exceeds size limit")
 )
@@ -83,12 +83,12 @@ type Recovery struct {
 }
 
 type GenerationArtifacts struct {
-	ConfigJSON       []byte
-	ConfigSHA256     string
-	ManifestJSON     []byte
-	ManifestSHA256   string
-	SourceMapJSON    []byte
-	SourceMapSHA256  string
+	ConfigJSON      []byte
+	ConfigSHA256    string
+	ManifestJSON    []byte
+	ManifestSHA256  string
+	SourceMapJSON   []byte
+	SourceMapSHA256 string
 }
 
 type Store struct {

@@ -280,7 +280,6 @@ func newTestStore(t *testing.T, ctx context.Context) (*Store, string) {
 	return store, path
 }
 
-
 func TestPrepareApplyWithMetadataPersistsImmutableGenerationArtifacts(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
