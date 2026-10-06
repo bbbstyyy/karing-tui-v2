@@ -30,7 +30,7 @@ var (
 	ErrRecoveryRequired           = errors.New("configuration recovery required")
 	ErrAttemptNotFound            = errors.New("apply attempt not found")
 	ErrInvalidTransition          = errors.New("invalid apply journal transition")
-	ErrInvalidGenerationMetadata = errors.New("invalid generation metadata")
+	ErrInvalidGenerationMetadata  = errors.New("invalid generation metadata")
 	ErrGenerationMetadataTooLarge = errors.New("generation metadata exceeds size limit")
 )
 
@@ -584,12 +584,12 @@ func (s *Store) GenerationConfig(ctx context.Context, generationID int64) ([]byt
 
 func (s *Store) GenerationArtifacts(ctx context.Context, generationID int64) (GenerationArtifacts, error) {
 	var (
-		config         []byte
-		configHash     string
-		manifest       []byte
-		manifestHash   sql.NullString
-		sourceMap      []byte
-		sourceMapHash  sql.NullString
+		config        []byte
+		configHash    string
+		manifest      []byte
+		manifestHash  sql.NullString
+		sourceMap     []byte
+		sourceMapHash sql.NullString
 	)
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT
