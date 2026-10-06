@@ -23,7 +23,7 @@ const (
 var cnFS embed.FS
 
 var (
-	ErrInvalidCNPreset = errors.New("invalid CN preset snapshot")
+	ErrInvalidCNPreset          = errors.New("invalid CN preset snapshot")
 	ErrUnsupportedPresetTarget = errors.New("unsupported preset target")
 )
 
@@ -44,12 +44,12 @@ type cnDocument struct {
 }
 
 type CNGroup struct {
-	ID           string
-	Order        uint32
-	DisplayName  string
-	Enabled      bool
-	Target       domain.TargetRef
-	Source       CNRule
+	ID          string
+	Order       uint32
+	DisplayName string
+	Enabled     bool
+	Target      domain.TargetRef
+	Source      CNRule
 }
 
 type CNSnapshot struct {
