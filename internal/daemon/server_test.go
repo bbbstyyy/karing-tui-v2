@@ -114,6 +114,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["group_dns_route_binding"] ||
 		!caps.Capabilities["cn_preset_snapshot"] ||
 		!caps.Capabilities["cn_preset_resource_refs"] ||
+		!caps.Capabilities["region_append_model"] ||
 		caps.Capabilities["proxy_inbounds"] ||
 		caps.Capabilities["routing_ir"] {
 		t.Fatalf("unexpected capabilities: %+v", caps.Capabilities)

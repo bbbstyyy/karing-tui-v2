@@ -94,3 +94,6 @@ Project licensing and upstream/resource license closure are still M0 work. Do no
 
 
 Direct/Proxy target DNS lowering is now implemented through explicit runtime resolver tags and fail-closed route resolution; Group/Fallback DNS remains pending.
+
+
+CN region auto-append is now modeled independently from the 28 custom preset groups. `domain.DefaultCNRegionAppendPlan()` fixes explicit region `cn`, independent GeoSite/GeoIP switches (both default true, matching the pinned Karing settings), and DIRECT intent; its resource refs are `geosite:cn` / `geoip:cn` according to those switches. It is intentionally not lowered into route rules yet because the exact runtime insertion/priority relative to user-selected GeoSite/GeoIP entries still requires a compatibility fixture.
