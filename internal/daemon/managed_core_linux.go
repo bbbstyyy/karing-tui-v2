@@ -3,13 +3,19 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreapi"
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
@@ -22,6 +28,10 @@ var ErrNoAppliedGeneration = errors.New("no applied generation is available")
 type managedCoreState interface {
 	Snapshot(context.Context) (storage.Snapshot, error)
 	GenerationConfig(context.Context, int64) ([]byte, string, error)
+}
+
+type managedCoreArtifactState interface {
+	GenerationArtifacts(context.Context, int64) (storage.GenerationArtifacts, error)
 }
 
 type generationFiles interface {
@@ -188,6 +198,9 @@ func (m *ManagedCore) Stop(ctx context.Context) error {
 }
 
 func (m *ManagedCore) Check(ctx context.Context, generation Generation) error {
+	if err := m.verifyGenerationArtifacts(ctx, generation); err != nil {
+		return err
+	}
 	path, err := m.files.Stage(ctx, generation.ID, generation.Config, generation.SHA256)
 	if err != nil {
 		return fmt.Errorf("stage generation for check: %w", err)
@@ -276,12 +289,91 @@ func (m *ManagedCore) loadGeneration(ctx context.Context, generationID int64) (G
 }
 
 func (m *ManagedCore) stageAndBind(ctx context.Context, generation Generation) error {
+	if err := m.verifyGenerationArtifacts(ctx, generation); err != nil {
+		return err
+	}
 	path, err := m.files.Stage(ctx, generation.ID, generation.Config, generation.SHA256)
 	if err != nil {
 		return fmt.Errorf("stage generation %d: %w", generation.ID, err)
 	}
 	if err := m.binder.BindConfig(path, generation.SHA256); err != nil {
 		return fmt.Errorf("bind generation %d: %w", generation.ID, err)
+	}
+	return nil
+}
+
+func (m *ManagedCore) verifyGenerationArtifacts(ctx context.Context, generation Generation) error {
+	state, ok := m.state.(managedCoreArtifactState)
+	if !ok {
+		return nil
+	}
+	artifacts, err := state.GenerationArtifacts(ctx, generation.ID)
+	if err != nil {
+		return fmt.Errorf("load generation %d metadata: %w", generation.ID, err)
+	}
+	if len(artifacts.ManifestJSON) == 0 && len(artifacts.SourceMapJSON) == 0 &&
+		artifacts.ManifestSHA256 == "" && artifacts.SourceMapSHA256 == "" {
+		return nil
+	}
+	if len(artifacts.ManifestJSON) == 0 || len(artifacts.SourceMapJSON) == 0 ||
+		artifacts.ManifestSHA256 == "" || artifacts.SourceMapSHA256 == "" {
+		return fmt.Errorf("generation %d metadata is incomplete", generation.ID)
+	}
+	if artifacts.ConfigSHA256 != generation.SHA256 {
+		return fmt.Errorf("generation %d config hash mismatch: state=%s candidate=%s", generation.ID, artifacts.ConfigSHA256, generation.SHA256)
+	}
+	configSum := sha256.Sum256(generation.Config)
+	if hex.EncodeToString(configSum[:]) != generation.SHA256 {
+		return fmt.Errorf("generation %d candidate config bytes do not match SHA-256", generation.ID)
+	}
+	if !bytes.Equal(artifacts.ConfigJSON, generation.Config) {
+		return fmt.Errorf("generation %d candidate config bytes differ from persisted generation", generation.ID)
+	}
+	if err := verifyMetadataHash("manifest", artifacts.ManifestJSON, artifacts.ManifestSHA256); err != nil {
+		return fmt.Errorf("generation %d: %w", generation.ID, err)
+	}
+	if err := verifyMetadataHash("source map", artifacts.SourceMapJSON, artifacts.SourceMapSHA256); err != nil {
+		return fmt.Errorf("generation %d: %w", generation.ID, err)
+	}
+	if !json.Valid(artifacts.SourceMapJSON) {
+		return fmt.Errorf("generation %d source map is not valid JSON", generation.ID)
+	}
+
+	var manifest compiler.NativeManifest
+	if err := json.Unmarshal(artifacts.ManifestJSON, &manifest); err != nil {
+		return fmt.Errorf("generation %d decode native manifest: %w", generation.ID, err)
+	}
+	if manifest.SchemaID != compiler.NativeSchemaID {
+		return fmt.Errorf("generation %d manifest schema %q is unsupported", generation.ID, manifest.SchemaID)
+	}
+	if manifest.ConfigSHA256 != generation.SHA256 {
+		return fmt.Errorf("generation %d manifest config hash mismatch: %s", generation.ID, manifest.ConfigSHA256)
+	}
+	for _, ruleSet := range manifest.RuleSets {
+		extension := ""
+		switch ruleSet.Format {
+		case compiler.RuleSetFormatSource:
+			extension = ".json"
+		case compiler.RuleSetFormatBinary:
+			extension = ".srs"
+		default:
+			return fmt.Errorf("generation %d rule-set %q has unsupported format %q", generation.ID, ruleSet.Ref, ruleSet.Format)
+		}
+		if filepath.Base(ruleSet.RuntimePath) != ruleSet.SHA256+extension {
+			return fmt.Errorf("generation %d rule-set %q runtime path is not content-addressed", generation.ID, ruleSet.Ref)
+		}
+		if err := coreartifact.VerifyRuleSet(ruleSet.RuntimePath, ruleSet.SHA256); err != nil {
+			return fmt.Errorf("generation %d verify rule-set %q: %w", generation.ID, ruleSet.Ref, err)
+		}
+	}
+	return nil
+}
+
+func verifyMetadataHash(name string, content []byte, expected string) error {
+	sum := sha256.Sum256(content)
+	actual := hex.EncodeToString(sum[:])
+	if actual != expected {
+		return fmt.Errorf("%s SHA-256 mismatch: got %s want %s", name, actual, expected)
 	}
 	return nil
 }

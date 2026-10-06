@@ -4,10 +4,16 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
@@ -28,6 +34,22 @@ func (s *fakeManagedState) GenerationConfig(context.Context, int64) ([]byte, str
 		return nil, "", s.err
 	}
 	return append([]byte(nil), s.config...), s.hash, nil
+}
+
+type fakeManagedArtifactState struct {
+	*fakeManagedState
+	artifacts storage.GenerationArtifacts
+}
+
+func (s *fakeManagedArtifactState) GenerationArtifacts(context.Context, int64) (storage.GenerationArtifacts, error) {
+	if s.err != nil {
+		return storage.GenerationArtifacts{}, s.err
+	}
+	out := s.artifacts
+	out.ConfigJSON = append([]byte(nil), s.artifacts.ConfigJSON...)
+	out.ManifestJSON = append([]byte(nil), s.artifacts.ManifestJSON...)
+	out.SourceMapJSON = append([]byte(nil), s.artifacts.SourceMapJSON...)
+	return out, nil
 }
 
 type fakeGenerationFiles struct {
@@ -282,4 +304,148 @@ func TestManagedCoreApplyPreservesStoppedIntent(t *testing.T) {
 	if binder.hash != "previous" {
 		t.Fatalf("rollback did not rebind previous generation: %+v", binder)
 	}
+}
+
+
+func TestManagedCoreVerifiesPersistedGenerationMetadataBeforeCheck(t *testing.T) {
+	config := []byte("{}")
+	configHash := testSHA256(config)
+	ruleContent := []byte("rule-set-fixture")
+	ruleHash := testSHA256(ruleContent)
+	ruleDir := t.TempDir()
+	rulePath := filepath.Join(ruleDir, ruleHash+".srs")
+	if err := os.WriteFile(rulePath, ruleContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := compiler.NativeManifest{
+		SchemaID:     compiler.NativeSchemaID,
+		ConfigSHA256: configHash,
+		RuleSets: []compiler.NativeRuleSetManifest{{
+			Ref:         "acl:test",
+			RuntimeTag:  "rs-test",
+			RuntimePath: rulePath,
+			SHA256:      ruleHash,
+			Format:      compiler.RuleSetFormatBinary,
+		}},
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceMapJSON := []byte("[]")
+	state := &fakeManagedArtifactState{
+		fakeManagedState: &fakeManagedState{config: config, hash: configHash},
+		artifacts: storage.GenerationArtifacts{
+			ConfigJSON:      config,
+			ConfigSHA256:    configHash,
+			ManifestJSON:    manifestJSON,
+			ManifestSHA256:  testSHA256(manifestJSON),
+			SourceMapJSON:   sourceMapJSON,
+			SourceMapSHA256: testSHA256(sourceMapJSON),
+		},
+	}
+	files := &fakeGenerationFiles{path: "/state/generations/9/config.json"}
+	checkCalls := 0
+	check := func(_ context.Context, _, _ string, _, _ io.Writer) error {
+		checkCalls++
+		return nil
+	}
+	managed := newManagedCore(state, files, &fakeBinder{}, &fakeSupervisor{}, &fakeProbe{}, check, nil, nil)
+
+	generation := Generation{ID: 9, Config: config, SHA256: configHash}
+	if err := managed.Check(context.Background(), generation); err != nil {
+		t.Fatal(err)
+	}
+	if files.stageCount != 1 || checkCalls != 1 {
+		t.Fatalf("valid metadata did not reach core check: stages=%d checks=%d", files.stageCount, checkCalls)
+	}
+
+	if err := os.WriteFile(rulePath, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := managed.Check(context.Background(), generation); err == nil {
+		t.Fatal("tampered rule-set unexpectedly passed generation verification")
+	}
+	if files.stageCount != 1 || checkCalls != 1 {
+		t.Fatalf("tampered metadata reached staging/check: stages=%d checks=%d", files.stageCount, checkCalls)
+	}
+}
+
+func TestManagedCoreRejectsPersistedMetadataHashMismatchBeforeStart(t *testing.T) {
+	id := int64(7)
+	config := []byte("{}")
+	configHash := testSHA256(config)
+	manifest := compiler.NativeManifest{
+		SchemaID:     compiler.NativeSchemaID,
+		ConfigSHA256: configHash,
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceMapJSON := []byte("[]")
+	state := &fakeManagedArtifactState{
+		fakeManagedState: &fakeManagedState{
+			snapshot: storage.Snapshot{AppliedGenerationID: &id},
+			config:   config,
+			hash:     configHash,
+		},
+		artifacts: storage.GenerationArtifacts{
+			ConfigJSON:      config,
+			ConfigSHA256:    configHash,
+			ManifestJSON:    manifestJSON,
+			ManifestSHA256:  testSHA256([]byte("different manifest")),
+			SourceMapJSON:   sourceMapJSON,
+			SourceMapSHA256: testSHA256(sourceMapJSON),
+		},
+	}
+	files := &fakeGenerationFiles{path: "/state/generations/7/config.json"}
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
+	managed := newManagedCore(state, files, &fakeBinder{}, supervisor, &fakeProbe{}, nil, nil, nil)
+
+	if err := managed.Start(context.Background()); err == nil {
+		t.Fatal("manifest hash mismatch unexpectedly started core")
+	}
+	if files.stageCount != 0 || supervisor.starts != 0 {
+		t.Fatalf("invalid metadata reached staging/start: stages=%d starts=%d", files.stageCount, supervisor.starts)
+	}
+}
+
+func TestManagedCoreAllowsLegacyGenerationWithoutMetadata(t *testing.T) {
+	config := []byte("{}")
+	hash := testSHA256(config)
+	state := &fakeManagedArtifactState{
+		fakeManagedState: &fakeManagedState{config: config, hash: hash},
+		artifacts: storage.GenerationArtifacts{
+			ConfigJSON:   config,
+			ConfigSHA256: hash,
+		},
+	}
+	files := &fakeGenerationFiles{path: "/state/generations/3/config.json"}
+	checkCalls := 0
+	managed := newManagedCore(
+		state,
+		files,
+		&fakeBinder{},
+		&fakeSupervisor{},
+		&fakeProbe{},
+		func(_ context.Context, _, _ string, _, _ io.Writer) error {
+			checkCalls++
+			return nil
+		},
+		nil,
+		nil,
+	)
+	if err := managed.Check(context.Background(), Generation{ID: 3, Config: config, SHA256: hash}); err != nil {
+		t.Fatal(err)
+	}
+	if files.stageCount != 1 || checkCalls != 1 {
+		t.Fatalf("legacy generation was not preserved: stages=%d checks=%d", files.stageCount, checkCalls)
+	}
+}
+
+func testSHA256(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }
