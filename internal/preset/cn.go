@@ -23,7 +23,7 @@ const (
 var cnFS embed.FS
 
 var (
-	ErrInvalidCNPreset         = errors.New("invalid CN preset snapshot")
+	ErrInvalidCNPreset          = errors.New("invalid CN preset snapshot")
 	ErrUnsupportedPresetTarget = errors.New("unsupported preset target")
 )
 
@@ -149,6 +149,24 @@ func presetTarget(value string) (domain.TargetRef, error) {
 	default:
 		return domain.TargetRef{}, fmt.Errorf("%w: %q", ErrUnsupportedPresetTarget, value)
 	}
+}
+
+func (s CNSnapshot) RuleSetRefs(enabledOnly bool) []string {
+	seen := make(map[string]struct{})
+	refs := make([]string, 0)
+	for _, group := range s.Groups {
+		if enabledOnly && !group.Enabled {
+			continue
+		}
+		for _, ref := range group.Source.RuleSetBuildIn {
+			if _, exists := seen[ref]; exists {
+				continue
+			}
+			seen[ref] = struct{}{}
+			refs = append(refs, ref)
+		}
+	}
+	return refs
 }
 
 func cloneCNRule(rule CNRule) CNRule {

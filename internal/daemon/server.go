@@ -243,6 +243,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"proxy_inbounds":            false,
 				"routing_ir":                false,
 				"cn_preset_snapshot":        true,
+				"cn_preset_resource_refs":   true,
 				"cn_preset":                 false,
 				"subscriptions":             false,
 				"tui":                       false,

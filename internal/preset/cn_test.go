@@ -237,3 +237,66 @@ func cnExpectedID(index int) string {
 		"cn-22", "cn-23", "cn-24", "cn-25", "cn-26", "cn-27", "cn-28",
 	}[index]
 }
+
+func TestCNRuleSetClosurePreservesFirstUseAcrossAllGroups(t *testing.T) {
+	snapshot, err := LoadCN()
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := snapshot.RuleSetRefs(false)
+	if len(all) != 66 {
+		t.Fatalf("full rule-set closure = %d, want 66", len(all))
+	}
+	wantPrefix := []string{
+		"acl:BanAD",
+		"geosite:category-ads",
+		"acl:BanProgramAD",
+		"acl:BanADCompany",
+		"geosite:malware",
+		"geoip:malware",
+	}
+	if !reflect.DeepEqual(all[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("rule-set closure prefix = %#v, want %#v", all[:len(wantPrefix)], wantPrefix)
+	}
+	wantSuffix := []string{
+		"geosite:geolocation-!cn",
+		"acl:ProxyGFWlist",
+		"acl:ProxyMedia",
+	}
+	if !reflect.DeepEqual(all[len(all)-len(wantSuffix):], wantSuffix) {
+		t.Fatalf("rule-set closure suffix = %#v, want %#v", all[len(all)-len(wantSuffix):], wantSuffix)
+	}
+}
+
+func TestCNActiveRuleSetClosureUsesOnlySixDefaultEnabledGroups(t *testing.T) {
+	snapshot, err := LoadCN()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot.RuleSetRefs(true)
+	want := []string{
+		"geosite:apple",
+		"geosite:apple@ads",
+		"geosite:apple-dev",
+		"geosite:apple-pki",
+		"geosite:apple-update",
+		"geosite:google-play",
+		"geosite:google",
+		"geoip:google",
+		"acl:BilibiliHMT",
+		"acl:Bilibili",
+		"acl:ChinaIp",
+		"acl:ChinaDomain",
+		"acl:ChinaCompanyIp",
+		"acl:UnBan",
+		"acl:SteamCN",
+		"acl:Download",
+		"acl:ChinaMedia",
+		"geosite:geolocation-!cn",
+		"acl:ProxyGFWlist",
+		"acl:ProxyMedia",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("active rule-set closure = %#v, want %#v", got, want)
+	}
+}
