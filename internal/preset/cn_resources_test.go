@@ -104,10 +104,10 @@ func TestCNOfflineResourcePlanRejectsWrongSnapshotProvenance(t *testing.T) {
 
 func TestCNResourceRelativePathPreservesQualifiers(t *testing.T) {
 	cases := map[string]string{
-		"geosite:apple@ads":          "geosite/apple@ads.srs",
-		"geosite:geolocation-!cn":    "geosite/geolocation-!cn.srs",
-		"geoip:cn":                   "geoip/cn.srs",
-		"acl:ChinaCompanyIp":         "acl/ChinaCompanyIp.srs",
+		"geosite:apple@ads":       "geosite/apple@ads.srs",
+		"geosite:geolocation-!cn": "geosite/geolocation-!cn.srs",
+		"geoip:cn":                "geoip/cn.srs",
+		"acl:ChinaCompanyIp":      "acl/ChinaCompanyIp.srs",
 	}
 	for ref, want := range cases {
 		got, err := cnResourceRelativePath(ref)

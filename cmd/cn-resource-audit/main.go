@@ -15,13 +15,13 @@ import (
 )
 
 type auditDocument struct {
-	SchemaVersion      int                  `json:"schema_version"`
-	PresetSource       auditSource          `json:"preset_source"`
-	AssetSource        auditAssetSource     `json:"asset_source"`
-	DistributionReady bool                 `json:"distribution_ready"`
-	LicenseStatus      string               `json:"license_status"`
-	Summary            auditSummary         `json:"summary"`
-	Resources          []auditResource       `json:"resources"`
+	SchemaVersion      int              `json:"schema_version"`
+	PresetSource       auditSource      `json:"preset_source"`
+	AssetSource        auditAssetSource `json:"asset_source"`
+	DistributionReady bool             `json:"distribution_ready"`
+	LicenseStatus      string           `json:"license_status"`
+	Summary            auditSummary     `json:"summary"`
+	Resources          []auditResource  `json:"resources"`
 }
 
 type auditSource struct {
@@ -37,9 +37,9 @@ type auditAssetSource struct {
 }
 
 type auditSummary struct {
-	LogicalRefs    int `json:"logical_refs"`
-	Files          int `json:"files"`
-	UpstreamAbsent int `json:"upstream_absent"`
+	LogicalRefs    int   `json:"logical_refs"`
+	Files          int   `json:"files"`
+	UpstreamAbsent int   `json:"upstream_absent"`
 	TotalBytes     int64 `json:"total_bytes"`
 }
 
