@@ -81,6 +81,18 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	regionGeoSiteContent := []byte(`{"version":4,"rules":[{"domain_suffix":["region-cn.invalid"]}]}`)
+	regionGeoSiteSHA256 := fmt.Sprintf("%x", sha256.Sum256(regionGeoSiteContent))
+	regionGeoSitePath, _, err := ruleSets.PutRuleSet(ctx, bytes.NewReader(regionGeoSiteContent), regionGeoSiteSHA256, "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	regionGeoIPContent := []byte(`{"version":4,"rules":[{"ip_cidr":["198.18.0.0/15"]}]}`)
+	regionGeoIPSHA256 := fmt.Sprintf("%x", sha256.Sum256(regionGeoIPContent))
+	regionGeoIPPath, _, err := ruleSets.PutRuleSet(ctx, bytes.NewReader(regionGeoIPContent), regionGeoIPSHA256, "source")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	schemaCompiler, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
 		Inbounds:       inbounds,
@@ -114,7 +126,12 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatal("managed apply runtime was not composed")
 	}
 
-	firstDeclaration, err := store.CommitDeclaration(ctx, 0, integrationDeclarationDocument("warn", ruleSetSHA256), "integration:first")
+	firstDeclaration, err := store.CommitDeclaration(
+		ctx,
+		0,
+		integrationDeclarationDocument("warn", ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256),
+		"integration:first",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +145,7 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		firstArtifact.Manifest.DeclarationSHA256 != firstDeclaration.SHA256 {
 		t.Fatalf("first declaration provenance mismatch: artifact=%+v declaration=%+v", firstArtifact.Manifest, firstDeclaration)
 	}
-	if len(firstArtifact.Manifest.RuleSets) != 1 {
+	if len(firstArtifact.Manifest.RuleSets) != 3 {
 		t.Fatalf("first declaration rule-set closure = %+v", firstArtifact.Manifest.RuleSets)
 	}
 	firstRuleSet := firstArtifact.Manifest.RuleSets[0]
@@ -137,6 +154,27 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		firstRuleSet.Format != compiler.RuleSetFormatSource ||
 		firstRuleSet.RuntimePath != ruleSetPath {
 		t.Fatalf("first declaration rule-set binding mismatch: %+v", firstRuleSet)
+	}
+	regionGeoSiteRuleSet := firstArtifact.Manifest.RuleSets[1]
+	if regionGeoSiteRuleSet.Ref != "geosite:cn" ||
+		regionGeoSiteRuleSet.SHA256 != regionGeoSiteSHA256 ||
+		regionGeoSiteRuleSet.Format != compiler.RuleSetFormatSource ||
+		regionGeoSiteRuleSet.RuntimePath != regionGeoSitePath {
+		t.Fatalf("region GeoSite rule-set binding mismatch: %+v", regionGeoSiteRuleSet)
+	}
+	regionGeoIPRuleSet := firstArtifact.Manifest.RuleSets[2]
+	if regionGeoIPRuleSet.Ref != "geoip:cn" ||
+		regionGeoIPRuleSet.SHA256 != regionGeoIPSHA256 ||
+		regionGeoIPRuleSet.Format != compiler.RuleSetFormatSource ||
+		regionGeoIPRuleSet.RuntimePath != regionGeoIPPath {
+		t.Fatalf("region GeoIP rule-set binding mismatch: %+v", regionGeoIPRuleSet)
+	}
+	if len(firstArtifact.SourceMap) != 4 ||
+		firstArtifact.SourceMap[0].GroupID != "integration-rule-set" ||
+		firstArtifact.SourceMap[1].GroupID != "region:auto-geosite:cn" ||
+		firstArtifact.SourceMap[2].GroupID != "region:auto-geoip:cn" ||
+		!firstArtifact.SourceMap[3].Final {
+		t.Fatalf("region append source-map order mismatch: %+v", firstArtifact.SourceMap)
 	}
 
 	snapshot, err := store.Snapshot(ctx)
@@ -158,7 +196,7 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatalf("strict compiler apply did not persist metadata: %+v", firstGeneration)
 	}
 
-	if err := os.Remove(ruleSetPath); err != nil {
+	if err := os.Remove(regionGeoSitePath); err != nil {
 		t.Fatal(err)
 	}
 	missingResourceCtx, missingResourceCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -170,8 +208,8 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	if got := managed.Snapshot(); got.State != core.StateStopped || got.PID != 0 {
 		t.Fatalf("missing rule-set resource disturbed stopped core state: %+v", got)
 	}
-	if _, _, err := ruleSets.PutRuleSet(ctx, bytes.NewReader(ruleSetContent), ruleSetSHA256, "source"); err != nil {
-		t.Fatalf("restore missing rule-set resource: %v", err)
+	if _, _, err := ruleSets.PutRuleSet(ctx, bytes.NewReader(regionGeoSiteContent), regionGeoSiteSHA256, "source"); err != nil {
+		t.Fatalf("restore missing region GeoSite resource: %v", err)
 	}
 
 	startCtx, startCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -214,7 +252,12 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatalf("failed pre-activation check disturbed running core: before=%+v after=%+v", restarted, afterBad)
 	}
 
-	secondDeclaration, err := store.CommitDeclaration(ctx, firstDeclaration.Revision, integrationDeclarationDocument("error", ruleSetSHA256), "integration:second")
+	secondDeclaration, err := store.CommitDeclaration(
+		ctx,
+		firstDeclaration.Revision,
+		integrationDeclarationDocument("error", ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256),
+		"integration:second",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,12 +309,20 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	}
 }
 
-func integrationDeclarationDocument(logLevel, ruleSetSHA256 string) []byte {
+func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256 string) []byte {
 	return []byte(fmt.Sprintf(`{
   "schema_version":1,
   "log_level":%q,
   "rule_sets":[{
     "ref":"integration:example",
+    "sha256":%q,
+    "format":"source"
+  },{
+    "ref":"geosite:cn",
+    "sha256":%q,
+    "format":"source"
+  },{
+    "ref":"geoip:cn",
     "sha256":%q,
     "format":"source"
   }],
@@ -291,6 +342,7 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256 string) []byte {
     "custom":[]
   },
   "routing":{
+    "region_append":{"region_code":"cn","geosite_enabled":true,"geoip_enabled":true},
     "custom":[{
       "id":"integration-rule-set",
       "order":1,
@@ -313,7 +365,7 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256 string) []byte {
     }],
     "outbound_profile_id":"integration-outbound-dns"
   }
-}`, logLevel, ruleSetSHA256))
+}`, logLevel, ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256))
 }
 
 func reserveLoopbackPorts(t *testing.T, count int) []uint16 {
