@@ -97,3 +97,6 @@ Direct/Proxy target DNS lowering is now implemented through explicit runtime res
 
 
 CN region auto-append is now modeled independently from the 28 custom preset groups. `domain.DefaultCNRegionAppendPlan()` fixes explicit region `cn`, independent GeoSite/GeoIP switches (both default true, matching the pinned Karing settings), and DIRECT intent; its resource refs are `geosite:cn` / `geoip:cn` according to those switches. It is intentionally not lowered into route rules yet because the exact runtime insertion/priority relative to user-selected GeoSite/GeoIP entries still requires a compatibility fixture.
+
+
+CN preset user overrides now have a typed overlay model. Overrides are keyed by the project-owned stable CN group ID and may change only enabled state, typed route target, and optional DNS profile binding. Applying overrides preserves group order, display name/emoji, and a deep copy of the exact upstream match source; unknown IDs, duplicate overrides, invalid targets, and unsafe DNS profile identifiers fail closed.

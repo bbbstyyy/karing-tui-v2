@@ -244,6 +244,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_ir":                false,
 				"cn_preset_snapshot":        true,
 				"cn_preset_resource_refs":   true,
+				"cn_preset_overrides":       true,
 				"region_append_model":       true,
 				"cn_preset":                 false,
 				"subscriptions":             false,
