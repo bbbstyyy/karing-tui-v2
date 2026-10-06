@@ -23,7 +23,7 @@ const (
 var cnFS embed.FS
 
 var (
-	ErrInvalidCNPreset          = errors.New("invalid CN preset snapshot")
+	ErrInvalidCNPreset         = errors.New("invalid CN preset snapshot")
 	ErrUnsupportedPresetTarget = errors.New("unsupported preset target")
 )
 
