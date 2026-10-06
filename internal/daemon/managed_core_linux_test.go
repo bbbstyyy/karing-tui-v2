@@ -226,7 +226,6 @@ func TestManagedCoreCheckStagesExactGeneration(t *testing.T) {
 	}
 }
 
-
 func TestManagedCoreCheckPrunesStagedGenerationsWithProtectedState(t *testing.T) {
 	applied := int64(5)
 	lastKnownGood := int64(4)
