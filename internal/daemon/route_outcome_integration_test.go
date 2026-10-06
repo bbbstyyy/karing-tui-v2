@@ -1,0 +1,406 @@
+//go:build integration && linux
+
+package daemon
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
+	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
+	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
+	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
+)
+
+func TestManagedCoreRealRouteOutcomes(t *testing.T) {
+	corePath := os.Getenv("KARING_TUI_TEST_CORE")
+	if corePath == "" {
+		t.Skip("KARING_TUI_TEST_CORE is not set")
+	}
+
+	stateDir := t.TempDir()
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	store, err := storage.Open(ctx, filepath.Join(stateDir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	proxyAddress, proxyHits, closeProxy := startRejectingHTTPProxy(t)
+	defer closeProxy()
+
+	ports := reserveLoopbackPorts(t, 4)
+	inbounds := domain.InboundSet{
+		Listen:       netip.MustParseAddr("127.0.0.1"),
+		RulePort:     ports[0],
+		DirectPort:   ports[1],
+		SelectedPort: ports[2],
+	}
+	const secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	controlEndpoint := fmt.Sprintf("http://127.0.0.1:%d", ports[3])
+
+	policy := core.DefaultPolicy()
+	policy.InitialBackoff = 50 * time.Millisecond
+	policy.MaxBackoff = 200 * time.Millisecond
+	policy.FailureWindow = 10 * time.Second
+	policy.MaxFailures = 4
+	policy.ReadyTimeout = 5 * time.Second
+	policy.StopTimeout = 3 * time.Second
+
+	managed, err := NewManagedCore(store, ManagedCoreOptions{
+		Executable:      corePath,
+		StateRoot:       filepath.Join(stateDir, "core"),
+		ControlEndpoint: controlEndpoint,
+		ControlSecret:   secret,
+		Inbounds:        inbounds,
+		Policy:          policy,
+		LogCapacity:     64 << 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ruleSets, err := coreartifact.NewStore(filepath.Join(stateDir, "core"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleSetContent := []byte(`{"version":4,"rules":[{"ip_cidr":["127.0.0.1/32"]}]}`)
+	ruleSetSHA256 := fmt.Sprintf("%x", sha256.Sum256(ruleSetContent))
+	if _, _, err := ruleSets.PutRuleSet(ctx, bytes.NewReader(ruleSetContent), ruleSetSHA256, "source"); err != nil {
+		t.Fatal(err)
+	}
+
+	schemaCompiler, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
+		Inbounds:       inbounds,
+		ControlAddress: netip.AddrPortFrom(inbounds.Listen, ports[3]),
+		ControlSecret:  secret,
+		RuleSets:       ruleSets,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	declarations, err := NewDeclarationCompileCoordinator(store, schemaCompiler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, runDone, runCancel, err := startServerRuntimeWithDeclarations(context.Background(), store, managed, declarations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		runCancel()
+		select {
+		case err := <-runDone:
+			if err != nil {
+				t.Errorf("managed core supervisor shutdown: %v; stderr=%s", err, managed.StderrTail())
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("managed core supervisor did not shut down")
+		}
+	}()
+
+	committed, err := store.CommitDeclaration(
+		ctx,
+		0,
+		routeOutcomeDeclaration(ruleSetSHA256, proxyAddress.Port()),
+		"integration:route-outcomes",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyCtx, applyCancel := context.WithTimeout(context.Background(), 40*time.Second)
+	_, _, err = runtime.ApplyDeclarationRevision(applyCtx, committed.Revision, 0)
+	applyCancel()
+	if err != nil {
+		t.Fatalf("apply route-outcome declaration: %v; stderr=%s", err, managed.StderrTail())
+	}
+
+	startCtx, startCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := runtime.Start(startCtx); err != nil {
+		startCancel()
+		t.Fatalf("start route-outcome generation: %v; stderr=%s", err, managed.StderrTail())
+	}
+	startCancel()
+	waitManagedCoreState(t, managed, 5*time.Second, func(snapshot core.Snapshot) bool {
+		return snapshot.State == core.StateRunning && snapshot.PID > 0
+	})
+
+	targetAddress, targetHits, closeTarget := startRouteOutcomeTarget(t)
+	defer closeTarget()
+
+	ruleAddress := netip.AddrPortFrom(inbounds.Listen, inbounds.RulePort)
+	directAddress := netip.AddrPortFrom(inbounds.Listen, inbounds.DirectPort)
+	selectedAddress := netip.AddrPortFrom(inbounds.Listen, inbounds.SelectedPort)
+
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	conn, err := socks5Connect(connectCtx, ruleAddress, targetAddress)
+	connectCancel()
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("Rule inbound unexpectedly reached loopback target despite BLOCK rule")
+	}
+	assertNoRouteOutcomeSignal(t, targetHits, 100*time.Millisecond, "Rule inbound target")
+	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "Rule inbound selected proxy")
+
+	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
+	conn, err = socks5Connect(connectCtx, directAddress, targetAddress)
+	connectCancel()
+	if err != nil {
+		t.Fatalf("Direct inbound did not bypass Rule routing: %v; stderr=%s", err, managed.StderrTail())
+	}
+	var marker [2]byte
+	if _, err := io.ReadFull(conn, marker[:]); err != nil {
+		_ = conn.Close()
+		t.Fatalf("read Direct inbound target marker: %v", err)
+	}
+	_ = conn.Close()
+	if marker != [2]byte{'o', 'k'} {
+		t.Fatalf("Direct inbound target marker = %q", marker)
+	}
+	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "Direct inbound target")
+	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "Direct inbound selected proxy")
+
+	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
+	conn, err = socks5Connect(connectCtx, selectedAddress, targetAddress)
+	connectCancel()
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("Selected inbound unexpectedly bypassed CurrentSelected proxy")
+	}
+	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "Selected inbound current proxy")
+	assertNoRouteOutcomeSignal(t, targetHits, 100*time.Millisecond, "Selected inbound direct target")
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := runtime.Stop(stopCtx); err != nil {
+		stopCancel()
+		t.Fatalf("stop route-outcome core: %v", err)
+	}
+	stopCancel()
+	waitManagedCoreState(t, managed, 3*time.Second, func(snapshot core.Snapshot) bool {
+		return snapshot.State == core.StateStopped && snapshot.PID == 0
+	})
+}
+
+func routeOutcomeDeclaration(ruleSetSHA256 string, proxyPort uint16) []byte {
+	return []byte(fmt.Sprintf(`{
+  "schema_version":1,
+  "log_level":"warn",
+  "rule_sets":[{
+    "ref":"integration:block-loopback",
+    "sha256":%q,
+    "format":"source"
+  }],
+  "nodes":[{
+    "profile_id":"route-outcome-profile",
+    "node_id":"route-outcome-node",
+    "type":"http",
+    "server":"127.0.0.1",
+    "port":%d,
+    "http":{}
+  }],
+  "selection":{
+    "current":{
+      "members":[{"kind":"specific_node","profile_id":"route-outcome-profile","node_id":"route-outcome-node"}],
+      "default":{"kind":"specific_node","profile_id":"route-outcome-profile","node_id":"route-outcome-node"}
+    },
+    "custom":[]
+  },
+  "routing":{
+    "custom":[{
+      "id":"block-loopback",
+      "order":1,
+      "enabled":true,
+      "target":{"kind":"block"},
+      "match":{"op":"atom","predicate":{"kind":"rule_set","value":"integration:block-loopback"}}
+    }],
+    "geosite":[],
+    "geoip":[],
+    "acl":[],
+    "final":{"kind":"direct"}
+  },
+  "dns":{
+    "profiles":[{
+      "id":"route-outcome-dns",
+      "role":"outbound",
+      "transport":"udp",
+      "server":"127.0.0.1",
+      "port":9
+    }],
+    "outbound_profile_id":"route-outcome-dns"
+  }
+}`, ruleSetSHA256, proxyPort))
+}
+
+func socks5Connect(ctx context.Context, inbound, target netip.AddrPort) (net.Conn, error) {
+	if !target.Addr().Is4() {
+		return nil, errors.New("route-outcome SOCKS helper requires an IPv4 target")
+	}
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp", inbound.String())
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (net.Conn, error) {
+		_ = conn.Close()
+		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return fail(err)
+		}
+	}
+
+	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		return fail(err)
+	}
+	var greeting [2]byte
+	if _, err := io.ReadFull(conn, greeting[:]); err != nil {
+		return fail(err)
+	}
+	if greeting != [2]byte{0x05, 0x00} {
+		return fail(fmt.Errorf("unexpected SOCKS5 greeting response %v", greeting))
+	}
+
+	ip := target.Addr().As4()
+	request := []byte{
+		0x05, 0x01, 0x00, 0x01,
+		ip[0], ip[1], ip[2], ip[3],
+		byte(target.Port() >> 8), byte(target.Port()),
+	}
+	if _, err := conn.Write(request); err != nil {
+		return fail(err)
+	}
+
+	var response [4]byte
+	if _, err := io.ReadFull(conn, response[:]); err != nil {
+		return fail(err)
+	}
+	if response[0] != 0x05 {
+		return fail(fmt.Errorf("unexpected SOCKS5 response version %d", response[0]))
+	}
+	if response[1] != 0x00 {
+		return fail(fmt.Errorf("SOCKS5 CONNECT rejected with code 0x%02x", response[1]))
+	}
+
+	var addressBytes int
+	switch response[3] {
+	case 0x01:
+		addressBytes = 4
+	case 0x04:
+		addressBytes = 16
+	case 0x03:
+		var length [1]byte
+		if _, err := io.ReadFull(conn, length[:]); err != nil {
+			return fail(err)
+		}
+		addressBytes = int(length[0])
+	default:
+		return fail(fmt.Errorf("unexpected SOCKS5 bound address type 0x%02x", response[3]))
+	}
+	if _, err := io.CopyN(io.Discard, conn, int64(addressBytes+2)); err != nil {
+		return fail(err)
+	}
+	return conn, nil
+}
+
+func startRejectingHTTPProxy(t *testing.T) (netip.AddrPort, <-chan struct{}, func()) {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits := make(chan struct{}, 8)
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			select {
+			case hits <- struct{}{}:
+			default:
+			}
+			http.Error(w, "route-outcome proxy rejects CONNECT", http.StatusBadGateway)
+		}),
+	}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	address, err := netip.ParseAddrPort(listener.Addr().String())
+	if err != nil {
+		_ = server.Close()
+		t.Fatal(err)
+	}
+	var once sync.Once
+	closeFn := func() {
+		once.Do(func() { _ = server.Close() })
+	}
+	return address, hits, closeFn
+}
+
+func startRouteOutcomeTarget(t *testing.T) (netip.AddrPort, <-chan struct{}, func()) {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits := make(chan struct{}, 8)
+	var once sync.Once
+	closeFn := func() {
+		once.Do(func() { _ = listener.Close() })
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			select {
+			case hits <- struct{}{}:
+			default:
+			}
+			_, _ = conn.Write([]byte{'o', 'k'})
+			_ = conn.Close()
+		}
+	}()
+	address, err := netip.ParseAddrPort(listener.Addr().String())
+	if err != nil {
+		closeFn()
+		t.Fatal(err)
+	}
+	return address, hits, closeFn
+}
+
+func assertRouteOutcomeSignal(t *testing.T, ch <-chan struct{}, timeout time.Duration, label string) {
+	t.Helper()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ch:
+	case <-timer.C:
+		t.Fatalf("timed out waiting for %s", label)
+	}
+}
+
+func assertNoRouteOutcomeSignal(t *testing.T, ch <-chan struct{}, window time.Duration, label string) {
+	t.Helper()
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	select {
+	case <-ch:
+		t.Fatalf("unexpected %s", label)
+	case <-timer.C:
+	}
+}
