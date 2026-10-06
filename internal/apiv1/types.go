@@ -76,12 +76,12 @@ type DeclarationApplyRequest struct {
 }
 
 type DeclarationApplyResponse struct {
-	DeclarationRevision uint64 `json:"declaration_revision"`
-	DeclarationSHA256   string `json:"declaration_sha256"`
-	NativeSchemaID      string `json:"native_schema_id"`
-	ConfigSHA256        string `json:"config_sha256"`
-	AttemptID           int64  `json:"attempt_id"`
-	GenerationID        int64  `json:"generation_id"`
-	BaseConfigRevision  uint64 `json:"base_config_revision"`
+	DeclarationRevision  uint64 `json:"declaration_revision"`
+	DeclarationSHA256    string `json:"declaration_sha256"`
+	NativeSchemaID       string `json:"native_schema_id"`
+	ConfigSHA256         string `json:"config_sha256"`
+	AttemptID            int64  `json:"attempt_id"`
+	GenerationID         int64  `json:"generation_id"`
+	BaseConfigRevision   uint64 `json:"base_config_revision"`
 	TargetConfigRevision uint64 `json:"target_config_revision"`
 }

@@ -157,7 +157,6 @@ func TestDeclarationCompilePreviewRequiresCompilerRuntime(t *testing.T) {
 	}
 }
 
-
 func TestDeclarationApplyAPICompilesAndCommitsExplicitRevision(t *testing.T) {
 	ctx := context.Background()
 	store := openServerTestStore(t, ctx)
