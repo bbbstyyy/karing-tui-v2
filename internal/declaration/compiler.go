@@ -30,12 +30,13 @@ type RuleSetResource struct {
 }
 
 type Model struct {
-	LogLevel  string
-	RuleSets  []RuleSetResource
-	Nodes     []domain.Node
-	Selection domain.SelectionPlan
-	Routing   domain.RoutingPlan
-	DNS       domain.DNSPlan
+	LogLevel     string
+	RuleSets     []RuleSetResource
+	Nodes        []domain.Node
+	Selection    domain.SelectionPlan
+	Routing      domain.RoutingPlan
+	RegionAppend *domain.RegionAppendPlan
+	DNS          domain.DNSPlan
 }
 
 type RuleSetResolver interface {
@@ -174,21 +175,33 @@ func ParseV1(document []byte) (Model, error) {
 	if err := routing.Validate(); err != nil {
 		return Model{}, fmt.Errorf("%w: routing: %v", ErrInvalidDocument, err)
 	}
+	regionAppend, err := wire.Routing.regionAppendPlan()
+	if err != nil {
+		return Model{}, err
+	}
+	effectiveRouting := routing
+	if regionAppend != nil {
+		effectiveRouting, err = domain.ApplyRegionAppend(routing, *regionAppend)
+		if err != nil {
+			return Model{}, fmt.Errorf("%w: routing.region_append: %v", ErrInvalidDocument, err)
+		}
+	}
 	dns, err := wire.DNS.toDomain()
 	if err != nil {
 		return Model{}, err
 	}
-	if err := dns.ValidateActiveRouteBindings(routing); err != nil {
+	if err := dns.ValidateActiveRouteBindings(effectiveRouting); err != nil {
 		return Model{}, fmt.Errorf("%w: DNS: %v", ErrInvalidDocument, err)
 	}
 
 	return Model{
-		LogLevel:  wire.LogLevel,
-		RuleSets:  ruleSets,
-		Nodes:     nodes,
-		Selection: selection,
-		Routing:   routing,
-		DNS:       dns,
+		LogLevel:     wire.LogLevel,
+		RuleSets:     ruleSets,
+		Nodes:        nodes,
+		Selection:    selection,
+		Routing:      routing,
+		RegionAppend: regionAppend,
+		DNS:          dns,
 	}, nil
 }
 
@@ -221,7 +234,14 @@ func compileSemantic(
 	if err != nil {
 		return semanticCompilation{}, fmt.Errorf("%w: target catalog: %v", ErrInvalidDocument, err)
 	}
-	routing, err := compiler.CompileRouting(model.Routing, targets)
+	routingPlan := model.Routing
+	if model.RegionAppend != nil {
+		routingPlan, err = domain.ApplyRegionAppend(model.Routing, *model.RegionAppend)
+		if err != nil {
+			return semanticCompilation{}, fmt.Errorf("%w: routing.region_append: %v", ErrInvalidDocument, err)
+		}
+	}
+	routing, err := compiler.CompileRouting(routingPlan, targets)
 	if err != nil {
 		return semanticCompilation{}, fmt.Errorf("%w: routing compile: %v", ErrInvalidDocument, err)
 	}
@@ -230,7 +250,7 @@ func compileSemantic(
 		return semanticCompilation{}, err
 	}
 
-	dns, err := compiler.CompileRuntimeDNSForRouting(model.DNS, model.Routing, targets)
+	dns, err := compiler.CompileRuntimeDNSForRouting(model.DNS, routingPlan, targets)
 	if err != nil {
 		return semanticCompilation{}, fmt.Errorf("%w: DNS compile: %v", ErrInvalidDocument, err)
 	}

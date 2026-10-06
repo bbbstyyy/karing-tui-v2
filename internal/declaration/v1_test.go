@@ -3,7 +3,9 @@ package declaration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -195,11 +197,127 @@ func TestValidateV1DisabledLayerDoesNotRequireRuleSetClosure(t *testing.T) {
 	}
 }
 
+func TestParseV1PreservesRegionAppendPolicySeparately(t *testing.T) {
+	document := declarationWithRegionAppend(true, true, false, false)
+	model, err := ParseV1(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.RegionAppend == nil {
+		t.Fatal("region append policy was not preserved")
+	}
+	if model.RegionAppend.RegionCode != "cn" ||
+		!model.RegionAppend.GeoSiteEnabled ||
+		!model.RegionAppend.GeoIPEnabled ||
+		model.RegionAppend.Target.Kind != domain.TargetDirect {
+		t.Fatalf("unexpected region append policy: %+v", model.RegionAppend)
+	}
+	if len(model.Routing.GeoSite) != 0 || len(model.Routing.GeoIP) != 0 {
+		t.Fatalf("region append was prematurely materialized into stored routing: %+v", model.Routing)
+	}
+}
+
+func TestValidateV1RegionAppendParticipatesInActiveRuleSetClosure(t *testing.T) {
+	document := declarationWithRegionAppend(true, true, true, true)
+	if err := ValidateV1(document); err != nil {
+		t.Fatal(err)
+	}
+
+	model, err := ParseV1(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := compileSemantic(context.Background(), model, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := compiled.routing.RuleSetRefs, []string{"geosite:cn", "geoip:cn"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("region rule-set refs = %#v, want %#v", got, want)
+	}
+	if len(compiled.routing.SourceMap) != 3 ||
+		compiled.routing.SourceMap[0].GroupID != "region:auto-geosite:cn" ||
+		compiled.routing.SourceMap[0].Layer != domain.LayerGeoSite ||
+		compiled.routing.SourceMap[1].GroupID != "region:auto-geoip:cn" ||
+		compiled.routing.SourceMap[1].Layer != domain.LayerGeoIP ||
+		!compiled.routing.SourceMap[2].Final {
+		t.Fatalf("unexpected region source map: %+v", compiled.routing.SourceMap)
+	}
+}
+
+func TestValidateV1RegionAppendRequiresOnlyActiveResources(t *testing.T) {
+	if err := ValidateV1(declarationWithRegionAppend(true, true, true, false)); !errors.Is(err, ErrRuleSetResourceMissing) {
+		t.Fatalf("missing active GeoIP region resource error = %v", err)
+	}
+
+	if err := ValidateV1(declarationWithRegionAppend(true, false, true, false)); err != nil {
+		t.Fatalf("disabled region GeoIP unexpectedly required resource metadata: %v", err)
+	}
+
+	document := string(declarationWithRegionAppend(true, false, false, false))
+	document = strings.Replace(
+		document,
+		`"routing":{`,
+		`"routing":{
+    "geosite_enabled":false,`,
+		1,
+	)
+	if err := ValidateV1([]byte(document)); err != nil {
+		t.Fatalf("globally disabled GeoSite unexpectedly required auto-append resource: %v", err)
+	}
+}
+
+func TestParseV1RegionAppendRequiresExplicitIndependentSwitches(t *testing.T) {
+	document := string(minimalDeclaration())
+	document = strings.Replace(
+		document,
+		`"routing":{`,
+		`"routing":{
+    "region_append":{"region_code":"cn","geosite_enabled":true},`,
+		1,
+	)
+	if _, err := ParseV1([]byte(document)); !errors.Is(err, ErrInvalidDocument) {
+		t.Fatalf("missing region switch error = %v", err)
+	}
+}
+
 func TestValidateV1RejectsUnresolvedNodeReference(t *testing.T) {
 	document := strings.Replace(string(minimalDeclaration()), `"node_id":"n1"`, `"node_id":"missing"`, 2)
 	if err := ValidateV1([]byte(document)); !errors.Is(err, ErrInvalidDocument) {
 		t.Fatalf("unresolved node error = %v", err)
 	}
+}
+
+func declarationWithRegionAppend(
+	geoSiteEnabled bool,
+	geoIPEnabled bool,
+	includeGeoSiteResource bool,
+	includeGeoIPResource bool,
+) []byte {
+	document := string(minimalDeclaration())
+	resources := make([]string, 0, 2)
+	if includeGeoSiteResource {
+		resources = append(resources, `{"ref":"geosite:cn","sha256":"`+strings.Repeat("a", 64)+`","format":"source"}`)
+	}
+	if includeGeoIPResource {
+		resources = append(resources, `{"ref":"geoip:cn","sha256":"`+strings.Repeat("b", 64)+`","format":"source"}`)
+	}
+	if len(resources) != 0 {
+		document = strings.Replace(
+			document,
+			`"log_level":"warn",`,
+			`"log_level":"warn",
+  "rule_sets":[`+strings.Join(resources, ",")+`],`,
+			1,
+		)
+	}
+	document = strings.Replace(
+		document,
+		`"routing":{`,
+		fmt.Sprintf(`"routing":{
+    "region_append":{"region_code":"cn","geosite_enabled":%t,"geoip_enabled":%t},`, geoSiteEnabled, geoIPEnabled),
+		1,
+	)
+	return []byte(document)
 }
 
 func declarationWithRuleSet(hash string, includeResource bool) []byte {

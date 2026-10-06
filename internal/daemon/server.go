@@ -214,6 +214,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"declaration_revisions":       true,
 				"declaration_generation_link": true,
 				"declaration_schema_v1":       true,
+				"declaration_region_append":   true,
 				"declaration_commit_api":      true,
 				"declaration_compile_preview": declarationCompileRuntime,
 				"declaration_apply_api":       declarationApplyRuntime,

@@ -7,15 +7,22 @@ import (
 )
 
 type routingV1 struct {
-	CustomEnabled  *bool            `json:"custom_enabled,omitempty"`
-	GeoSiteEnabled *bool            `json:"geosite_enabled,omitempty"`
-	GeoIPEnabled   *bool            `json:"geoip_enabled,omitempty"`
-	ACLEnabled     *bool            `json:"acl_enabled,omitempty"`
-	Custom         []routeGroupV1   `json:"custom,omitempty"`
-	GeoSite        []routeGroupV1   `json:"geosite,omitempty"`
-	GeoIP          []routeGroupV1   `json:"geoip,omitempty"`
-	ACL            []routeGroupV1   `json:"acl,omitempty"`
-	Final          domain.TargetRef `json:"final"`
+	CustomEnabled  *bool             `json:"custom_enabled,omitempty"`
+	GeoSiteEnabled *bool             `json:"geosite_enabled,omitempty"`
+	GeoIPEnabled   *bool             `json:"geoip_enabled,omitempty"`
+	ACLEnabled     *bool             `json:"acl_enabled,omitempty"`
+	RegionAppend   *regionAppendV1   `json:"region_append,omitempty"`
+	Custom         []routeGroupV1    `json:"custom,omitempty"`
+	GeoSite        []routeGroupV1    `json:"geosite,omitempty"`
+	GeoIP          []routeGroupV1    `json:"geoip,omitempty"`
+	ACL            []routeGroupV1    `json:"acl,omitempty"`
+	Final          domain.TargetRef  `json:"final"`
+}
+
+type regionAppendV1 struct {
+	RegionCode     string `json:"region_code"`
+	GeoSiteEnabled *bool  `json:"geosite_enabled"`
+	GeoIPEnabled   *bool  `json:"geoip_enabled"`
 }
 
 type routeGroupV1 struct {
@@ -70,6 +77,25 @@ func (r routingV1) toDomain() (domain.RoutingPlan, error) {
 		return domain.RoutingPlan{}, err
 	}
 	return result, nil
+}
+
+func (r routingV1) regionAppendPlan() (*domain.RegionAppendPlan, error) {
+	if r.RegionAppend == nil {
+		return nil, nil
+	}
+	if r.RegionAppend.GeoSiteEnabled == nil || r.RegionAppend.GeoIPEnabled == nil {
+		return nil, fmt.Errorf("%w: routing.region_append requires geosite_enabled and geoip_enabled", ErrInvalidDocument)
+	}
+	plan := domain.RegionAppendPlan{
+		RegionCode:     r.RegionAppend.RegionCode,
+		GeoSiteEnabled: *r.RegionAppend.GeoSiteEnabled,
+		GeoIPEnabled:   *r.RegionAppend.GeoIPEnabled,
+		Target:         domain.TargetRef{Kind: domain.TargetDirect},
+	}
+	if err := plan.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: routing.region_append: %v", ErrInvalidDocument, err)
+	}
+	return &plan, nil
 }
 
 func convertRouteGroups(layer domain.RoutingLayer, groups []routeGroupV1) ([]domain.RouteGroup, error) {
