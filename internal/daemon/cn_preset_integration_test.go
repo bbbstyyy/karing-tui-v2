@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,6 +228,43 @@ func TestManagedCoreRealCNPresetRouting(t *testing.T) {
 	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "CN foreign-proxy CurrentSelected")
 	assertNoRouteOutcomeSignal(t, secondTargetHits, 100*time.Millisecond, "CN foreign-proxy direct target")
 
+	thirdDocument := cnPresetProcessIntegrationDeclaration(t, proxyAddress.Port(), noMatchSHA256)
+	thirdDeclaration, err := store.CommitDeclaration(
+		ctx,
+		secondDeclaration.Revision,
+		thirdDocument,
+		"integration:cn-process-name",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdCtx, thirdCancel := context.WithTimeout(context.Background(), 40*time.Second)
+	_, thirdArtifact, err := runtime.ApplyDeclarationRevision(thirdCtx, thirdDeclaration.Revision, 2)
+	thirdCancel()
+	if err != nil {
+		t.Fatalf("apply CN process-name declaration: %v; stderr=%s", err, managed.StderrTail())
+	}
+	wantProcessSourceMap := []string{
+		"cn.apple-services",
+		"cn.google-play",
+		"cn.google",
+		"cn.whatsapp",
+		"cn.bilibili",
+		"cn.domestic-direct",
+		"cn.foreign-proxy",
+	}
+	assertCNPresetSourceMap(t, thirdArtifact.SourceMap, wantProcessSourceMap)
+	nativeJSON := string(thirdArtifact.JSON)
+	for _, want := range []string{
+		`"find_process":true`,
+		`"process_name":["WhatsApp.exe"]`,
+		`"process_name":["WhatsApp"]`,
+	} {
+		if !strings.Contains(nativeJSON, want) {
+			t.Fatalf("CN process-name native config missing %s: %s", want, nativeJSON)
+		}
+	}
+
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := runtime.Stop(stopCtx); err != nil {
 		stopCancel()
@@ -350,6 +388,84 @@ func cnPresetIntegrationDeclaration(
     "outbound_profile_id":"cn-outbound-dns"
   }
 }`, resourceJSON, proxyPort, preset.CNSourceCommit, overrideJSON))
+}
+
+func cnPresetProcessIntegrationDeclaration(t *testing.T, proxyPort uint16, noMatchSHA256 string) []byte {
+	t.Helper()
+	snapshot, err := preset.LoadCN()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type ruleSetResource struct {
+		Ref    string `json:"ref"`
+		SHA256 string `json:"sha256"`
+		Format string `json:"format"`
+	}
+	resources := make([]ruleSetResource, 0)
+	seenRefs := make(map[string]struct{})
+	for _, group := range snapshot.Groups {
+		if !group.Enabled && group.ID != "cn.whatsapp" {
+			continue
+		}
+		for _, ref := range group.Source.RuleSetBuildIn {
+			if _, exists := seenRefs[ref]; exists {
+				continue
+			}
+			seenRefs[ref] = struct{}{}
+			resources = append(resources, ruleSetResource{
+				Ref:    ref,
+				SHA256: noMatchSHA256,
+				Format: "source",
+			})
+		}
+	}
+	resourceJSON, err := json.Marshal(resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return []byte(fmt.Sprintf(`{
+  "schema_version":1,
+  "log_level":"warn",
+  "rule_sets":%s,
+  "nodes":[{
+    "profile_id":"cn-profile",
+    "node_id":"cn-selected",
+    "type":"http",
+    "server":"127.0.0.1",
+    "port":%d,
+    "http":{}
+  }],
+  "selection":{
+    "current":{
+      "members":[{"kind":"specific_node","profile_id":"cn-profile","node_id":"cn-selected"}],
+      "default":{"kind":"specific_node","profile_id":"cn-profile","node_id":"cn-selected"}
+    },
+    "custom":[]
+  },
+  "routing":{
+    "cn_preset":{
+      "source_commit":%q,
+      "overrides":[{"group_id":"cn.whatsapp","enabled":true}]
+    },
+    "custom":[],
+    "geosite":[],
+    "geoip":[],
+    "acl":[],
+    "final":{"kind":"direct"}
+  },
+  "dns":{
+    "profiles":[{
+      "id":"cn-outbound-dns",
+      "role":"outbound",
+      "transport":"udp",
+      "server":"127.0.0.1",
+      "port":9
+    }],
+    "outbound_profile_id":"cn-outbound-dns"
+  }
+}`, resourceJSON, proxyPort, preset.CNSourceCommit))
 }
 
 func assertCNPresetSourceMap(t *testing.T, sourceMap []compiler.RouteSourceMapEntry, wantGroupIDs []string) {

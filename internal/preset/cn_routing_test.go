@@ -133,18 +133,68 @@ func TestLowerCNCustomRoutingPreservesFlatOrSemantics(t *testing.T) {
 	}
 }
 
-func TestLowerCNCustomRoutingFailsClosedForUnverifiedProcessName(t *testing.T) {
+func TestLowerCNCustomRoutingPreservesLinuxProcessNamePredicates(t *testing.T) {
 	snapshot, err := LoadCN()
 	if err != nil {
 		t.Fatal(err)
 	}
 	enabled := true
-	_, err = LowerCNCustomRouting(snapshot, []CNOverride{{
+	groups, err := LowerCNCustomRouting(snapshot, []CNOverride{{
 		GroupID: "cn.whatsapp",
 		Enabled: &enabled,
 	}})
-	if !errors.Is(err, ErrCNProcessSemanticsUnverified) {
-		t.Fatalf("WhatsApp process semantics error = %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	whatsapp := groups[15]
+	if whatsapp.ID != "cn.whatsapp" || whatsapp.Match == nil || whatsapp.Match.Op != domain.MatchAny {
+		t.Fatalf("unexpected WhatsApp group: %+v", whatsapp)
+	}
+	got := collectCNPredicates(*whatsapp.Match)
+	want := []domain.Predicate{
+		{Kind: domain.PredicateRuleSet, Value: "geosite:whatsapp"},
+		{Kind: domain.PredicateRuleSet, Value: "acl:Whatsapp"},
+		{Kind: domain.PredicateProcessName, Value: "WhatsApp.exe"},
+		{Kind: domain.PredicateProcessName, Value: "WhatsApp"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WhatsApp Linux predicates = %#v, want %#v", got, want)
+	}
+
+	plan := domain.RoutingPlan{
+		Custom: groups,
+		Final:  domain.TargetRef{Kind: domain.TargetDirect},
+	}
+	compiled, err := compiler.CompileRouting(plan, compiler.TargetResolverFunc(func(target domain.TargetRef) (string, error) {
+		switch target.Kind {
+		case domain.TargetDirect:
+			return "out-direct", nil
+		case domain.TargetCurrentSelected:
+			return "out-current", nil
+		default:
+			return "", errors.New("unexpected target")
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compiled.NeedsProcessLookup {
+		t.Fatal("enabled CN process predicate did not request process lookup")
+	}
+}
+
+func TestLowerCNCustomRoutingAcceptsProcessOnlyLinuxMatcher(t *testing.T) {
+	match, err := lowerCNRuleLinux(CNRule{
+		Name:        "process-only",
+		ProcessName: []string{"example"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := collectCNPredicates(match)
+	want := []domain.Predicate{{Kind: domain.PredicateProcessName, Value: "example"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("process-only predicates = %#v, want %#v", got, want)
 	}
 }
 

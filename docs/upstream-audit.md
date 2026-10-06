@@ -50,7 +50,7 @@ The exact `assets/datas/preset/cn.json` bytes from the fixed Karing application 
 
 The fixed 2026 Karing tree imports configuration-builder utilities that are absent from that public snapshot. Git path history shows the last publicly inspectable versions immediately before their removal at parent commit `e3c19f1eb1225dbd48a4862f0983b82d0af8de69` (2025-05-07). That historical builder is treated as compatibility evidence, not as a replacement source baseline.
 
-The last-public model defaulted an omitted group `or` flag to true, and the builder lowered each non-empty field family into children of a logical OR rule. It also emitted package predicates only on Android. This is enough to implement and test a conservative Linux lowerer for the six pinned default-enabled groups. The legacy preset `processName` conversion is still unresolved for Linux; enabling one of the three affected groups fails closed instead of silently dropping or guessing that predicate.
+The last-public model defaulted an omitted group `or` flag to true, and the builder lowered each non-empty field family into children of a logical OR rule. It emitted package predicates only on Android. The same historical source defines `PlatformUtils.isPC()` as Linux/macOS/Windows and maps custom-group `processName` directly to sing-box `process_name` under that PC guard. The Linux lowerer therefore preserves process-name atoms for the three affected CN groups while continuing to omit Android-only package predicates.
 
 Declaration v1 now persists the pinned CN snapshot identity, typed overlay, and complete L1 interleaving order separately from ordinary Custom groups. The merged order may place CN groups anywhere among ordinary Custom groups while preserving ordinary groups' own relative order and the immutable upstream CN ordinal for audit.
 
@@ -58,7 +58,7 @@ Real-core CN fixtures now verify the default active group source-map order, the 
 
 The complete CN preset plus region logical resource closure contains 68 unique refs. The exact pinned Karing asset tree contains 67 corresponding `.srs` files; `geoip:bing` is the sole dangling upstream reference. The last publicly inspectable Karing preset importer pruned unavailable built-in refs, so the project records that absence rather than inventing a replacement file. A deterministic audit tool/workflow now computes byte counts and SHA-256 values from the exact pinned Karing asset commit. Distribution remains blocked because the generated ruleset corpus combines multiple upstream data sources without a closed, repository-wide redistribution/license record.
 
-Full `cn_preset` capability remains false. A distribution-ready offline resource package/license closure and Linux `processName` compatibility are still required.
+Full `cn_preset` capability remains false. The remaining blocker is a distribution-ready offline resource package/license closure; Linux `processName` compatibility is now evidence-backed and covered by the approved-core integration path.
 
 ### M1 standalone core build is approved
 

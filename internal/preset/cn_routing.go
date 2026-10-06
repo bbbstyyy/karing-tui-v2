@@ -7,10 +7,7 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 )
 
-var (
-	ErrCNRuleHasNoLinuxMatch        = errors.New("CN preset rule has no supported Linux matcher")
-	ErrCNProcessSemanticsUnverified = errors.New("CN preset processName semantics are not verified for Linux")
-)
+var ErrCNRuleHasNoLinuxMatch = errors.New("CN preset rule has no supported Linux matcher")
 
 // LowerCNCustomRouting lowers the immutable CN preset plus user overrides into
 // L1 custom routing groups for Linux.
@@ -20,10 +17,10 @@ var (
 // as a child of a logical OR rule. Android package predicates were emitted only
 // on Android, so they are intentionally absent here.
 //
-// The exact mapping of the preset's legacy camelCase processName field into the
-// later platform-specific process fields is not available in the pinned public
-// tree. Enabling such a group therefore fails closed instead of silently
-// dropping or guessing its process predicate.
+// The last public Karing builder emitted processName as sing-box process_name
+// on every PC platform, and the matching PlatformUtils.isPC implementation
+// explicitly included Linux. The project therefore preserves those values as
+// process_name atoms. Android-only package predicates remain absent on Linux.
 func LowerCNCustomRouting(snapshot CNSnapshot, overrides []CNOverride) ([]domain.RouteGroup, error) {
 	effective, err := ApplyCNOverrides(snapshot, overrides)
 	if err != nil {
@@ -55,15 +52,12 @@ func LowerCNCustomRouting(snapshot CNSnapshot, overrides []CNOverride) ([]domain
 }
 
 func lowerCNRuleLinux(rule CNRule) (domain.MatchExpr, error) {
-	if len(rule.ProcessName) != 0 {
-		return domain.MatchExpr{}, fmt.Errorf("%w: %q", ErrCNProcessSemanticsUnverified, rule.Name)
-	}
-
 	children := make([]domain.MatchExpr, 0,
 		len(rule.RuleSetBuildIn)+
 			len(rule.DomainSuffix)+
 			len(rule.DomainKeyword)+
-			len(rule.IPCIDR),
+			len(rule.IPCIDR)+
+			len(rule.ProcessName),
 	)
 	for _, ref := range rule.RuleSetBuildIn {
 		children = append(children, domain.Atom(domain.Predicate{
@@ -87,6 +81,12 @@ func lowerCNRuleLinux(rule CNRule) (domain.MatchExpr, error) {
 		children = append(children, domain.Atom(domain.Predicate{
 			Kind: domain.PredicateIPCIDR,
 			CIDR: cidr,
+		}))
+	}
+	for _, value := range rule.ProcessName {
+		children = append(children, domain.Atom(domain.Predicate{
+			Kind:  domain.PredicateProcessName,
+			Value: value,
 		}))
 	}
 
