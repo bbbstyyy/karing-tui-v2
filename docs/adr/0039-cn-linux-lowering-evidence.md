@@ -53,7 +53,9 @@ The Android-only `package` branch is omitted on Linux, matching the historical p
 
 The pinned CN JSON also has a legacy camelCase `processName` field in the WhatsApp, Telegram, and GitHub groups.
 
-The pinned 2026 public tree does not expose the conversion that maps that legacy preset field into the later platform-specific process representation. The older public model alone is not enough to prove the exact Linux mapping.
+This ambiguity is visible even in the last-public historical sources: the 2025 CN preset already used camelCase `processName`, while the contemporary `DiversionCustomRule.fromJson` importer read snake_case `process_name` before copying its parsed value into `DiversionRulesGroup.processName`. That public snapshot therefore cannot prove that the camelCase preset field reached the Linux builder at all.
+
+The pinned 2026 public tree no longer exposes the conversion path that may have corrected or otherwise changed that behavior. The older public model alone is not enough to prove the exact Linux mapping.
 
 Therefore an enabled CN group carrying `processName` fails with a dedicated compatibility error. Disabled groups remain preserved as source state and do not need to be lowered until enabled.
 

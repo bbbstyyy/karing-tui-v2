@@ -44,9 +44,15 @@ At this candidate, the upstream build workflow pins Go **1.25.12**. The project 
 
 The daemon must not infer successful full configuration activation from a `PUT /configs` status code alone. Managed application continues to use controlled candidate activation, local behavior verification, and rollback.
 
-### CN preset evidence is fixed but not yet vendored
+### CN preset snapshot is vendored; conservative Linux lowering is evidence-bounded
 
-The fixed Karing CN preset contains 28 ordered groups. The project will vendor the exact source plus provenance in M2, after rule-resource and licensing closure is documented. It must not be replaced by a two-rule "CN direct / otherwise proxy" shortcut.
+The exact `assets/datas/preset/cn.json` bytes from the fixed Karing application commit are embedded in `internal/preset/cn.json`. Parsing requires exactly 28 ordered groups and the pinned six default-enabled groups, assigns project-owned stable IDs, and preserves the original source fields separately from typed user overrides.
+
+The fixed 2026 Karing tree imports configuration-builder utilities that are absent from that public snapshot. Git path history shows the last publicly inspectable versions immediately before their removal at parent commit `e3c19f1eb1225dbd48a4862f0983b82d0af8de69` (2025-05-07). That historical builder is treated as compatibility evidence, not as a replacement source baseline.
+
+The last-public model defaulted an omitted group `or` flag to true, and the builder lowered each non-empty field family into children of a logical OR rule. It also emitted package predicates only on Android. This is enough to implement and test a conservative Linux lowerer for the six pinned default-enabled groups. The legacy preset `processName` conversion is still unresolved for Linux; enabling one of the three affected groups fails closed instead of silently dropping or guessing that predicate.
+
+Full `cn_preset` capability remains false. Declaration overlay persistence, complete trusted/offline resource closure, Linux `processName` compatibility, region auto-append, and actual route-outcome fixtures are still required.
 
 ### M1 standalone core build is approved
 
@@ -95,6 +101,11 @@ Implemented now:
 - conditional local lifecycle API/CLI wiring that starts the supervisor engine, restores persisted intent, serializes start/stop operations, and reports real core state/PID/circuit diagnostics;
 - explicit capability flags that keep incomplete M1/M2 features false;
 - a restricted sing-box import guard that rejects TUN, TPROXY, redirect, `auto_route`, `auto_redirect`, and `set_system_proxy=true` so imported configs cannot silently mutate Linux proxy settings;
+- immutable declaration revisions with SHA-256 identity, schema-v1 validation, compile preview, declaration provenance binding, and a dual-revision declaration apply transaction serialized with lifecycle operations;
+- deterministic native compilation for the three proxy-only inbounds, typed targets, selection groups, basic nodes, five-layer routing IR, DNS dependencies/group bindings, source maps, and generation manifests;
+- immutable rule-set upload/storage with bounded streaming input, SHA-256 content addressing, declaration `ref + digest + format` binding, active resource closure, and real-core rejection when a bound resource disappears;
+- independent Custom/GeoSite/GeoIP/ACL source-layer switches that preserve per-group state while excluding disabled sources from active routes, DNS bindings, source maps, and resource closure;
+- an exact embedded 28-group CN snapshot, typed overlay model, and evidence-bounded Linux lowering for the pinned default active set while unresolved process semantics remain fail-closed;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
-Still open before M1 can be called complete: deterministic restricted native-config compilation with correct Rule/DIRECT/CurrentSelected semantics, composing/exposing managed apply only through that compiler boundary, route-behavior verification beyond listener/control readiness, generation retention/garbage collection, database online-backup integration, packaging/license closure for core distribution, and process-level crash/power-loss fault injection across the real external core/SQLite boundary.
+Still open before the stable-service foundation can be treated as release-ready: route-behavior verification beyond listener/control readiness, generation retention/garbage collection, packaging/license closure for core distribution, and broader process-level crash/power-loss fault injection across the real external core/SQLite boundary. Database online backup remains a later recovery/backup milestone rather than a reason to weaken the current immutable generation/apply guarantees.
