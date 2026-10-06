@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
@@ -153,6 +154,179 @@ func TestDeclarationCompilePreviewRequiresCompilerRuntime(t *testing.T) {
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/declaration/compile", bytes.NewReader(body)))
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("compile without runtime status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+
+func TestDeclarationApplyAPICompilesAndCommitsExplicitRevision(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+	stored, err := store.CommitDeclaration(ctx, 0, declarationAPIMinimalDocument(), "test:apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	engine, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
+		Inbounds:       domain.DefaultInboundSet(),
+		ControlAddress: netip.MustParseAddrPort("127.0.0.1:3057"),
+		ControlSecret:  declarationAPITestSecret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	declarations, err := NewDeclarationCompileCoordinator(store, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := &fakeApplyCore{}
+	apply, err := NewApplyCoordinator(store, core, testApplyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &serverRuntime{
+		apply:        apply,
+		declarations: declarations,
+		gate:         NewOperationGate(),
+	}
+	handler := New(runtimepath.Paths{}).handler(store, runtime)
+
+	body, err := json.Marshal(apiv1.DeclarationApplyRequest{
+		DeclarationRevision:    stored.Revision,
+		ExpectedConfigRevision: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/declaration/apply", bytes.NewReader(body)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("apply status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response apiv1.DeclarationApplyResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.DeclarationRevision != stored.Revision ||
+		response.DeclarationSHA256 != stored.SHA256 ||
+		response.ConfigSHA256 == "" ||
+		response.NativeSchemaID == "" ||
+		response.AttemptID == 0 ||
+		response.GenerationID == 0 ||
+		response.BaseConfigRevision != 0 ||
+		response.TargetConfigRevision != 1 {
+		t.Fatalf("unexpected declaration apply response: %+v", response)
+	}
+	if got := strings.Join(core.events, ","); got != "check,activate,verify" {
+		t.Fatalf("core events = %q", got)
+	}
+
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != 1 ||
+		snapshot.AppliedGenerationID == nil ||
+		*snapshot.AppliedGenerationID != response.GenerationID {
+		t.Fatalf("declaration apply did not commit runtime state: %+v", snapshot)
+	}
+	artifacts, err := store.GenerationArtifacts(ctx, response.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		DeclarationRevision uint64 `json:"declaration_revision"`
+		DeclarationSHA256   string `json:"declaration_sha256"`
+		ConfigSHA256        string `json:"config_sha256"`
+	}
+	if err := json.Unmarshal(artifacts.ManifestJSON, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.DeclarationRevision != stored.Revision ||
+		manifest.DeclarationSHA256 != stored.SHA256 ||
+		manifest.ConfigSHA256 != response.ConfigSHA256 {
+		t.Fatalf("persisted declaration provenance mismatch: %+v", manifest)
+	}
+
+	conflict := httptest.NewRecorder()
+	handler.ServeHTTP(conflict, httptest.NewRequest(http.MethodPost, "/v1/declaration/apply", bytes.NewReader(body)))
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("stale config revision status = %d, body=%s", conflict.Code, conflict.Body.String())
+	}
+	afterConflict, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterConflict.Revision != 1 ||
+		afterConflict.AppliedGenerationID == nil ||
+		*afterConflict.AppliedGenerationID != response.GenerationID {
+		t.Fatalf("stale declaration apply changed committed state: %+v", afterConflict)
+	}
+}
+
+func TestDeclarationApplyAPIRejectsMissingRevisionWithoutCreatingGeneration(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+
+	engine, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
+		Inbounds:       domain.DefaultInboundSet(),
+		ControlAddress: netip.MustParseAddrPort("127.0.0.1:3057"),
+		ControlSecret:  declarationAPITestSecret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	declarations, err := NewDeclarationCompileCoordinator(store, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply, err := NewApplyCoordinator(store, &fakeApplyCore{}, testApplyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &serverRuntime{apply: apply, declarations: declarations, gate: NewOperationGate()}
+	handler := New(runtimepath.Paths{}).handler(store, runtime)
+
+	body, err := json.Marshal(apiv1.DeclarationApplyRequest{
+		DeclarationRevision:    99,
+		ExpectedConfigRevision: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/declaration/apply", bytes.NewReader(body)))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("missing declaration status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != 0 || snapshot.AppliedGenerationID != nil || snapshot.ActiveAttemptID != nil {
+		t.Fatalf("missing declaration created apply state: %+v", snapshot)
+	}
+}
+
+func TestDeclarationApplyAPIRequiresApplyRuntime(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+	handler := New(runtimepath.Paths{}).handler(store, nil)
+
+	body, err := json.Marshal(apiv1.DeclarationApplyRequest{
+		DeclarationRevision:    1,
+		ExpectedConfigRevision: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/declaration/apply", bytes.NewReader(body)))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("apply without runtime status = %d, body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

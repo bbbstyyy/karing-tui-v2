@@ -15,6 +15,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
@@ -67,7 +68,19 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runtime, runDone, runCancel, err := startServerRuntime(context.Background(), store, managed)
+	schemaCompiler, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
+		Inbounds:       inbounds,
+		ControlAddress: netip.AddrPortFrom(inbounds.Listen, ports[3]),
+		ControlSecret:  secret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	declarations, err := NewDeclarationCompileCoordinator(store, schemaCompiler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, runDone, runCancel, err := startServerRuntimeWithDeclarations(context.Background(), store, managed, declarations)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,12 +99,19 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatal("managed apply runtime was not composed")
 	}
 
-	firstArtifact := integrationCoreArtifact(t, inbounds, ports[3], secret, "warn")
+	firstDeclaration, err := store.CommitDeclaration(ctx, 0, integrationDeclarationDocument("warn"), "integration:first")
+	if err != nil {
+		t.Fatal(err)
+	}
 	applyCtx, applyCancel := context.WithTimeout(context.Background(), 40*time.Second)
-	firstAttempt, err := runtime.ApplyNativeArtifact(applyCtx, 0, firstArtifact)
+	firstAttempt, firstArtifact, err := runtime.ApplyDeclarationRevision(applyCtx, firstDeclaration.Revision, 0)
 	applyCancel()
 	if err != nil {
-		t.Fatalf("first real-core apply: %v; stderr=%s", err, managed.StderrTail())
+		t.Fatalf("first declaration-driven real-core apply: %v; stderr=%s", err, managed.StderrTail())
+	}
+	if firstArtifact.Manifest.DeclarationRevision != firstDeclaration.Revision ||
+		firstArtifact.Manifest.DeclarationSHA256 != firstDeclaration.SHA256 {
+		t.Fatalf("first declaration provenance mismatch: artifact=%+v declaration=%+v", firstArtifact.Manifest, firstDeclaration)
 	}
 
 	snapshot, err := store.Snapshot(ctx)
@@ -153,12 +173,19 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		t.Fatalf("failed pre-activation check disturbed running core: before=%+v after=%+v", restarted, afterBad)
 	}
 
-	secondArtifact := integrationCoreArtifact(t, inbounds, ports[3], secret, "error")
+	secondDeclaration, err := store.CommitDeclaration(ctx, firstDeclaration.Revision, integrationDeclarationDocument("error"), "integration:second")
+	if err != nil {
+		t.Fatal(err)
+	}
 	secondCtx, secondCancel := context.WithTimeout(context.Background(), 40*time.Second)
-	secondAttempt, err := runtime.ApplyNativeArtifact(secondCtx, 1, secondArtifact)
+	secondAttempt, secondArtifact, err := runtime.ApplyDeclarationRevision(secondCtx, secondDeclaration.Revision, 1)
 	secondCancel()
 	if err != nil {
-		t.Fatalf("second real-core apply: %v; stderr=%s", err, managed.StderrTail())
+		t.Fatalf("second declaration-driven real-core apply: %v; stderr=%s", err, managed.StderrTail())
+	}
+	if secondArtifact.Manifest.DeclarationRevision != secondDeclaration.Revision ||
+		secondArtifact.Manifest.DeclarationSHA256 != secondDeclaration.SHA256 {
+		t.Fatalf("second declaration provenance mismatch: artifact=%+v declaration=%+v", secondArtifact.Manifest, secondDeclaration)
 	}
 	snapshot, err = store.Snapshot(ctx)
 	if err != nil {
@@ -196,6 +223,45 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	if persisted.RecoveryRequired {
 		t.Fatalf("successful integration flow unexpectedly requires recovery: %+v", persisted)
 	}
+}
+
+func integrationDeclarationDocument(logLevel string) []byte {
+	return []byte(fmt.Sprintf(`{
+  "schema_version":1,
+  "log_level":%q,
+  "nodes":[{
+    "profile_id":"integration-profile",
+    "node_id":"integration-node",
+    "type":"http",
+    "server":"127.0.0.1",
+    "port":9,
+    "http":{}
+  }],
+  "selection":{
+    "current":{
+      "members":[{"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-node"}],
+      "default":{"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-node"}
+    },
+    "custom":[]
+  },
+  "routing":{
+    "custom":[],
+    "geosite":[],
+    "geoip":[],
+    "acl":[],
+    "final":{"kind":"direct"}
+  },
+  "dns":{
+    "profiles":[{
+      "id":"integration-outbound-dns",
+      "role":"outbound",
+      "transport":"udp",
+      "server":"127.0.0.1",
+      "port":9
+    }],
+    "outbound_profile_id":"integration-outbound-dns"
+  }
+}`, logLevel))
 }
 
 func reserveLoopbackPorts(t *testing.T, count int) []uint16 {

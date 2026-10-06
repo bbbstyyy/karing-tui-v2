@@ -184,6 +184,23 @@ func (r *serverRuntime) ApplyNativeArtifact(
 	if r == nil || r.apply == nil {
 		return storage.Attempt{}, errors.New("managed apply runtime is not configured")
 	}
+	var attempt storage.Attempt
+	err := r.gate.Do(ctx, "config-apply", func(operationCtx context.Context) error {
+		var applyErr error
+		attempt, applyErr = r.applyNativeArtifact(operationCtx, expectedRevision, artifact)
+		return applyErr
+	})
+	return attempt, err
+}
+
+func (r *serverRuntime) applyNativeArtifact(
+	ctx context.Context,
+	expectedRevision uint64,
+	artifact compiler.NativeConfigArtifact,
+) (storage.Attempt, error) {
+	if r == nil || r.apply == nil {
+		return storage.Attempt{}, errors.New("managed apply runtime is not configured")
+	}
 	if err := artifact.ValidateDeclarationBinding(true); err != nil {
 		return storage.Attempt{}, fmt.Errorf("validate declaration provenance: %w", err)
 	}
@@ -191,17 +208,11 @@ func (r *serverRuntime) ApplyNativeArtifact(
 	if err != nil {
 		return storage.Attempt{}, fmt.Errorf("serialize compiled generation metadata: %w", err)
 	}
-	var attempt storage.Attempt
-	err = r.gate.Do(ctx, "config-apply", func(operationCtx context.Context) error {
-		var applyErr error
-		attempt, applyErr = r.apply.ApplyCompiled(operationCtx, expectedRevision, CompiledGenerationArtifacts{
-			Config:    artifact.JSON,
-			Manifest:  manifest,
-			SourceMap: sourceMap,
-		})
-		return applyErr
+	return r.apply.ApplyCompiled(ctx, expectedRevision, CompiledGenerationArtifacts{
+		Config:    artifact.JSON,
+		Manifest:  manifest,
+		SourceMap: sourceMap,
 	})
-	return attempt, err
 }
 
 func (r *serverRuntime) ApplyCompiled(ctx context.Context, expectedRevision uint64, config []byte) (storage.Attempt, error) {
@@ -224,6 +235,39 @@ func (r *serverRuntime) ManagedApplyReady() bool {
 
 func (r *serverRuntime) DeclarationCompilerReady() bool {
 	return r != nil && r.declarations != nil
+}
+
+func (r *serverRuntime) DeclarationApplyReady() bool {
+	return r != nil && r.declarations != nil && r.apply != nil
+}
+
+func (r *serverRuntime) ApplyDeclarationRevision(
+	ctx context.Context,
+	declarationRevision uint64,
+	expectedConfigRevision uint64,
+) (storage.Attempt, compiler.NativeConfigArtifact, error) {
+	if r == nil || r.declarations == nil {
+		return storage.Attempt{}, compiler.NativeConfigArtifact{}, errors.New("declaration compiler runtime is not configured")
+	}
+	if r.apply == nil {
+		return storage.Attempt{}, compiler.NativeConfigArtifact{}, errors.New("managed apply runtime is not configured")
+	}
+
+	var (
+		attempt  storage.Attempt
+		artifact compiler.NativeConfigArtifact
+	)
+	err := r.gate.Do(ctx, "declaration-apply", func(operationCtx context.Context) error {
+		var compileErr error
+		artifact, compileErr = r.declarations.CompileRevision(operationCtx, declarationRevision)
+		if compileErr != nil {
+			return compileErr
+		}
+		var applyErr error
+		attempt, applyErr = r.applyNativeArtifact(operationCtx, expectedConfigRevision, artifact)
+		return applyErr
+	})
+	return attempt, artifact, err
 }
 
 func (r *serverRuntime) CompileDeclarationRevision(

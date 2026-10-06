@@ -194,6 +194,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		coreEnabled := runtime != nil
 		managedApplyRuntime := runtime != nil && runtime.ManagedApplyReady()
 		declarationCompileRuntime := runtime != nil && runtime.DeclarationCompilerReady()
+		declarationApplyRuntime := runtime != nil && runtime.DeclarationApplyReady()
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			APIVersion: apiv1.Version,
 			Capabilities: map[string]bool{
@@ -207,9 +208,10 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"declaration_schema_v1":       true,
 				"declaration_commit_api":      true,
 				"declaration_compile_preview": declarationCompileRuntime,
+				"declaration_apply_api":       declarationApplyRuntime,
 				"apply_journal":               true,
 				"apply_coordinator":           true,
-				"managed_apply":               false,
+				"managed_apply":               declarationApplyRuntime,
 				"managed_apply_runtime":       managedApplyRuntime,
 				"crash_recovery_state":        true,
 				"persisted_core_intent":       true,
@@ -342,6 +344,61 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			DNSServerTags:     append([]string(nil), artifact.Manifest.DNSServerTags...),
 			RouteEntryCount:   len(artifact.SourceMap),
 			RuleSetCount:      len(artifact.Manifest.RuleSets),
+		})
+	})
+	mux.HandleFunc("POST /v1/declaration/apply", func(w http.ResponseWriter, r *http.Request) {
+		if runtime == nil || !runtime.DeclarationApplyReady() {
+			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "declaration apply runtime is not configured"})
+			return
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		var request apiv1.DeclarationApplyRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode declaration apply request: " + err.Error()})
+			return
+		}
+		if request.DeclarationRevision == 0 {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "declaration revision must be positive"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 75*time.Second)
+		defer cancel()
+		attempt, artifact, err := runtime.ApplyDeclarationRevision(
+			ctx,
+			request.DeclarationRevision,
+			request.ExpectedConfigRevision,
+		)
+		if err != nil {
+			status := http.StatusInternalServerError
+			switch {
+			case errors.Is(err, storage.ErrDeclarationNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, storage.ErrRevisionConflict),
+				errors.Is(err, storage.ErrRecoveryRequired),
+				errors.Is(err, storage.ErrApplyInProgress),
+				errors.Is(err, core.ErrCircuitOpen):
+				status = http.StatusConflict
+			case errors.Is(err, declaration.ErrInvalidDocument),
+				errors.Is(err, declaration.ErrUnsupportedSchema),
+				errors.Is(err, declaration.ErrRuleSetsUnsupportedInV1):
+				status = http.StatusUnprocessableEntity
+			case errors.Is(err, context.DeadlineExceeded):
+				status = http.StatusGatewayTimeout
+			}
+			writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, apiv1.DeclarationApplyResponse{
+			DeclarationRevision:  artifact.Manifest.DeclarationRevision,
+			DeclarationSHA256:    artifact.Manifest.DeclarationSHA256,
+			NativeSchemaID:       artifact.Manifest.SchemaID,
+			ConfigSHA256:         artifact.Manifest.ConfigSHA256,
+			AttemptID:            attempt.ID,
+			GenerationID:         attempt.GenerationID,
+			BaseConfigRevision:   attempt.BaseRevision,
+			TargetConfigRevision: attempt.TargetRevision,
 		})
 	})
 	mux.HandleFunc("POST /v1/core/start", func(w http.ResponseWriter, r *http.Request) {
