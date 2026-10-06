@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
@@ -22,8 +24,9 @@ import (
 var ErrAlreadyRunning = errors.New("daemon already running")
 
 type Server struct {
-	paths   runtimepath.Paths
-	started time.Time
+	paths    runtimepath.Paths
+	started  time.Time
+	ruleSets *coreartifact.Store
 }
 
 func New(paths runtimepath.Paths) *Server {
@@ -37,6 +40,11 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := prepareSocket(s.paths.Socket); err != nil {
 		return err
 	}
+	ruleSets, err := coreartifact.NewStore(filepath.Join(s.paths.State, "core"))
+	if err != nil {
+		return fmt.Errorf("configure rule-set resource store: %w", err)
+	}
+	s.ruleSets = ruleSets
 
 	listener, err := net.Listen("unix", s.paths.Socket)
 	if err != nil {
@@ -238,7 +246,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_entry_scoping":       true,
 				"routing_target_registry":     true,
 				"routing_rule_set_closure":    true,
-				"routing_rule_set_store":      true,
+				"routing_rule_set_store":      s.ruleSets != nil,
+				"rule_set_upload_api":         s.ruleSets != nil,
 				"selection_group_model":       true,
 				"selection_group_lowerer":     true,
 				"basic_node_model":            true,
@@ -267,6 +276,40 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			},
 		})
 	})
+	mux.HandleFunc("PUT /v1/rule-sets/{sha256}", func(w http.ResponseWriter, r *http.Request) {
+		if s.ruleSets == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "rule-set resource store is not configured"})
+			return
+		}
+		format := r.URL.Query().Get("format")
+		if format == "" {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "rule-set format is required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		path, size, err := s.ruleSets.PutRuleSet(ctx, r.Body, r.PathValue("sha256"), format)
+		if err != nil {
+			status := http.StatusBadRequest
+			switch {
+			case errors.Is(err, coreartifact.ErrRuleSetTooLarge):
+				status = http.StatusRequestEntityTooLarge
+			case errors.Is(err, coreartifact.ErrRuleSetImmutable):
+				status = http.StatusConflict
+			case errors.Is(err, context.DeadlineExceeded):
+				status = http.StatusGatewayTimeout
+			}
+			writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
+			return
+		}
+		extension := filepath.Ext(path)
+		hash := strings.TrimSuffix(filepath.Base(path), extension)
+		writeJSON(w, http.StatusCreated, apiv1.RuleSetUploadResponse{
+			SHA256: hash,
+			Format: format,
+			Bytes:  size,
+		})
+	})
 	mux.HandleFunc("GET /v1/declaration/current", func(w http.ResponseWriter, r *http.Request) {
 		current, err := store.CurrentDeclaration(r.Context())
 		if err != nil {
@@ -284,8 +327,18 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode declaration request: " + err.Error()})
 			return
 		}
-		if err := declaration.ValidateV1(request.Document); err != nil {
-			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: err.Error()})
+		var validateErr error
+		if s.ruleSets != nil {
+			validateErr = declaration.ValidateV1WithResolver(r.Context(), request.Document, s.ruleSets)
+		} else {
+			validateErr = declaration.ValidateV1(request.Document)
+		}
+		if validateErr != nil {
+			status := http.StatusBadRequest
+			if errors.Is(validateErr, declaration.ErrRuleSetResourceUnavailable) {
+				status = http.StatusUnprocessableEntity
+			}
+			writeJSON(w, status, apiv1.ErrorResponse{Error: validateErr.Error()})
 			return
 		}
 		committed, err := store.CommitDeclaration(r.Context(), request.ExpectedRevision, request.Document, request.Source)
@@ -328,6 +381,9 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			switch {
 			case errors.Is(err, storage.ErrDeclarationNotFound):
 				status = http.StatusNotFound
+			case errors.Is(err, declaration.ErrRuleSetResourceMissing),
+				errors.Is(err, declaration.ErrRuleSetResourceUnavailable):
+				status = http.StatusUnprocessableEntity
 			case errors.Is(err, context.DeadlineExceeded):
 				status = http.StatusGatewayTimeout
 			}
@@ -382,7 +438,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				status = http.StatusConflict
 			case errors.Is(err, declaration.ErrInvalidDocument),
 				errors.Is(err, declaration.ErrUnsupportedSchema),
-				errors.Is(err, declaration.ErrRuleSetsUnsupportedInV1):
+				errors.Is(err, declaration.ErrRuleSetResourceMissing),
+				errors.Is(err, declaration.ErrRuleSetResourceUnavailable):
 				status = http.StatusUnprocessableEntity
 			case errors.Is(err, context.DeadlineExceeded):
 				status = http.StatusGatewayTimeout

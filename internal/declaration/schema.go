@@ -1,22 +1,61 @@
 package declaration
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"time"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 )
 
 type documentV1 struct {
-	SchemaVersion int         `json:"schema_version"`
-	LogLevel      string      `json:"log_level"`
-	Nodes         []nodeV1    `json:"nodes"`
+	SchemaVersion int                 `json:"schema_version"`
+	LogLevel      string              `json:"log_level"`
+	RuleSets      []ruleSetResourceV1 `json:"rule_sets,omitempty"`
+	Nodes         []nodeV1            `json:"nodes"`
 	Selection     selectionV1 `json:"selection"`
 	Routing       routingV1   `json:"routing"`
 	DNS           dnsV1       `json:"dns"`
+}
+
+
+type ruleSetResourceV1 struct {
+	Ref    string                 `json:"ref"`
+	SHA256 string                 `json:"sha256"`
+	Format compiler.RuleSetFormat `json:"format"`
+}
+
+func parseRuleSetResources(items []ruleSetResourceV1) ([]RuleSetResource, error) {
+	result := make([]RuleSetResource, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for i, item := range items {
+		if err := (domain.Predicate{Kind: domain.PredicateRuleSet, Value: item.Ref}).Validate(); err != nil {
+			return nil, fmt.Errorf("%w: rule_sets[%d] ref: %v", ErrInvalidDocument, i, err)
+		}
+		if _, exists := seen[item.Ref]; exists {
+			return nil, fmt.Errorf("%w: duplicate rule-set ref %q", ErrInvalidDocument, item.Ref)
+		}
+		seen[item.Ref] = struct{}{}
+		switch item.Format {
+		case compiler.RuleSetFormatSource, compiler.RuleSetFormatBinary:
+		default:
+			return nil, fmt.Errorf("%w: rule_sets[%d] has unsupported format %q", ErrInvalidDocument, i, item.Format)
+		}
+		decoded, err := hex.DecodeString(item.SHA256)
+		if err != nil || len(decoded) != 32 {
+			return nil, fmt.Errorf("%w: rule_sets[%d] SHA-256 must be 64 hexadecimal characters", ErrInvalidDocument, i)
+		}
+		result = append(result, RuleSetResource{
+			Ref:    item.Ref,
+			SHA256: hex.EncodeToString(decoded),
+			Format: item.Format,
+		})
+	}
+	return result, nil
 }
 
 type nodeV1 struct {

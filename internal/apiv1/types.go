@@ -85,3 +85,9 @@ type DeclarationApplyResponse struct {
 	BaseConfigRevision   uint64 `json:"base_config_revision"`
 	TargetConfigRevision uint64 `json:"target_config_revision"`
 }
+
+type RuleSetUploadResponse struct {
+	SHA256 string `json:"sha256"`
+	Format string `json:"format"`
+	Bytes  int64  `json:"bytes"`
+}

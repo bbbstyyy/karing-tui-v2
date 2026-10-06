@@ -3,20 +3,110 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
+	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 )
 
 const declarationAPITestSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func TestRuleSetUploadEnablesStrictDeclarationCommit(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+
+	resourceStore, err := coreartifact.NewStore(filepath.Join(t.TempDir(), "core"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(runtimepath.Paths{})
+	server.ruleSets = resourceStore
+	handler := server.handler(store, nil)
+
+	content := []byte(`{"version":4,"rules":[]}`)
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	document := declarationAPIWithRuleSet(hash)
+	request := apiv1.DeclarationCommitRequest{
+		ExpectedRevision: 0,
+		Source:           "test:ruleset",
+		Document:         json.RawMessage(document),
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodPost, "/v1/declaration", bytes.NewReader(body)))
+	if missing.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("commit before resource upload status = %d, body=%s", missing.Code, missing.Body.String())
+	}
+	current, err := store.CurrentDeclaration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Revision != 0 {
+		t.Fatalf("missing resource advanced declaration head to %d", current.Revision)
+	}
+
+	upload := httptest.NewRecorder()
+	handler.ServeHTTP(
+		upload,
+		httptest.NewRequest(http.MethodPut, "/v1/rule-sets/"+hash+"?format=source", bytes.NewReader(content)),
+	)
+	if upload.Code != http.StatusCreated {
+		t.Fatalf("rule-set upload status = %d, body=%s", upload.Code, upload.Body.String())
+	}
+	var uploaded apiv1.RuleSetUploadResponse
+	if err := json.NewDecoder(upload.Body).Decode(&uploaded); err != nil {
+		t.Fatal(err)
+	}
+	if uploaded.SHA256 != hash || uploaded.Format != "source" || uploaded.Bytes != int64(len(content)) {
+		t.Fatalf("unexpected rule-set upload response: %+v", uploaded)
+	}
+
+	committed := httptest.NewRecorder()
+	handler.ServeHTTP(committed, httptest.NewRequest(http.MethodPost, "/v1/declaration", bytes.NewReader(body)))
+	if committed.Code != http.StatusCreated {
+		t.Fatalf("commit after resource upload status = %d, body=%s", committed.Code, committed.Body.String())
+	}
+}
+
+func TestRuleSetUploadRejectsHashMismatch(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+	resourceStore, err := coreartifact.NewStore(filepath.Join(t.TempDir(), "core"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(runtimepath.Paths{})
+	server.ruleSets = resourceStore
+	handler := server.handler(store, nil)
+
+	wrong := strings.Repeat("a", 64)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodPut, "/v1/rule-sets/"+wrong+"?format=binary", bytes.NewReader([]byte("different"))),
+	)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("hash mismatch upload status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+}
 
 func TestDeclarationAPICommitsAndReadsValidatedV1(t *testing.T) {
 	ctx := context.Background()
@@ -327,6 +417,26 @@ func TestDeclarationApplyAPIRequiresApplyRuntime(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("apply without runtime status = %d, body=%s", recorder.Code, recorder.Body.String())
 	}
+}
+
+func declarationAPIWithRuleSet(hash string) []byte {
+	document := string(declarationAPIMinimalDocument())
+	document = strings.Replace(
+		document,
+		`"log_level":"warn",`,
+		`"log_level":"warn",
+  "rule_sets":[{"ref":"geosite:cn","sha256":"`+hash+`","format":"source"}],`,
+		1,
+	)
+	document = strings.Replace(
+		document,
+		`"routing":{
+    "custom":[]`,
+		`"routing":{
+    "custom":[{"id":"rs","order":1,"enabled":true,"target":{"kind":"direct"},"match":{"op":"atom","predicate":{"kind":"rule_set","value":"geosite:cn"}}}]`,
+		1,
+	)
+	return []byte(document)
 }
 
 func declarationAPIMinimalDocument() []byte {

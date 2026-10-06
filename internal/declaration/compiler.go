@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"path/filepath"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
@@ -16,23 +17,36 @@ import (
 const SchemaVersionV1 = 1
 
 var (
-	ErrInvalidDocument         = errors.New("invalid declaration document")
-	ErrUnsupportedSchema       = errors.New("unsupported declaration schema")
-	ErrRuleSetsUnsupportedInV1 = errors.New("declaration schema v1 does not support rule-set resources yet")
+	ErrInvalidDocument             = errors.New("invalid declaration document")
+	ErrUnsupportedSchema           = errors.New("unsupported declaration schema")
+	ErrRuleSetResourceMissing      = errors.New("declaration rule-set resource metadata is missing")
+	ErrRuleSetResourceUnavailable  = errors.New("declaration rule-set resource is unavailable")
 )
+
+type RuleSetResource struct {
+	Ref    string
+	SHA256 string
+	Format compiler.RuleSetFormat
+}
 
 type Model struct {
 	LogLevel  string
+	RuleSets  []RuleSetResource
 	Nodes     []domain.Node
 	Selection domain.SelectionPlan
 	Routing   domain.RoutingPlan
 	DNS       domain.DNSPlan
 }
 
+type RuleSetResolver interface {
+	ResolveRuleSet(context.Context, string, string) (string, error)
+}
+
 type NativeCompilerOptions struct {
 	Inbounds       domain.InboundSet
 	ControlAddress netip.AddrPort
 	ControlSecret  string
+	RuleSets       RuleSetResolver
 }
 
 type NativeCompiler struct {
@@ -66,7 +80,7 @@ func (c *NativeCompiler) CompileDeclaration(ctx context.Context, document []byte
 	if err != nil {
 		return compiler.NativeConfigArtifact{}, err
 	}
-	compiled, err := compileSemantic(model)
+	compiled, err := compileSemantic(ctx, model, c.options.RuleSets, true)
 	if err != nil {
 		return compiler.NativeConfigArtifact{}, err
 	}
@@ -91,7 +105,16 @@ func ValidateV1(document []byte) error {
 	if err != nil {
 		return err
 	}
-	_, err = compileSemantic(model)
+	_, err = compileSemantic(context.Background(), model, nil, false)
+	return err
+}
+
+func ValidateV1WithResolver(ctx context.Context, document []byte, resolver RuleSetResolver) error {
+	model, err := ParseV1(document)
+	if err != nil {
+		return err
+	}
+	_, err = compileSemantic(ctx, model, resolver, true)
 	return err
 }
 
@@ -112,6 +135,10 @@ func ParseV1(document []byte) (Model, error) {
 		return Model{}, fmt.Errorf("%w: got %d, want %d", ErrUnsupportedSchema, wire.SchemaVersion, SchemaVersionV1)
 	}
 	if err := validateLogLevel(wire.LogLevel); err != nil {
+		return Model{}, err
+	}
+	ruleSets, err := parseRuleSetResources(wire.RuleSets)
+	if err != nil {
 		return Model{}, err
 	}
 
@@ -157,6 +184,7 @@ func ParseV1(document []byte) (Model, error) {
 
 	return Model{
 		LogLevel:  wire.LogLevel,
+		RuleSets:  ruleSets,
 		Nodes:     nodes,
 		Selection: selection,
 		Routing:   routing,
@@ -172,7 +200,15 @@ type semanticCompilation struct {
 	dns       compiler.CompiledDNS
 }
 
-func compileSemantic(model Model) (semanticCompilation, error) {
+func compileSemantic(
+	ctx context.Context,
+	model Model,
+	resolver RuleSetResolver,
+	requireResources bool,
+) (semanticCompilation, error) {
+	if err := ctx.Err(); err != nil {
+		return semanticCompilation{}, err
+	}
 	customIDs := make([]string, 0, len(model.Selection.Custom))
 	for _, group := range model.Selection.Custom {
 		customIDs = append(customIDs, group.GroupID)
@@ -189,18 +225,7 @@ func compileSemantic(model Model) (semanticCompilation, error) {
 	if err != nil {
 		return semanticCompilation{}, fmt.Errorf("%w: routing compile: %v", ErrInvalidDocument, err)
 	}
-	if len(routing.RuleSetRefs) != 0 {
-		return semanticCompilation{}, fmt.Errorf("%w: referenced %v", ErrRuleSetsUnsupportedInV1, routing.RuleSetRefs)
-	}
-	ruleSets, err := compiler.NewRuleSetCatalog(nil)
-	if err != nil {
-		return semanticCompilation{}, err
-	}
-	bound, err := compiler.BindRuleSetArtifacts(routing, ruleSets)
-	if err != nil {
-		return semanticCompilation{}, err
-	}
-	bound, err = compiler.BindStagedRuleSetPaths(bound, map[string]string{})
+	bound, err := bindRuleSetResources(ctx, routing, model.RuleSets, resolver, requireResources)
 	if err != nil {
 		return semanticCompilation{}, err
 	}
@@ -237,4 +262,75 @@ func compileSemantic(model Model) (semanticCompilation, error) {
 		nodes:     nodes,
 		dns:       dns,
 	}, nil
+}
+
+func bindRuleSetResources(
+	ctx context.Context,
+	routing compiler.CompiledRouting,
+	resources []RuleSetResource,
+	resolver RuleSetResolver,
+	requireResources bool,
+) (compiler.BoundRouting, error) {
+	declared := make(map[string]RuleSetResource, len(resources))
+	for _, resource := range resources {
+		declared[resource.Ref] = resource
+	}
+
+	sources := make([]compiler.RuleSetSource, 0, len(routing.RuleSetRefs))
+	staged := make(map[string]string, len(routing.RuleSetRefs))
+	for _, ref := range routing.RuleSetRefs {
+		resource, exists := declared[ref]
+		if !exists {
+			return compiler.BoundRouting{}, fmt.Errorf("%w: %q", ErrRuleSetResourceMissing, ref)
+		}
+		var path string
+		if requireResources {
+			if resolver == nil {
+				return compiler.BoundRouting{}, fmt.Errorf("%w: resolver is not configured for %q", ErrRuleSetResourceUnavailable, ref)
+			}
+			resolved, err := resolver.ResolveRuleSet(ctx, resource.SHA256, string(resource.Format))
+			if err != nil {
+				return compiler.BoundRouting{}, fmt.Errorf("%w: %q: %w", ErrRuleSetResourceUnavailable, ref, err)
+			}
+			path = resolved
+		} else {
+			extension, err := declarationRuleSetExtension(resource.Format)
+			if err != nil {
+				return compiler.BoundRouting{}, err
+			}
+			path = filepath.Join("/declaration/rule-sets/sha256", resource.SHA256+extension)
+		}
+		sources = append(sources, compiler.RuleSetSource{
+			Ref:    ref,
+			Path:   path,
+			SHA256: resource.SHA256,
+			Format: resource.Format,
+		})
+		staged[ref] = path
+	}
+
+	catalog, err := compiler.NewRuleSetCatalog(sources)
+	if err != nil {
+		return compiler.BoundRouting{}, fmt.Errorf("%w: rule-set catalog: %v", ErrInvalidDocument, err)
+	}
+	bound, err := compiler.BindRuleSetArtifacts(routing, catalog)
+	if err != nil {
+		return compiler.BoundRouting{}, fmt.Errorf("%w: rule-set binding: %v", ErrInvalidDocument, err)
+	}
+	bound, err = compiler.BindStagedRuleSetPaths(bound, staged)
+	if err != nil {
+		return compiler.BoundRouting{}, fmt.Errorf("%w: staged rule-set binding: %v", ErrInvalidDocument, err)
+	}
+	return bound, nil
+}
+
+func declarationRuleSetExtension(format compiler.RuleSetFormat) (string, error) {
+	switch format {
+	case compiler.RuleSetFormatSource:
+		return ".json", nil
+	case compiler.RuleSetFormatBinary:
+		return ".srs", nil
+	default:
+		return "", fmt.Errorf("%w: unsupported rule-set format %q", ErrInvalidDocument, format)
+	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
@@ -61,10 +62,15 @@ func buildServerRuntime(ctx context.Context, store *storage.Store, paths runtime
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("parse managed core control endpoint: %w", err)
 	}
+	ruleSets, err := coreartifact.NewStore(options.StateRoot)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("compose rule-set resource store: %w", err)
+	}
 	schemaCompiler, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
 		Inbounds:       options.Inbounds,
 		ControlAddress: controlAddress,
 		ControlSecret:  options.ControlSecret,
+		RuleSets:       ruleSets,
 	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("compose declaration compiler: %w", err)
