@@ -1,7 +1,6 @@
 package declaration
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
