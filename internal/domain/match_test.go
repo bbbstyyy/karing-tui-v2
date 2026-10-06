@@ -48,6 +48,7 @@ func TestPredicateValidation(t *testing.T) {
 		{Kind: PredicateIPCIDR, CIDR: "2001:db8::/32"},
 		{Kind: PredicateRuleSet, Value: "acl:ChinaDomain"},
 		{Kind: PredicateRuleSet, Value: "geosite:apple@ads"},
+		{Kind: PredicateRuleSet, Value: "geosite:geolocation-!cn"},
 		{Kind: PredicatePort, Port: PortRange{Start: 443, End: 443}},
 		{Kind: PredicatePort, Port: PortRange{Start: 10000, End: 20000}},
 		{Kind: PredicateNetwork, Network: NetworkTCP},

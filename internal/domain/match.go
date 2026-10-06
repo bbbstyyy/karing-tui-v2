@@ -234,7 +234,7 @@ func validateStableReference(value string) error {
 			continue
 		}
 		switch r {
-		case '-', '_', '.', ':', '/', '@':
+		case '-', '_', '.', ':', '/', '@', '!':
 			continue
 		default:
 			return fmt.Errorf("reference contains unsupported character %q", r)
