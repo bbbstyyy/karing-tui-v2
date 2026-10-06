@@ -6,11 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
@@ -34,8 +37,9 @@ type managedCoreRuntime interface {
 type serverRuntime struct {
 	core      daemonCoreRuntime
 	lifecycle *LifecycleCoordinator
-	apply     *ApplyCoordinator
-	gate      *OperationGate
+	apply        *ApplyCoordinator
+	declarations *DeclarationCompileCoordinator
+	gate         *OperationGate
 
 	mu         sync.RWMutex
 	restoreErr string
@@ -53,10 +57,35 @@ func buildServerRuntime(ctx context.Context, store *storage.Store, paths runtime
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("compose managed core: %w", err)
 	}
-	return startServerRuntime(ctx, store, managed)
+	controlAddress, err := netip.ParseAddrPort(strings.TrimPrefix(options.ControlEndpoint, "http://"))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("parse managed core control endpoint: %w", err)
+	}
+	schemaCompiler, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
+		Inbounds:       options.Inbounds,
+		ControlAddress: controlAddress,
+		ControlSecret:  options.ControlSecret,
+	})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("compose declaration compiler: %w", err)
+	}
+	declarations, err := NewDeclarationCompileCoordinator(store, schemaCompiler)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("compose declaration compile coordinator: %w", err)
+	}
+	return startServerRuntimeWithDeclarations(ctx, store, managed, declarations)
 }
 
 func startServerRuntime(ctx context.Context, store *storage.Store, managed managedCoreRuntime) (*serverRuntime, <-chan error, context.CancelFunc, error) {
+	return startServerRuntimeWithDeclarations(ctx, store, managed, nil)
+}
+
+func startServerRuntimeWithDeclarations(
+	ctx context.Context,
+	store *storage.Store,
+	managed managedCoreRuntime,
+	declarations *DeclarationCompileCoordinator,
+) (*serverRuntime, <-chan error, context.CancelFunc, error) {
 	if store == nil {
 		return nil, nil, nil, errors.New("server runtime store is nil")
 	}
@@ -91,10 +120,11 @@ func startServerRuntime(ctx context.Context, store *storage.Store, managed manag
 	}
 
 	runtime := &serverRuntime{
-		core:      managed,
-		lifecycle: lifecycle,
-		apply:     apply,
-		gate:      NewOperationGate(),
+		core:         managed,
+		lifecycle:    lifecycle,
+		apply:        apply,
+		declarations: declarations,
+		gate:         NewOperationGate(),
 	}
 	return runtime, errCh, coreCancel, nil
 }
@@ -190,6 +220,26 @@ func (r *serverRuntime) ApplyCompiled(ctx context.Context, expectedRevision uint
 
 func (r *serverRuntime) ManagedApplyReady() bool {
 	return r != nil && r.apply != nil
+}
+
+func (r *serverRuntime) DeclarationCompilerReady() bool {
+	return r != nil && r.declarations != nil
+}
+
+func (r *serverRuntime) CompileDeclarationRevision(
+	ctx context.Context,
+	revision uint64,
+) (compiler.NativeConfigArtifact, error) {
+	if r == nil || r.declarations == nil {
+		return compiler.NativeConfigArtifact{}, errors.New("declaration compiler runtime is not configured")
+	}
+	var artifact compiler.NativeConfigArtifact
+	err := r.gate.Do(ctx, "declaration-compile", func(operationCtx context.Context) error {
+		var compileErr error
+		artifact, compileErr = r.declarations.CompileRevision(operationCtx, revision)
+		return compileErr
+	})
+	return artifact, err
 }
 
 func (r *serverRuntime) ActiveOperation() OperationSnapshot {

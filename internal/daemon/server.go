@@ -13,6 +13,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 	"github.com/bbbstyyy/karing-tui-v2/internal/version"
@@ -153,6 +154,11 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			writeJSON(w, http.StatusInternalServerError, apiv1.ErrorResponse{Error: "read persistent state"})
 			return
 		}
+		currentDeclaration, err := store.CurrentDeclaration(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, apiv1.ErrorResponse{Error: "read declaration state"})
+			return
+		}
 		now := time.Now().UTC()
 		response := apiv1.StatusResponse{
 			APIVersion:                apiv1.Version,
@@ -162,6 +168,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			StartedAt:                 s.started.Format(time.RFC3339Nano),
 			UptimeSeconds:             int64(now.Sub(s.started).Seconds()),
 			ConfigRevision:            snapshot.Revision,
+			DeclarationRevision:       currentDeclaration.Revision,
 			AppliedGenerationID:       snapshot.AppliedGenerationID,
 			LastKnownGoodGenerationID: snapshot.LastKnownGoodGenerationID,
 			RecoveryRequired:          snapshot.RecoveryRequired,
@@ -186,6 +193,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 		coreEnabled := runtime != nil
 		managedApplyRuntime := runtime != nil && runtime.ManagedApplyReady()
+		declarationCompileRuntime := runtime != nil && runtime.DeclarationCompilerReady()
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			APIVersion: apiv1.Version,
 			Capabilities: map[string]bool{
@@ -196,6 +204,9 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"sqlite_state":                true,
 				"declaration_revisions":       true,
 				"declaration_generation_link": true,
+				"declaration_schema_v1":       true,
+				"declaration_commit_api":      true,
+				"declaration_compile_preview": declarationCompileRuntime,
 				"apply_journal":               true,
 				"apply_coordinator":           true,
 				"managed_apply":               false,
@@ -254,6 +265,85 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			},
 		})
 	})
+	mux.HandleFunc("GET /v1/declaration/current", func(w http.ResponseWriter, r *http.Request) {
+		current, err := store.CurrentDeclaration(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, apiv1.ErrorResponse{Error: "read current declaration"})
+			return
+		}
+		writeJSON(w, http.StatusOK, declarationResponse(current))
+	})
+	mux.HandleFunc("POST /v1/declaration", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, storage.MaxDeclarationBytes+4096)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		var request apiv1.DeclarationCommitRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode declaration request: " + err.Error()})
+			return
+		}
+		if err := declaration.ValidateV1(request.Document); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: err.Error()})
+			return
+		}
+		committed, err := store.CommitDeclaration(r.Context(), request.ExpectedRevision, request.Document, request.Source)
+		if err != nil {
+			status := http.StatusInternalServerError
+			switch {
+			case errors.Is(err, storage.ErrDeclarationRevisionConflict):
+				status = http.StatusConflict
+			case errors.Is(err, storage.ErrInvalidDeclaration),
+				errors.Is(err, storage.ErrDeclarationTooLarge):
+				status = http.StatusBadRequest
+			}
+			writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, declarationResponse(committed))
+	})
+	mux.HandleFunc("POST /v1/declaration/compile", func(w http.ResponseWriter, r *http.Request) {
+		if runtime == nil || !runtime.DeclarationCompilerReady() {
+			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "declaration compiler runtime is not configured"})
+			return
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		var request apiv1.DeclarationCompileRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode declaration compile request: " + err.Error()})
+			return
+		}
+		if request.Revision == 0 {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "declaration revision must be positive"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 20*time.Second)
+		defer cancel()
+		artifact, err := runtime.CompileDeclarationRevision(ctx, request.Revision)
+		if err != nil {
+			status := http.StatusBadRequest
+			switch {
+			case errors.Is(err, storage.ErrDeclarationNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, context.DeadlineExceeded):
+				status = http.StatusGatewayTimeout
+			}
+			writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, apiv1.DeclarationCompileResponse{
+			Revision:          artifact.Manifest.DeclarationRevision,
+			DeclarationSHA256: artifact.Manifest.DeclarationSHA256,
+			NativeSchemaID:    artifact.Manifest.SchemaID,
+			ConfigSHA256:      artifact.Manifest.ConfigSHA256,
+			InboundTags:       append([]string(nil), artifact.Manifest.InboundTags...),
+			OutboundTags:      append([]string(nil), artifact.Manifest.OutboundTags...),
+			DNSServerTags:     append([]string(nil), artifact.Manifest.DNSServerTags...),
+			RouteEntryCount:   len(artifact.SourceMap),
+			RuleSetCount:      len(artifact.Manifest.RuleSets),
+		})
+	})
 	mux.HandleFunc("POST /v1/core/start", func(w http.ResponseWriter, r *http.Request) {
 		runCoreOperation(w, r, runtime, "start")
 	})
@@ -261,6 +351,17 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		runCoreOperation(w, r, runtime, "stop")
 	})
 	return mux
+}
+
+func declarationResponse(value storage.DeclarationRevision) apiv1.DeclarationResponse {
+	return apiv1.DeclarationResponse{
+		Revision:       value.Revision,
+		ParentRevision: value.ParentRevision,
+		SHA256:         value.SHA256,
+		Source:         value.Source,
+		CreatedAt:      value.CreatedAt.Format(time.RFC3339Nano),
+		Document:       append(json.RawMessage(nil), value.DocumentJSON...),
+	}
 }
 
 func runCoreOperation(w http.ResponseWriter, r *http.Request, runtime *serverRuntime, operation string) {

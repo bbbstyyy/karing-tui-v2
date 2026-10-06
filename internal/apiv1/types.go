@@ -1,5 +1,7 @@
 package apiv1
 
+import "encoding/json"
+
 const Version = "v1"
 
 type StatusResponse struct {
@@ -10,6 +12,7 @@ type StatusResponse struct {
 	StartedAt                 string `json:"started_at"`
 	UptimeSeconds             int64  `json:"uptime_seconds"`
 	ConfigRevision            uint64 `json:"config_revision"`
+	DeclarationRevision       uint64 `json:"declaration_revision"`
 	AppliedGenerationID       *int64 `json:"applied_generation_id,omitempty"`
 	LastKnownGoodGenerationID *int64 `json:"last_known_good_generation_id,omitempty"`
 	RecoveryRequired          bool   `json:"recovery_required"`
@@ -34,4 +37,35 @@ type HealthResponse struct {
 
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+type DeclarationResponse struct {
+	Revision       uint64          `json:"revision"`
+	ParentRevision *uint64         `json:"parent_revision,omitempty"`
+	SHA256         string          `json:"sha256,omitempty"`
+	Source         string          `json:"source,omitempty"`
+	CreatedAt      string          `json:"created_at,omitempty"`
+	Document       json.RawMessage `json:"document,omitempty"`
+}
+
+type DeclarationCommitRequest struct {
+	ExpectedRevision uint64          `json:"expected_revision"`
+	Source           string          `json:"source"`
+	Document         json.RawMessage `json:"document"`
+}
+
+type DeclarationCompileRequest struct {
+	Revision uint64 `json:"revision"`
+}
+
+type DeclarationCompileResponse struct {
+	Revision          uint64   `json:"revision"`
+	DeclarationSHA256 string   `json:"declaration_sha256"`
+	NativeSchemaID    string   `json:"native_schema_id"`
+	ConfigSHA256      string   `json:"config_sha256"`
+	InboundTags       []string `json:"inbound_tags"`
+	OutboundTags      []string `json:"outbound_tags"`
+	DNSServerTags     []string `json:"dns_server_tags,omitempty"`
+	RouteEntryCount   int      `json:"route_entry_count"`
+	RuleSetCount      int      `json:"rule_set_count"`
 }
