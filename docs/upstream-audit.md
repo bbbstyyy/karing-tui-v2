@@ -56,7 +56,9 @@ Declaration v1 now persists the pinned CN snapshot identity, typed overlay, and 
 
 Real-core CN fixtures now verify the default active group source-map order, the priority of `cn.domestic-direct` over `cn.foreign-proxy`, and an overlay transition that disables domestic-direct and sends a `geosite:geolocation-!cn` match through CurrentSelected.
 
-Full `cn_preset` capability remains false. Complete trusted/offline resource closure and Linux `processName` compatibility are still required.
+The complete CN preset plus region logical resource closure contains 68 unique refs. The exact pinned Karing asset tree contains 67 corresponding `.srs` files; `geoip:bing` is the sole dangling upstream reference. The last publicly inspectable Karing preset importer pruned unavailable built-in refs, so the project records that absence rather than inventing a replacement file. A deterministic audit tool/workflow now computes byte counts and SHA-256 values from the exact pinned Karing asset commit. Distribution remains blocked because the generated ruleset corpus combines multiple upstream data sources without a closed, repository-wide redistribution/license record.
+
+Full `cn_preset` capability remains false. A distribution-ready offline resource package/license closure and Linux `processName` compatibility are still required.
 
 ### M1 standalone core build is approved
 
@@ -111,7 +113,7 @@ Implemented now:
 - immutable rule-set upload/storage with bounded streaming input, SHA-256 content addressing, declaration `ref + digest + format` binding, active resource closure, and real-core rejection when a bound resource disappears;
 - independent Custom/GeoSite/GeoIP/ACL source-layer switches that preserve per-group state while excluding disabled sources from active routes, DNS bindings, source maps, and resource closure;
 - deterministic region GeoSite/GeoIP auto-append lowering plus declaration-v1 region-policy persistence, placing synthetic DIRECT rules after explicit entries while preserving duplicate user priority and independent whole-layer switches;
-- an exact embedded 28-group CN snapshot, typed overlay model, declaration-v1 snapshot/overlay persistence, arbitrary validated L1 interleaving with ordinary Custom groups, evidence-bounded Linux lowering for the pinned default active set, and real-core default/overlay route-outcome fixtures while unresolved process semantics remain fail-closed;
+- an exact embedded 28-group CN snapshot, typed overlay model, declaration-v1 snapshot/overlay persistence, arbitrary validated L1 interleaving with ordinary Custom groups, evidence-bounded Linux lowering for the pinned default active set, real-core default/overlay route-outcome fixtures, and a complete 68-ref offline-resource audit plan with pinned-asset SHA-256 generation while distribution licensing and process semantics remain fail-closed;
 - a sample `systemd --user` service that keeps the daemon in the foreground.
 
 Still open before the stable-service foundation can be treated as release-ready: generation retention/garbage collection, packaging/license closure for core distribution, and broader process-level crash/power-loss fault injection across the real external core/SQLite boundary. Database online backup remains a later recovery/backup milestone rather than a reason to weaken the current immutable generation/apply guarantees.

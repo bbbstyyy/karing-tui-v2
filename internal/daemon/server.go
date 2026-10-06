@@ -271,6 +271,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_ir":                  false,
 				"cn_preset_snapshot":          true,
 				"cn_preset_resource_refs":     true,
+				"cn_preset_resource_audit":    true,
+				"cn_preset_offline_bundle":    false,
 				"cn_preset_overrides":         true,
 				"cn_preset_linux_lowerer":     true,
 				"cn_preset_interleaving":      true,
