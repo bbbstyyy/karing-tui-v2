@@ -306,7 +306,6 @@ func TestManagedCoreApplyPreservesStoppedIntent(t *testing.T) {
 	}
 }
 
-
 func TestManagedCoreVerifiesPersistedGenerationMetadataBeforeCheck(t *testing.T) {
 	config := []byte("{}")
 	configHash := testSHA256(config)
