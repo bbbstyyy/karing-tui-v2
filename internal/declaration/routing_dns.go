@@ -7,16 +7,16 @@ import (
 )
 
 type routingV1 struct {
-	CustomEnabled  *bool             `json:"custom_enabled,omitempty"`
-	GeoSiteEnabled *bool             `json:"geosite_enabled,omitempty"`
-	GeoIPEnabled   *bool             `json:"geoip_enabled,omitempty"`
-	ACLEnabled     *bool             `json:"acl_enabled,omitempty"`
-	RegionAppend   *regionAppendV1   `json:"region_append,omitempty"`
-	Custom         []routeGroupV1    `json:"custom,omitempty"`
-	GeoSite        []routeGroupV1    `json:"geosite,omitempty"`
-	GeoIP          []routeGroupV1    `json:"geoip,omitempty"`
-	ACL            []routeGroupV1    `json:"acl,omitempty"`
-	Final          domain.TargetRef  `json:"final"`
+	CustomEnabled  *bool            `json:"custom_enabled,omitempty"`
+	GeoSiteEnabled *bool            `json:"geosite_enabled,omitempty"`
+	GeoIPEnabled   *bool            `json:"geoip_enabled,omitempty"`
+	ACLEnabled     *bool            `json:"acl_enabled,omitempty"`
+	RegionAppend   *regionAppendV1  `json:"region_append,omitempty"`
+	Custom         []routeGroupV1   `json:"custom,omitempty"`
+	GeoSite        []routeGroupV1   `json:"geosite,omitempty"`
+	GeoIP          []routeGroupV1   `json:"geoip,omitempty"`
+	ACL            []routeGroupV1   `json:"acl,omitempty"`
+	Final          domain.TargetRef `json:"final"`
 }
 
 type regionAppendV1 struct {
