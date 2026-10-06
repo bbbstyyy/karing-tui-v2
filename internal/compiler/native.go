@@ -35,26 +35,27 @@ type NativeConfigInput struct {
 }
 
 type NativeConfigArtifact struct {
-	JSON     []byte
-	SHA256   string
-	Manifest NativeManifest
+	JSON      []byte
+	SHA256    string
+	Manifest  NativeManifest
+	SourceMap []RouteSourceMapEntry
 }
 
 type NativeManifest struct {
-	SchemaID      string
-	ConfigSHA256  string
-	InboundTags   []string
-	OutboundTags  []string
-	DNSServerTags []string
-	RuleSets      []NativeRuleSetManifest
+	SchemaID      string                  `json:"schema_id"`
+	ConfigSHA256  string                  `json:"config_sha256"`
+	InboundTags   []string                `json:"inbound_tags"`
+	OutboundTags  []string                `json:"outbound_tags"`
+	DNSServerTags []string                `json:"dns_server_tags,omitempty"`
+	RuleSets      []NativeRuleSetManifest `json:"rule_sets,omitempty"`
 }
 
 type NativeRuleSetManifest struct {
-	Ref         string
-	RuntimeTag  string
-	RuntimePath string
-	SHA256      string
-	Format      RuleSetFormat
+	Ref         string        `json:"ref"`
+	RuntimeTag  string        `json:"runtime_tag"`
+	RuntimePath string        `json:"runtime_path"`
+	SHA256      string        `json:"sha256"`
+	Format      RuleSetFormat `json:"format"`
 }
 
 type nativeLogConfig struct {
@@ -289,12 +290,25 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 		Manifest: NativeManifest{
 			SchemaID:      NativeSchemaID,
 			ConfigSHA256:  configSHA,
-			InboundTags:   inboundTags,
-			OutboundTags:  outboundTags,
-			DNSServerTags: dnsTags,
-			RuleSets:      manifestRuleSets,
+			InboundTags:   append([]string(nil), inboundTags...),
+			OutboundTags:  append([]string(nil), outboundTags...),
+			DNSServerTags: append([]string(nil), dnsTags...),
+			RuleSets:      append([]NativeRuleSetManifest(nil), manifestRuleSets...),
 		},
+		SourceMap: append([]RouteSourceMapEntry(nil), input.Routing.SourceMap...),
 	}, nil
+}
+
+func (a NativeConfigArtifact) MetadataJSON() (manifestJSON []byte, sourceMapJSON []byte, err error) {
+	manifestJSON, err = json.Marshal(a.Manifest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal native manifest: %w", err)
+	}
+	sourceMapJSON, err = json.Marshal(a.SourceMap)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal native source map: %w", err)
+	}
+	return manifestJSON, sourceMapJSON, nil
 }
 
 func compileNativeDNS(compiled CompiledDNS, targets TargetCatalog) (*nativeDNSConfig, []string, error) {

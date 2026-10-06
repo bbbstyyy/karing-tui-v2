@@ -21,6 +21,16 @@ type applyStore interface {
 	CommitApplied(context.Context, int64, bool) error
 }
 
+type metadataApplyStore interface {
+	PrepareApplyWithMetadata(context.Context, uint64, []byte, []byte, []byte) (storage.Attempt, error)
+}
+
+type CompiledGenerationArtifacts struct {
+	Config    []byte
+	Manifest  []byte
+	SourceMap []byte
+}
+
 type Generation struct {
 	ID     int64
 	Config []byte
@@ -91,7 +101,35 @@ func NewApplyCoordinator(store applyStore, core applyCore, policy ApplyPolicy) (
 }
 
 func (c *ApplyCoordinator) Apply(ctx context.Context, expectedRevision uint64, config []byte) (storage.Attempt, error) {
-	attempt, err := c.store.PrepareApply(ctx, expectedRevision, config)
+	return c.applyPrepared(ctx, expectedRevision, config, func(prepareCtx context.Context) (storage.Attempt, error) {
+		return c.store.PrepareApply(prepareCtx, expectedRevision, config)
+	})
+}
+
+func (c *ApplyCoordinator) ApplyCompiled(
+	ctx context.Context,
+	expectedRevision uint64,
+	artifacts CompiledGenerationArtifacts,
+) (storage.Attempt, error) {
+	store, ok := c.store.(metadataApplyStore)
+	if !ok {
+		return storage.Attempt{}, errors.New("apply store does not support generation metadata")
+	}
+	config := append([]byte(nil), artifacts.Config...)
+	manifest := append([]byte(nil), artifacts.Manifest...)
+	sourceMap := append([]byte(nil), artifacts.SourceMap...)
+	return c.applyPrepared(ctx, expectedRevision, config, func(prepareCtx context.Context) (storage.Attempt, error) {
+		return store.PrepareApplyWithMetadata(prepareCtx, expectedRevision, config, manifest, sourceMap)
+	})
+}
+
+func (c *ApplyCoordinator) applyPrepared(
+	ctx context.Context,
+	expectedRevision uint64,
+	config []byte,
+	prepare func(context.Context) (storage.Attempt, error),
+) (storage.Attempt, error) {
+	attempt, err := prepare(ctx)
 	if err != nil {
 		return storage.Attempt{}, err
 	}

@@ -35,10 +35,10 @@ var (
 )
 
 type TargetRef struct {
-	Kind      TargetKind
-	GroupID   string
-	ProfileID string
-	NodeID    string
+	Kind      TargetKind `json:"kind"`
+	GroupID   string     `json:"group_id,omitempty"`
+	ProfileID string     `json:"profile_id,omitempty"`
+	NodeID    string     `json:"node_id,omitempty"`
 }
 
 func (t TargetRef) Validate() error {

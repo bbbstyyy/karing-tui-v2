@@ -356,3 +356,84 @@ func nativeTestInput(t *testing.T, server string) NativeConfigInput {
 		Nodes:          nodes,
 	}
 }
+
+func TestNativeConfigArtifactMetadataJSONIsDeterministic(t *testing.T) {
+	input := nativeTestInput(t, "127.0.0.1")
+	match := domain.Atom(domain.Predicate{Kind: domain.PredicateDomainSuffix, Value: "example.com"})
+	routing, err := CompileRouting(domain.RoutingPlan{
+		Custom: []domain.RouteGroup{{
+			ID:    "custom-a",
+			Layer: domain.LayerCustom,
+			Order: 1,
+			Match: &match,
+			Binding: domain.RouteBinding{
+				Enabled: true,
+				Target:  domain.TargetRef{Kind: domain.TargetDirect},
+			},
+		}},
+		Final: domain.TargetRef{Kind: domain.TargetDirect},
+	}, input.Targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := NewRuleSetCatalog(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := BindRuleSetArtifacts(routing, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err = BindStagedRuleSetPaths(bound, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Routing = bound
+
+	artifact, err := CompileNativeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestA, sourceMapA, err := artifact.MetadataJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestB, sourceMapB, err := artifact.MetadataJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(manifestA) != string(manifestB) || string(sourceMapA) != string(sourceMapB) {
+		t.Fatal("metadata JSON is not deterministic")
+	}
+	if !strings.Contains(string(manifestA), `"schema_id":"`+NativeSchemaID+`"`) ||
+		!strings.Contains(string(manifestA), `"config_sha256":"`+artifact.SHA256+`"`) ||
+		!strings.Contains(string(manifestA), `"inbound_tags"`) ||
+		!strings.Contains(string(manifestA), `"outbound_tags"`) {
+		t.Fatalf("unexpected manifest JSON: %s", manifestA)
+	}
+	if strings.Contains(string(manifestA), "SchemaID") || strings.Contains(string(sourceMapA), "RuleIndex") {
+		t.Fatalf("metadata leaked Go field names: manifest=%s source-map=%s", manifestA, sourceMapA)
+	}
+	if !strings.Contains(string(sourceMapA), `"rule_index":2`) ||
+		!strings.Contains(string(sourceMapA), `"layer":"custom"`) ||
+		!strings.Contains(string(sourceMapA), `"group_id":"custom-a"`) ||
+		!strings.Contains(string(sourceMapA), `"target":{"kind":"DIRECT"}`) {
+		t.Fatalf("unexpected source-map JSON: %s", sourceMapA)
+	}
+}
+
+func TestNativeConfigArtifactMetadataJSONCopiesSourceMap(t *testing.T) {
+	input := nativeTestInput(t, "127.0.0.1")
+	artifact, err := CompileNativeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.SourceMap) == 0 {
+		t.Fatal("compiled artifact has no source map")
+	}
+	originalGroup := artifact.SourceMap[0].GroupID
+	input.Routing.SourceMap[0].GroupID = "mutated-after-compile"
+	if artifact.SourceMap[0].GroupID != originalGroup {
+		t.Fatal("compiled artifact source map aliases compiler input")
+	}
+}

@@ -47,15 +47,15 @@ type RouteRule struct {
 }
 
 type RouteSourceMapEntry struct {
-	RuleIndex    int
-	Layer        domain.RoutingLayer
-	GroupID      string
-	Final        bool
-	Target       domain.TargetRef
-	Action       string
-	Outbound     string
-	Server       string
-	DNSProfileID string
+	RuleIndex    int                 `json:"rule_index"`
+	Layer        domain.RoutingLayer `json:"layer"`
+	GroupID      string              `json:"group_id"`
+	Final        bool                `json:"final"`
+	Target       domain.TargetRef    `json:"target"`
+	Action       string              `json:"action"`
+	Outbound     string              `json:"outbound,omitempty"`
+	Server       string              `json:"server,omitempty"`
+	DNSProfileID string              `json:"dns_profile_id,omitempty"`
 }
 
 type CompiledRouting struct {

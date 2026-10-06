@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
@@ -143,6 +144,31 @@ func (r *serverRuntime) Stop(ctx context.Context) error {
 		return errors.New("core runtime is not configured")
 	}
 	return r.gate.Do(ctx, "core-stop", r.lifecycle.Stop)
+}
+
+func (r *serverRuntime) ApplyNativeArtifact(
+	ctx context.Context,
+	expectedRevision uint64,
+	artifact compiler.NativeConfigArtifact,
+) (storage.Attempt, error) {
+	if r == nil || r.apply == nil {
+		return storage.Attempt{}, errors.New("managed apply runtime is not configured")
+	}
+	manifest, sourceMap, err := artifact.MetadataJSON()
+	if err != nil {
+		return storage.Attempt{}, fmt.Errorf("serialize compiled generation metadata: %w", err)
+	}
+	var attempt storage.Attempt
+	err = r.gate.Do(ctx, "config-apply", func(operationCtx context.Context) error {
+		var applyErr error
+		attempt, applyErr = r.apply.ApplyCompiled(operationCtx, expectedRevision, CompiledGenerationArtifacts{
+			Config:    artifact.JSON,
+			Manifest:  manifest,
+			SourceMap: sourceMap,
+		})
+		return applyErr
+	})
+	return attempt, err
 }
 
 func (r *serverRuntime) ApplyCompiled(ctx context.Context, expectedRevision uint64, config []byte) (storage.Attempt, error) {

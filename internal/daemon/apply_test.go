@@ -350,3 +350,76 @@ func newApplyStore(t *testing.T, ctx context.Context) *storage.Store {
 	}
 	return store
 }
+
+func TestApplyCoordinatorCompiledArtifactsPersistMetadata(t *testing.T) {
+	ctx := context.Background()
+	store := newApplyStore(t, ctx)
+	defer store.Close()
+	core := &fakeApplyCore{}
+	coordinator, err := NewApplyCoordinator(store, core, testApplyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	artifacts := CompiledGenerationArtifacts{
+		Config:    []byte(`{"generation":1}`),
+		Manifest:  []byte(`{"schema_id":"test","config_sha256":"placeholder"}`),
+		SourceMap: []byte(`[{"rule_index":0,"group_id":"FINAL"}]`),
+	}
+	configCopy := append([]byte(nil), artifacts.Config...)
+	manifestCopy := append([]byte(nil), artifacts.Manifest...)
+	sourceMapCopy := append([]byte(nil), artifacts.SourceMap...)
+
+	attempt, err := coordinator.ApplyCompiled(ctx, 0, artifacts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts.Config[0] = 'x'
+	artifacts.Manifest[0] = 'x'
+	artifacts.SourceMap[0] = 'x'
+
+	persisted, err := store.GenerationArtifacts(ctx, attempt.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(persisted.ConfigJSON) != string(configCopy) ||
+		string(persisted.ManifestJSON) != string(manifestCopy) ||
+		string(persisted.SourceMapJSON) != string(sourceMapCopy) {
+		t.Fatalf("compiled generation metadata changed: %+v", persisted)
+	}
+	if got := strings.Join(core.events, ","); got != "check,activate,verify" {
+		t.Fatalf("core events = %q", got)
+	}
+}
+
+type legacyOnlyApplyStore struct {
+	applyStore
+}
+
+func TestApplyCoordinatorCompiledArtifactsRequiresMetadataStore(t *testing.T) {
+	ctx := context.Background()
+	store := newApplyStore(t, ctx)
+	defer store.Close()
+	core := &fakeApplyCore{}
+	coordinator, err := NewApplyCoordinator(legacyOnlyApplyStore{applyStore: store}, core, testApplyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = coordinator.ApplyCompiled(ctx, 0, CompiledGenerationArtifacts{
+		Config:    []byte(`{"generation":1}`),
+		Manifest:  []byte(`{}`),
+		SourceMap: []byte(`[]`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not support generation metadata") {
+		t.Fatalf("metadata capability error = %v", err)
+	}
+
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ActiveAttemptID != nil || snapshot.Revision != 0 {
+		t.Fatalf("unsupported metadata apply changed durable state: %+v", snapshot)
+	}
+}
