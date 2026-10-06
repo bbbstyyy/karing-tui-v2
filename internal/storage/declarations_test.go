@@ -85,8 +85,7 @@ func TestDeclarationRevisionValidationDoesNotChangeCurrentState(t *testing.T) {
 		{name: "invalid json", document: []byte("{"), source: "api", want: ErrInvalidDeclaration},
 		{name: "empty source", document: []byte(`{}`), want: ErrInvalidDeclaration},
 		{name: "padded source", document: []byte(`{}`), source: " api", want: ErrInvalidDeclaration},
-		{name: "unsafe source", document: []byte(`{}`), source: "api
-user", want: ErrInvalidDeclaration},
+		{name: "unsafe source", document: []byte(`{}`), source: "api\nuser", want: ErrInvalidDeclaration},
 		{name: "long source", document: []byte(`{}`), source: strings.Repeat("a", 129), want: ErrInvalidDeclaration},
 	}
 	for _, tc := range cases {
