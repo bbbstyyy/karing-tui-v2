@@ -87,7 +87,7 @@ func TestExecRunnerLargeOutputDoesNotBlockManagedProcess(t *testing.T) {
 		t,
 		"#!/bin/sh\n"+
 			"dd if=/dev/zero bs=4096 count=512 2>/dev/null\n"+
-			"dd if=/dev/zero bs=4096 count=512 2>/dev/null >&2\n"+
+			"dd if=/dev/zero bs=4096 count=512 1>&2 2>/dev/null\n"+
 			"exit 0\n",
 	)
 	stdout := NewRingBuffer(4096)
