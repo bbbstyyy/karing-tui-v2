@@ -287,6 +287,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"group_dns_lowerer":           true,
 				"group_dns_route_binding":     true,
 				"dns_fallback_lowerer":        true,
+				"dns_runtime_paths_observed":  true,
 				"bounded_core_log_buffer":     true,
 				"core_supervision":            coreEnabled,
 				"proxy_inbounds":              false,
