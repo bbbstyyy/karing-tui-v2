@@ -83,10 +83,10 @@ func TestCompileNativeConfigEmitsGroupDNSResolveAndDetour(t *testing.T) {
 	if !foundServer {
 		t.Fatal("Group DNS server missing")
 	}
-	if len(decoded.Route.Rules) < 4 ||
-		decoded.Route.Rules[2].Action != "resolve" ||
-		decoded.Route.Rules[2].Server != groupTag ||
-		decoded.Route.Rules[3].Action != "route" {
+	if len(decoded.Route.Rules) < 6 ||
+		decoded.Route.Rules[4].Action != "resolve" ||
+		decoded.Route.Rules[4].Server != groupTag ||
+		decoded.Route.Rules[5].Action != "route" {
 		t.Fatalf("Group DNS resolve/route pair missing: %+v", decoded.Route.Rules)
 	}
 }
