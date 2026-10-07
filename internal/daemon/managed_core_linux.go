@@ -208,7 +208,11 @@ func (m *ManagedCore) Connections(ctx context.Context) (coreapi.ConnectionsSnaps
 	return m.connections.Snapshot(ctx)
 }
 
-func (m *ManagedCore) SetRoutingMode(ctx context.Context, mode storage.RoutingMode) error {
+func (m *ManagedCore) SetRoutingPolicy(
+	ctx context.Context,
+	mode storage.RoutingMode,
+	privateDirect bool,
+) error {
 	m.transitionMu.Lock()
 	defer m.transitionMu.Unlock()
 	if m.mode == nil {
@@ -217,27 +221,38 @@ func (m *ManagedCore) SetRoutingMode(ctx context.Context, mode storage.RoutingMo
 	if m.supervisor.Snapshot().State != core.StateRunning {
 		return core.ErrNotRunning
 	}
-	name, err := routingModeCoreName(mode)
+	name, err := routingModeCoreName(mode, privateDirect)
 	if err != nil {
 		return err
 	}
 	return m.mode.Set(ctx, name)
 }
 
-func (m *ManagedCore) CurrentRoutingMode(ctx context.Context) (storage.RoutingMode, error) {
+func (m *ManagedCore) CurrentRoutingPolicy(ctx context.Context) (storage.RoutingMode, bool, error) {
 	m.transitionMu.Lock()
 	defer m.transitionMu.Unlock()
 	if m.mode == nil {
-		return "", errors.New("core mode control is not configured")
+		return "", false, errors.New("core mode control is not configured")
 	}
 	if m.supervisor.Snapshot().State != core.StateRunning {
-		return "", core.ErrNotRunning
+		return "", false, core.ErrNotRunning
 	}
-	snapshot, err := m.mode.Current(ctx)
+	live, err := m.mode.Current(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return routingModeFromCore(snapshot.Mode)
+	mode, privateDirect, err := routingModeFromCore(live.Mode)
+	if err != nil {
+		return "", false, err
+	}
+	if mode == storage.RoutingModeDirect {
+		snapshot, snapshotErr := m.state.Snapshot(ctx)
+		if snapshotErr != nil {
+			return "", false, snapshotErr
+		}
+		privateDirect = snapshot.PrivateDirect
+	}
+	return mode, privateDirect, nil
 }
 
 func (m *ManagedCore) SelectCurrent(ctx context.Context, outboundTag string) error {
@@ -540,7 +555,7 @@ func (m *ManagedCore) restoreRoutingMode(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read persisted routing mode: %w", err)
 	}
-	name, err := routingModeCoreName(snapshot.RoutingMode)
+	name, err := routingModeCoreName(snapshot.RoutingMode, snapshot.PrivateDirect)
 	if err != nil {
 		return err
 	}

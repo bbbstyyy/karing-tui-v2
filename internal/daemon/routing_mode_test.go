@@ -18,6 +18,7 @@ import (
 type fakeRoutingModeStore struct {
 	snapshot storage.Snapshot
 	setMode  storage.RoutingMode
+	setPriv  bool
 	setErr   error
 }
 
@@ -25,18 +26,25 @@ func (s *fakeRoutingModeStore) Snapshot(context.Context) (storage.Snapshot, erro
 	return s.snapshot, nil
 }
 
-func (s *fakeRoutingModeStore) SetRoutingMode(_ context.Context, mode storage.RoutingMode) error {
+func (s *fakeRoutingModeStore) SetRoutingPolicy(
+	_ context.Context,
+	mode storage.RoutingMode,
+	privateDirect bool,
+) error {
 	if s.setErr != nil {
 		return s.setErr
 	}
 	s.setMode = mode
+	s.setPriv = privateDirect
 	s.snapshot.RoutingMode = mode
+	s.snapshot.PrivateDirect = privateDirect
 	return nil
 }
 
 type fakeRoutingModeCore struct {
 	snapshot core.Snapshot
 	mode     storage.RoutingMode
+	priv     bool
 	setCalls int
 	setErr   error
 	readErr  error
@@ -46,20 +54,25 @@ func (c *fakeRoutingModeCore) Snapshot() core.Snapshot {
 	return c.snapshot
 }
 
-func (c *fakeRoutingModeCore) SetRoutingMode(_ context.Context, mode storage.RoutingMode) error {
+func (c *fakeRoutingModeCore) SetRoutingPolicy(
+	_ context.Context,
+	mode storage.RoutingMode,
+	privateDirect bool,
+) error {
 	c.setCalls++
 	if c.setErr != nil {
 		return c.setErr
 	}
 	c.mode = mode
+	c.priv = privateDirect
 	return nil
 }
 
-func (c *fakeRoutingModeCore) CurrentRoutingMode(context.Context) (storage.RoutingMode, error) {
+func (c *fakeRoutingModeCore) CurrentRoutingPolicy(context.Context) (storage.RoutingMode, bool, error) {
 	if c.readErr != nil {
-		return "", c.readErr
+		return "", false, c.readErr
 	}
-	return c.mode, nil
+	return c.mode, c.priv, nil
 }
 
 func TestRoutingModeCoordinatorPersistsAndUpdatesRunningCore(t *testing.T) {
@@ -72,29 +85,34 @@ func TestRoutingModeCoordinatorPersistsAndUpdatesRunningCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := coordinator.Set(context.Background(), storage.RoutingModeGlobal)
+	privateDirect := true
+	state, err := coordinator.SetPolicy(context.Background(), storage.RoutingModeGlobal, &privateDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.setMode != storage.RoutingModeGlobal ||
-		coreRuntime.setCalls != 1 ||
-		!state.Applied ||
-		state.LiveMode != storage.RoutingModeGlobal {
-		t.Fatalf("routing mode state = %+v store=%q calls=%d", state, store.setMode, coreRuntime.setCalls)
+	if store.setMode != storage.RoutingModeGlobal || !store.setPriv ||
+		coreRuntime.setCalls != 1 || !state.Applied ||
+		state.LiveMode != storage.RoutingModeGlobal ||
+		state.LivePrivateDirect == nil || !*state.LivePrivateDirect {
+		t.Fatalf("routing policy state = %+v store=%q/%t calls=%d", state, store.setMode, store.setPriv, coreRuntime.setCalls)
 	}
 }
 
 func TestRoutingModeCoordinatorPersistsWhileStopped(t *testing.T) {
-	store := &fakeRoutingModeStore{snapshot: storage.Snapshot{RoutingMode: storage.RoutingModeRule}}
+	store := &fakeRoutingModeStore{snapshot: storage.Snapshot{
+		RoutingMode:   storage.RoutingModeRule,
+		PrivateDirect: true,
+	}}
 	coreRuntime := &fakeRoutingModeCore{snapshot: core.Snapshot{State: core.StateStopped}}
 	coordinator, _ := NewRoutingModeCoordinator(store, coreRuntime)
 	state, err := coordinator.Set(context.Background(), storage.RoutingModeDirect)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Mode != storage.RoutingModeDirect || state.Applied || state.LiveMode != "" ||
+	if state.Mode != storage.RoutingModeDirect || !state.PrivateDirect ||
+		state.Applied || state.LiveMode != "" || state.LivePrivateDirect != nil ||
 		coreRuntime.setCalls != 0 {
-		t.Fatalf("stopped routing mode state = %+v calls=%d", state, coreRuntime.setCalls)
+		t.Fatalf("stopped routing policy state = %+v calls=%d", state, coreRuntime.setCalls)
 	}
 }
 
@@ -106,11 +124,36 @@ func TestRoutingModeCoordinatorRetainsIntentOnLiveFailure(t *testing.T) {
 		setErr:   errors.New("core rejected mode"),
 	}
 	coordinator, _ := NewRoutingModeCoordinator(store, coreRuntime)
-	if _, err := coordinator.Set(context.Background(), storage.RoutingModeGlobal); !errors.Is(err, ErrLiveRoutingModeUpdate) {
+	privateDirect := true
+	if _, err := coordinator.SetPolicy(context.Background(), storage.RoutingModeGlobal, &privateDirect); !errors.Is(err, ErrLiveRoutingModeUpdate) {
 		t.Fatalf("live update error = %v", err)
 	}
-	if store.snapshot.RoutingMode != storage.RoutingModeGlobal {
-		t.Fatalf("failed live update did not retain durable mode: %q", store.snapshot.RoutingMode)
+	if store.snapshot.RoutingMode != storage.RoutingModeGlobal || !store.snapshot.PrivateDirect {
+		t.Fatalf("failed live update did not retain durable policy: %+v", store.snapshot)
+	}
+}
+
+func TestRoutingModeCoreNamesKeepPrivatePolicyIndependent(t *testing.T) {
+	cases := []struct {
+		mode    storage.RoutingMode
+		private bool
+		want    string
+	}{
+		{storage.RoutingModeRule, true, "Rule"},
+		{storage.RoutingModeRule, false, "RuleNoPrivate"},
+		{storage.RoutingModeGlobal, true, "Global"},
+		{storage.RoutingModeGlobal, false, "GlobalNoPrivate"},
+		{storage.RoutingModeDirect, true, "Direct"},
+		{storage.RoutingModeDirect, false, "Direct"},
+	}
+	for _, tc := range cases {
+		got, err := routingModeCoreName(tc.mode, tc.private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("core mode for %q/%t = %q, want %q", tc.mode, tc.private, got, tc.want)
+		}
 	}
 }
 

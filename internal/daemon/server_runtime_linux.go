@@ -210,34 +210,38 @@ func (r *serverRuntime) RoutingModeReady() bool {
 		return false
 	}
 	_, canSet := r.core.(interface {
-		SetRoutingMode(context.Context, storage.RoutingMode) error
+		SetRoutingPolicy(context.Context, storage.RoutingMode, bool) error
 	})
 	_, canRead := r.core.(interface {
-		CurrentRoutingMode(context.Context) (storage.RoutingMode, error)
+		CurrentRoutingPolicy(context.Context) (storage.RoutingMode, bool, error)
 	})
 	return canSet && canRead
 }
 
-func (r *serverRuntime) SetRoutingMode(ctx context.Context, mode storage.RoutingMode) error {
+func (r *serverRuntime) SetRoutingPolicy(
+	ctx context.Context,
+	mode storage.RoutingMode,
+	privateDirect bool,
+) error {
 	if !r.RoutingModeReady() {
 		return errors.New("routing mode control is not configured")
 	}
 	controller := r.core.(interface {
-		SetRoutingMode(context.Context, storage.RoutingMode) error
+		SetRoutingPolicy(context.Context, storage.RoutingMode, bool) error
 	})
 	return r.gate.Do(ctx, "routing-mode-set", func(operationCtx context.Context) error {
-		return controller.SetRoutingMode(operationCtx, mode)
+		return controller.SetRoutingPolicy(operationCtx, mode, privateDirect)
 	})
 }
 
-func (r *serverRuntime) CurrentRoutingMode(ctx context.Context) (storage.RoutingMode, error) {
+func (r *serverRuntime) CurrentRoutingPolicy(ctx context.Context) (storage.RoutingMode, bool, error) {
 	if !r.RoutingModeReady() {
-		return "", errors.New("routing mode control is not configured")
+		return "", false, errors.New("routing mode control is not configured")
 	}
 	controller := r.core.(interface {
-		CurrentRoutingMode(context.Context) (storage.RoutingMode, error)
+		CurrentRoutingPolicy(context.Context) (storage.RoutingMode, bool, error)
 	})
-	return controller.CurrentRoutingMode(ctx)
+	return controller.CurrentRoutingPolicy(ctx)
 }
 
 func (r *serverRuntime) CurrentSelectionReady() bool {

@@ -13,19 +13,21 @@ var ErrLiveRoutingModeUpdate = errors.New("live routing mode update failed")
 
 type routingModeStore interface {
 	Snapshot(context.Context) (storage.Snapshot, error)
-	SetRoutingMode(context.Context, storage.RoutingMode) error
+	SetRoutingPolicy(context.Context, storage.RoutingMode, bool) error
 }
 
 type routingModeCore interface {
 	Snapshot() core.Snapshot
-	SetRoutingMode(context.Context, storage.RoutingMode) error
-	CurrentRoutingMode(context.Context) (storage.RoutingMode, error)
+	SetRoutingPolicy(context.Context, storage.RoutingMode, bool) error
+	CurrentRoutingPolicy(context.Context) (storage.RoutingMode, bool, error)
 }
 
 type RoutingModeState struct {
-	Mode     storage.RoutingMode
-	Applied  bool
-	LiveMode storage.RoutingMode
+	Mode              storage.RoutingMode
+	PrivateDirect     bool
+	Applied           bool
+	LiveMode          storage.RoutingMode
+	LivePrivateDirect *bool
 }
 
 type RoutingModeCoordinator struct {
@@ -45,51 +47,92 @@ func (c *RoutingModeCoordinator) Get(ctx context.Context) (RoutingModeState, err
 	if err != nil {
 		return RoutingModeState{}, err
 	}
-	state := RoutingModeState{Mode: snapshot.RoutingMode}
+	state := RoutingModeState{
+		Mode:          snapshot.RoutingMode,
+		PrivateDirect: snapshot.PrivateDirect,
+	}
 	if c.core == nil || c.core.Snapshot().State != core.StateRunning {
 		return state, nil
 	}
-	live, err := c.core.CurrentRoutingMode(ctx)
+	liveMode, livePrivate, err := c.core.CurrentRoutingPolicy(ctx)
 	if err != nil {
-		return state, fmt.Errorf("%w: read live mode: %v", ErrLiveRoutingModeUpdate, err)
+		return state, fmt.Errorf("%w: read live policy: %v", ErrLiveRoutingModeUpdate, err)
 	}
-	state.LiveMode = live
-	state.Applied = live == snapshot.RoutingMode
+	state.LiveMode = liveMode
+	state.LivePrivateDirect = boolPtr(livePrivate)
+	state.Applied = liveMode == snapshot.RoutingMode &&
+		(snapshot.RoutingMode == storage.RoutingModeDirect || livePrivate == snapshot.PrivateDirect)
 	return state, nil
 }
 
-func (c *RoutingModeCoordinator) Set(ctx context.Context, mode storage.RoutingMode) (RoutingModeState, error) {
+func (c *RoutingModeCoordinator) Set(
+	ctx context.Context,
+	mode storage.RoutingMode,
+) (RoutingModeState, error) {
+	return c.SetPolicy(ctx, mode, nil)
+}
+
+func (c *RoutingModeCoordinator) SetPolicy(
+	ctx context.Context,
+	mode storage.RoutingMode,
+	privateDirect *bool,
+) (RoutingModeState, error) {
+	snapshot, err := c.store.Snapshot(ctx)
+	if err != nil {
+		return RoutingModeState{}, err
+	}
+	if mode == "" {
+		mode = snapshot.RoutingMode
+	}
 	if err := mode.Validate(); err != nil {
 		return RoutingModeState{}, err
 	}
-	if err := c.store.SetRoutingMode(ctx, mode); err != nil {
+	privateValue := snapshot.PrivateDirect
+	if privateDirect != nil {
+		privateValue = *privateDirect
+	}
+	if err := c.store.SetRoutingPolicy(ctx, mode, privateValue); err != nil {
 		return RoutingModeState{}, err
 	}
-	state := RoutingModeState{Mode: mode}
+	state := RoutingModeState{Mode: mode, PrivateDirect: privateValue}
 	if c.core == nil || c.core.Snapshot().State != core.StateRunning {
 		return state, nil
 	}
-	if err := c.core.SetRoutingMode(ctx, mode); err != nil {
+	if err := c.core.SetRoutingPolicy(ctx, mode, privateValue); err != nil {
 		return state, fmt.Errorf("%w: intent persisted but core update failed: %v", ErrLiveRoutingModeUpdate, err)
 	}
-	live, err := c.core.CurrentRoutingMode(ctx)
+	liveMode, livePrivate, err := c.core.CurrentRoutingPolicy(ctx)
 	if err != nil {
 		return state, fmt.Errorf("%w: intent persisted but readback failed: %v", ErrLiveRoutingModeUpdate, err)
 	}
-	state.LiveMode = live
-	state.Applied = live == mode
+	state.LiveMode = liveMode
+	state.LivePrivateDirect = boolPtr(livePrivate)
+	state.Applied = liveMode == mode && (mode == storage.RoutingModeDirect || livePrivate == privateValue)
 	if !state.Applied {
-		return state, fmt.Errorf("%w: core readback is %q, want %q", ErrLiveRoutingModeUpdate, live, mode)
+		return state, fmt.Errorf(
+			"%w: core readback is mode=%q private_direct=%t, want mode=%q private_direct=%t",
+			ErrLiveRoutingModeUpdate,
+			liveMode,
+			livePrivate,
+			mode,
+			privateValue,
+		)
 	}
 	return state, nil
 }
 
-func routingModeCoreName(mode storage.RoutingMode) (string, error) {
+func routingModeCoreName(mode storage.RoutingMode, privateDirect bool) (string, error) {
 	switch mode {
 	case storage.RoutingModeRule:
-		return "Rule", nil
+		if privateDirect {
+			return "Rule", nil
+		}
+		return "RuleNoPrivate", nil
 	case storage.RoutingModeGlobal:
-		return "Global", nil
+		if privateDirect {
+			return "Global", nil
+		}
+		return "GlobalNoPrivate", nil
 	case storage.RoutingModeDirect:
 		return "Direct", nil
 	default:
@@ -97,15 +140,23 @@ func routingModeCoreName(mode storage.RoutingMode) (string, error) {
 	}
 }
 
-func routingModeFromCore(name string) (storage.RoutingMode, error) {
+func routingModeFromCore(name string) (storage.RoutingMode, bool, error) {
 	switch name {
 	case "Rule":
-		return storage.RoutingModeRule, nil
+		return storage.RoutingModeRule, true, nil
+	case "RuleNoPrivate":
+		return storage.RoutingModeRule, false, nil
 	case "Global":
-		return storage.RoutingModeGlobal, nil
+		return storage.RoutingModeGlobal, true, nil
+	case "GlobalNoPrivate":
+		return storage.RoutingModeGlobal, false, nil
 	case "Direct":
-		return storage.RoutingModeDirect, nil
+		return storage.RoutingModeDirect, false, nil
 	default:
-		return "", fmt.Errorf("%w: core mode %q", storage.ErrInvalidRoutingMode, name)
+		return "", false, fmt.Errorf("%w: core mode %q", storage.ErrInvalidRoutingMode, name)
 	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
