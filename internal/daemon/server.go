@@ -200,6 +200,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			LastKnownGoodGenerationID: snapshot.LastKnownGoodGenerationID,
 			RecoveryRequired:          snapshot.RecoveryRequired,
 			CoreDesiredState:          string(snapshot.CoreDesiredState),
+			RoutingMode:               string(snapshot.RoutingMode),
 			CoreState:                 "not-configured",
 		}
 		if runtime != nil {
