@@ -123,7 +123,6 @@ type CurrentSelectionResponse struct {
 	LiveRuntimeTag string           `json:"live_runtime_tag,omitempty"`
 }
 
-
 type RouteExplainRequest struct {
 	Entry       string `json:"entry,omitempty"`
 	Domain      string `json:"domain,omitempty"`
