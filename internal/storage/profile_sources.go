@@ -296,9 +296,13 @@ func (s *Store) FinishProfileUpdateSuccess(
 	return finishProfileUpdateSuccessWith(ctx, s.db, lease, success)
 }
 
+type profileUpdateExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func finishProfileUpdateSuccessWith(
 	ctx context.Context,
-	execer execContexter,
+	execer profileUpdateExecer,
 	lease ProfileUpdateLease,
 	success ProfileUpdateSuccess,
 ) error {
