@@ -261,6 +261,10 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		currentSelectionLive := runtime != nil && runtime.CurrentSelectionReady()
 		connectionObservation := runtime != nil && runtime.ConnectionsReady()
 		routingModeLive := runtime != nil && runtime.RoutingModeReady()
+		profileSelectedFetch := false
+		if runtime != nil {
+			_, profileSelectedFetch = runtime.SelectedInbound()
+		}
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			APIVersion: apiv1.Version,
 			Capabilities: map[string]bool{
@@ -341,6 +345,11 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"group_dns_route_binding":     true,
 				"dns_fallback_lowerer":        true,
 				"dns_runtime_paths_observed":  true,
+				"profile_source_state":        true,
+				"profile_refresh_fetch":       true,
+				"profile_refresh_scheduler":   true,
+				"profile_fetch_selected":      profileSelectedFetch,
+				"profile_fetch_specific_node": false,
 				"bounded_core_log_buffer":     true,
 				"core_supervision":            coreEnabled,
 				"proxy_inbounds":              false,
