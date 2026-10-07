@@ -3,6 +3,7 @@ package profile
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestSourceSpecAcceptsHTTPSDirect(t *testing.T) {
@@ -111,5 +112,64 @@ func TestFetchPolicyRejectsAmbiguousReferences(t *testing.T) {
 		if err := policy.Validate(); !errors.Is(err, ErrInvalidProfileSource) {
 			t.Fatalf("policy %+v error = %v", policy, err)
 		}
+	}
+}
+
+
+func TestSourceSpecUpdateIntervalMatchesConfirmedKaringBounds(t *testing.T) {
+	valid := []time.Duration{
+		0,
+		MinUpdateInterval,
+		DefaultUpdateInterval,
+		MaxUpdateInterval,
+	}
+	for _, interval := range valid {
+		spec := SourceSpec{
+			ProfileID:      "profile-a",
+			Format:         SourceFormatSingBox,
+			LocationKind:   SourceLocationURL,
+			Location:       "https://example.com/subscription",
+			Fetch:          FetchPolicy{Mode: FetchDirect},
+			UpdateInterval: interval,
+			Enabled:        true,
+		}
+		if err := spec.Validate(); err != nil {
+			t.Fatalf("interval %s: %v", interval, err)
+		}
+	}
+
+	invalid := []time.Duration{
+		MinUpdateInterval - time.Second,
+		MaxUpdateInterval + time.Second,
+		MinUpdateInterval + time.Nanosecond,
+	}
+	for _, interval := range invalid {
+		spec := SourceSpec{
+			ProfileID:      "profile-a",
+			Format:         SourceFormatSingBox,
+			LocationKind:   SourceLocationURL,
+			Location:       "https://example.com/subscription",
+			Fetch:          FetchPolicy{Mode: FetchDirect},
+			UpdateInterval: interval,
+			Enabled:        true,
+		}
+		if err := spec.Validate(); !errors.Is(err, ErrInvalidProfileSource) {
+			t.Fatalf("invalid interval %s error = %v", interval, err)
+		}
+	}
+}
+
+func TestSourceSpecRejectsAutomaticPollingForLocalFile(t *testing.T) {
+	spec := SourceSpec{
+		ProfileID:      "profile-a",
+		Format:         SourceFormatSingBox,
+		LocationKind:   SourceLocationFile,
+		Location:       "/home/user/sub.json",
+		Fetch:          FetchPolicy{Mode: FetchDirect},
+		UpdateInterval: DefaultUpdateInterval,
+		Enabled:        true,
+	}
+	if err := spec.Validate(); !errors.Is(err, ErrInvalidProfileSource) {
+		t.Fatalf("scheduled local file error = %v", err)
 	}
 }
