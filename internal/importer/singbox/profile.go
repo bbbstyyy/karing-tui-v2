@@ -255,7 +255,7 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 		network = domain.ProxyNetworkBoth
 	}
 	node := BasicNode{
-		Source: profile.SourceNode{SourceKey: tag, SourceName: tag},
+		Source: profile.SourceNode{SourceKey: tag, SourceName: tag, PayloadJSON: append([]byte(nil), raw...)},
 		Kind:   domain.NodeSOCKS,
 		Server: wire.Server,
 		Port:   wire.Port,
@@ -296,7 +296,7 @@ func parseBasicHTTPOutbound(raw []byte, tag string) (BasicNode, error) {
 		return BasicNode{}, err
 	}
 	node := BasicNode{
-		Source: profile.SourceNode{SourceKey: tag, SourceName: tag},
+		Source: profile.SourceNode{SourceKey: tag, SourceName: tag, PayloadJSON: append([]byte(nil), raw...)},
 		Kind:   domain.NodeHTTP,
 		Server: wire.Server,
 		Port:   wire.Port,
