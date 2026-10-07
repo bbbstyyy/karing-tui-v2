@@ -113,3 +113,84 @@ func TestCompileNativeConfigRejectsUnexpectedDNSDetour(t *testing.T) {
 		t.Fatalf("unexpected DNS detour error = %v", err)
 	}
 }
+
+
+func TestCompileNativeConfigUsesExplicitFallbackAsDNSFinal(t *testing.T) {
+	input := nativeTestInput(t, "127.0.0.1")
+	dns, err := CompileRuntimeDNS(domain.DNSPlan{
+		Profiles: []domain.DNSProfile{
+			{
+				ID:        "outbound",
+				Role:      domain.DNSRoleOutbound,
+				Transport: domain.DNSTransportUDP,
+				Server:    "192.0.2.53",
+				Port:      53,
+			},
+			{
+				ID:        "fallback",
+				Role:      domain.DNSRoleFallback,
+				Transport: domain.DNSTransportTCP,
+				Server:    "198.51.100.53",
+				Port:      53,
+			},
+		},
+		OutboundProfileID: "outbound",
+		FallbackProfileID: "fallback",
+	}, input.Targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.DNS = dns
+
+	artifact, err := CompileNativeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		DNS struct {
+			Servers []map[string]any `json:"servers"`
+			Final   string           `json:"final"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(artifact.JSON, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.DNS.Final != dns.FallbackResolverTag {
+		t.Fatalf("DNS final = %q, want fallback %q", decoded.DNS.Final, dns.FallbackResolverTag)
+	}
+	if len(decoded.DNS.Servers) != 2 {
+		t.Fatalf("DNS servers = %d, want outbound + fallback", len(decoded.DNS.Servers))
+	}
+	for _, server := range decoded.DNS.Servers {
+		if server["tag"] == nativeDNSFailClosedTag {
+			t.Fatalf("fail-closed DNS server leaked into explicit fallback closure: %+v", server)
+		}
+	}
+	if got, want := artifact.Manifest.DNSServerTags, []string{
+		dns.OutboundResolverTag,
+		dns.FallbackResolverTag,
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DNS manifest tags = %#v, want %#v", got, want)
+	}
+}
+
+func TestCompileNativeConfigRejectsMissingFallbackResolver(t *testing.T) {
+	input := nativeTestInput(t, "127.0.0.1")
+	input.DNS = CompiledDNS{
+		Servers: []DNSServerConfig{{
+			Type:       "udp",
+			Tag:        "dns-outbound",
+			Server:     "192.0.2.53",
+			ServerPort: 53,
+		}},
+		ProfileBindings: []DNSProfileBinding{{
+			ProfileID:  "outbound",
+			RuntimeTag: "dns-outbound",
+		}},
+		OutboundResolverTag: "dns-outbound",
+		FallbackResolverTag: "dns-missing",
+	}
+	if _, err := CompileNativeConfig(input); !errors.Is(err, ErrNativeConfigClosure) {
+		t.Fatalf("missing fallback resolver error = %v", err)
+	}
+}

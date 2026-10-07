@@ -315,7 +315,12 @@ func (a NativeConfigArtifact) MetadataJSON() (manifestJSON []byte, sourceMapJSON
 
 func compileNativeDNS(compiled CompiledDNS, targets TargetCatalog) (*nativeDNSConfig, []string, error) {
 	if len(compiled.Servers) == 0 {
-		if compiled.OutboundResolverTag != "" || len(compiled.ProfileBindings) != 0 {
+		if compiled.OutboundResolverTag != "" ||
+			compiled.DirectResolverTag != "" ||
+			compiled.ProxyResolverTag != "" ||
+			compiled.FallbackResolverTag != "" ||
+			len(compiled.ProfileBindings) != 0 ||
+			len(compiled.GroupBindings) != 0 {
 			return nil, nil, fmt.Errorf("%w: empty DNS server closure carries metadata", ErrNativeConfigClosure)
 		}
 		return nil, nil, nil
@@ -377,6 +382,7 @@ func compileNativeDNS(compiled CompiledDNS, targets TargetCatalog) (*nativeDNSCo
 	}{
 		{name: "direct", tag: compiled.DirectResolverTag},
 		{name: "proxy", tag: compiled.ProxyResolverTag},
+		{name: "fallback", tag: compiled.FallbackResolverTag},
 	} {
 		if role.tag == "" {
 			continue
@@ -390,19 +396,22 @@ func compileNativeDNS(compiled CompiledDNS, targets TargetCatalog) (*nativeDNSCo
 			return nil, nil, fmt.Errorf("%w: group %q DNS resolver %q is unavailable", ErrNativeConfigClosure, binding.GroupID, binding.RuntimeTag)
 		}
 	}
-	if _, exists := seen[nativeDNSFailClosedTag]; exists {
-		return nil, nil, fmt.Errorf("%w: fail-closed DNS tag collides with compiled DNS", ErrNativeConfigClosure)
+	finalTag := compiled.FallbackResolverTag
+	if finalTag == "" {
+		if _, exists := seen[nativeDNSFailClosedTag]; exists {
+			return nil, nil, fmt.Errorf("%w: fail-closed DNS tag collides with compiled DNS", ErrNativeConfigClosure)
+		}
+		servers = append(servers, nativePredefinedDNSServer{
+			Type:  "predefined",
+			Tag:   nativeDNSFailClosedTag,
+			Rcode: "REFUSED",
+		})
+		tags = append(tags, nativeDNSFailClosedTag)
+		finalTag = nativeDNSFailClosedTag
 	}
-
-	servers = append(servers, nativePredefinedDNSServer{
-		Type:  "predefined",
-		Tag:   nativeDNSFailClosedTag,
-		Rcode: "REFUSED",
-	})
-	tags = append(tags, nativeDNSFailClosedTag)
 	return &nativeDNSConfig{
 		Servers: servers,
-		Final:   nativeDNSFailClosedTag,
+		Final:   finalTag,
 	}, tags, nil
 }
 
