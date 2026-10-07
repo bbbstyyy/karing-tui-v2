@@ -293,7 +293,6 @@ func routeExplainTestHash(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-
 func TestRouteExplainAPIUsesAppliedGeneration(t *testing.T) {
 	ctx := context.Background()
 	store := openServerTestStore(t, ctx)
