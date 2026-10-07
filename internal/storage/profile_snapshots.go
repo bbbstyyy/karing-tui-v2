@@ -204,6 +204,16 @@ func (s *Store) CommitProfileSnapshot(
 	}, nil
 }
 
+func (s *Store) ProfileSnapshotByID(ctx context.Context, profileID string, snapshotID int64) (ProfileSnapshot, error) {
+	if err := profile.ValidateProfileID(profileID); err != nil {
+		return ProfileSnapshot{}, err
+	}
+	if snapshotID <= 0 {
+		return ProfileSnapshot{}, ErrProfileSnapshotMissing
+	}
+	return readProfileSnapshot(ctx, s.db, snapshotID, profileID)
+}
+
 func (s *Store) CurrentProfileSnapshot(ctx context.Context, profileID string) (ProfileSnapshot, bool, error) {
 	if err := profile.ValidateProfileID(profileID); err != nil {
 		return ProfileSnapshot{}, false, err
