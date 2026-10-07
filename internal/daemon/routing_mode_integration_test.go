@@ -37,8 +37,10 @@ func TestManagedCoreRealRoutingModes(t *testing.T) {
 
 	proxyAddress, proxyHits, closeProxy := startRejectingHTTPProxy(t)
 	defer closeProxy()
-	targetAddress, targetHits, closeTarget := startRouteOutcomeTarget(t)
-	defer closeTarget()
+	blockedAddress, blockedHits, closeBlocked := startRouteOutcomeTarget(t)
+	defer closeBlocked()
+	privateAddress, privateHits, closePrivate := startRouteOutcomeTarget(t)
+	defer closePrivate()
 
 	ports := reserveLoopbackPorts(t, 4)
 	inbounds := domain.InboundSet{
@@ -101,8 +103,8 @@ func TestManagedCoreRealRoutingModes(t *testing.T) {
 	committed, err := store.CommitDeclaration(
 		ctx,
 		0,
-		routingModeDeclaration(proxyAddress.Port(), targetAddress.Port()),
-		"integration:routing-modes",
+		routingModeDeclaration(proxyAddress.Port(), blockedAddress.Port()),
+		"integration:routing-modes-private-direct",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -132,84 +134,133 @@ func TestManagedCoreRealRoutingModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.Mode != storage.RoutingModeRule || !initial.Applied || initial.LiveMode != storage.RoutingModeRule {
-		t.Fatalf("initial routing mode = %+v", initial)
+	if initial.Mode != storage.RoutingModeRule || initial.PrivateDirect ||
+		!initial.Applied || initial.LiveMode != storage.RoutingModeRule ||
+		initial.LivePrivateDirect == nil || *initial.LivePrivateDirect {
+		t.Fatalf("initial routing policy = %+v", initial)
 	}
 
 	ruleAddress := netip.AddrPortFrom(inbounds.Listen, inbounds.RulePort)
 	directAddress := netip.AddrPortFrom(inbounds.Listen, inbounds.DirectPort)
 	selectedAddress := netip.AddrPortFrom(inbounds.Listen, inbounds.SelectedPort)
 
-	// Rule mode honors the configured BLOCK group.
-	connectCtx, connectCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	conn, err := socks5Connect(connectCtx, ruleAddress, targetAddress)
-	connectCancel()
-	if err == nil {
-		_ = conn.Close()
-		t.Fatal("Rule mode unexpectedly bypassed BLOCK group")
-	}
-	assertNoRouteOutcomeSignal(t, targetHits, 150*time.Millisecond, "Rule mode direct target")
-	assertNoRouteOutcomeSignal(t, proxyHits, 150*time.Millisecond, "Rule mode selected proxy")
+	// Rule + privateDirect=false falls through to FINAL CurrentSelected.
+	assertRoutingModeProxyReject(
+		t, ruleAddress, privateAddress, privateHits, proxyHits, managed,
+		"Rule/privateDirect=false private target",
+	)
 
-	// Global mode bypasses the five-layer Rule tree through CurrentSelected.
+	// Turn privateDirect on without changing public Rule mode.
+	privateOn := true
 	switchCtx, switchCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	global, err := mode.Set(switchCtx, storage.RoutingModeGlobal)
+	rulePrivate, err := mode.SetPolicy(switchCtx, storage.RoutingModeRule, &privateOn)
 	switchCancel()
 	if err != nil {
-		t.Fatalf("switch to Global mode: %v; stderr=%s", err, managed.StderrTail())
+		t.Fatalf("enable privateDirect in Rule mode: %v; stderr=%s", err, managed.StderrTail())
 	}
-	if !global.Applied || global.LiveMode != storage.RoutingModeGlobal {
-		t.Fatalf("Global mode state = %+v", global)
+	if !rulePrivate.Applied || !rulePrivate.PrivateDirect ||
+		rulePrivate.LiveMode != storage.RoutingModeRule ||
+		rulePrivate.LivePrivateDirect == nil || !*rulePrivate.LivePrivateDirect {
+		t.Fatalf("Rule/privateDirect=true state = %+v", rulePrivate)
 	}
 	drainRouteOutcomeSignal(proxyHits)
-	drainRouteOutcomeSignal(targetHits)
-	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
-	conn, err = socks5Connect(connectCtx, ruleAddress, targetAddress)
+	drainRouteOutcomeSignal(privateHits)
+	assertRoutingModeDirectReach(
+		t, ruleAddress, privateAddress, privateHits, proxyHits, managed,
+		"Rule/privateDirect=true private target",
+	)
+
+	// L1 custom BLOCK still wins before Rule privateDirect.
+	drainRouteOutcomeSignal(proxyHits)
+	drainRouteOutcomeSignal(blockedHits)
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	conn, err := socks5Connect(connectCtx, ruleAddress, blockedAddress)
 	connectCancel()
 	if err == nil {
 		_ = conn.Close()
-		t.Fatal("Global mode unexpectedly reached target through rejecting CurrentSelected proxy")
+		t.Fatal("Rule privateDirect unexpectedly bypassed L1 BLOCK")
 	}
-	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "Global mode CurrentSelected proxy")
-	assertNoRouteOutcomeSignal(t, targetHits, 150*time.Millisecond, "Global mode direct target")
+	assertNoRouteOutcomeSignal(t, blockedHits, 150*time.Millisecond, "Rule privateDirect blocked target")
+	assertNoRouteOutcomeSignal(t, proxyHits, 150*time.Millisecond, "Rule privateDirect blocked proxy")
 
-	// Direct entry remains an explicit bypass even while the Rule entry is Global.
-	drainRouteOutcomeSignal(proxyHits)
-	drainRouteOutcomeSignal(targetHits)
-	assertRoutingModeDirectReach(t, directAddress, targetAddress, targetHits, proxyHits, managed, "Direct inbound under Global mode")
-
-	// Direct mode bypasses the Rule tree on the Rule entry.
+	// Global + privateDirect=false bypasses the five-layer tree through CurrentSelected.
+	privateOff := false
 	switchCtx, switchCancel = context.WithTimeout(context.Background(), 5*time.Second)
-	directMode, err := mode.Set(switchCtx, storage.RoutingModeDirect)
+	globalNoPrivate, err := mode.SetPolicy(switchCtx, storage.RoutingModeGlobal, &privateOff)
+	switchCancel()
+	if err != nil {
+		t.Fatalf("switch to Global/privateDirect=false: %v; stderr=%s", err, managed.StderrTail())
+	}
+	if !globalNoPrivate.Applied || globalNoPrivate.PrivateDirect ||
+		globalNoPrivate.LiveMode != storage.RoutingModeGlobal ||
+		globalNoPrivate.LivePrivateDirect == nil || *globalNoPrivate.LivePrivateDirect {
+		t.Fatalf("Global/privateDirect=false state = %+v", globalNoPrivate)
+	}
+	drainRouteOutcomeSignal(proxyHits)
+	drainRouteOutcomeSignal(privateHits)
+	assertRoutingModeProxyReject(
+		t, ruleAddress, privateAddress, privateHits, proxyHits, managed,
+		"Global/privateDirect=false private target",
+	)
+
+	// Enabling privateDirect while staying Global makes the same private target DIRECT.
+	switchCtx, switchCancel = context.WithTimeout(context.Background(), 5*time.Second)
+	globalPrivate, err := mode.SetPolicy(switchCtx, "", &privateOn)
+	switchCancel()
+	if err != nil {
+		t.Fatalf("enable privateDirect in Global mode: %v; stderr=%s", err, managed.StderrTail())
+	}
+	if !globalPrivate.Applied || globalPrivate.Mode != storage.RoutingModeGlobal ||
+		!globalPrivate.PrivateDirect || globalPrivate.LivePrivateDirect == nil ||
+		!*globalPrivate.LivePrivateDirect {
+		t.Fatalf("Global/privateDirect=true state = %+v", globalPrivate)
+	}
+	drainRouteOutcomeSignal(proxyHits)
+	drainRouteOutcomeSignal(privateHits)
+	assertRoutingModeDirectReach(
+		t, ruleAddress, privateAddress, privateHits, proxyHits, managed,
+		"Global/privateDirect=true private target",
+	)
+
+	// Direct inbound remains an explicit bypass even while the Rule entry is Global.
+	drainRouteOutcomeSignal(proxyHits)
+	drainRouteOutcomeSignal(blockedHits)
+	assertRoutingModeDirectReach(
+		t, directAddress, blockedAddress, blockedHits, proxyHits, managed,
+		"Direct inbound under Global mode",
+	)
+
+	// Direct mode bypasses the Rule tree regardless of the retained privateDirect preference.
+	switchCtx, switchCancel = context.WithTimeout(context.Background(), 5*time.Second)
+	directMode, err := mode.SetPolicy(switchCtx, storage.RoutingModeDirect, &privateOff)
 	switchCancel()
 	if err != nil {
 		t.Fatalf("switch to Direct mode: %v; stderr=%s", err, managed.StderrTail())
 	}
-	if !directMode.Applied || directMode.LiveMode != storage.RoutingModeDirect {
+	if !directMode.Applied || directMode.LiveMode != storage.RoutingModeDirect ||
+		directMode.PrivateDirect || directMode.LivePrivateDirect == nil || *directMode.LivePrivateDirect {
 		t.Fatalf("Direct mode state = %+v", directMode)
 	}
 	drainRouteOutcomeSignal(proxyHits)
-	drainRouteOutcomeSignal(targetHits)
-	assertRoutingModeDirectReach(t, ruleAddress, targetAddress, targetHits, proxyHits, managed, "Rule inbound in Direct mode")
+	drainRouteOutcomeSignal(blockedHits)
+	assertRoutingModeDirectReach(
+		t, ruleAddress, blockedAddress, blockedHits, proxyHits, managed,
+		"Rule inbound in Direct mode",
+	)
 
-	// Selected entry remains bound to CurrentSelected even in Direct mode.
+	// Selected inbound remains bound to CurrentSelected in Direct mode.
 	drainRouteOutcomeSignal(proxyHits)
-	drainRouteOutcomeSignal(targetHits)
-	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
-	conn, err = socks5Connect(connectCtx, selectedAddress, targetAddress)
-	connectCancel()
-	if err == nil {
-		_ = conn.Close()
-		t.Fatal("Selected inbound unexpectedly followed Direct mode")
-	}
-	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "Selected inbound under Direct mode")
-	assertNoRouteOutcomeSignal(t, targetHits, 150*time.Millisecond, "Selected inbound direct target")
+	drainRouteOutcomeSignal(privateHits)
+	assertRoutingModeProxyReject(
+		t, selectedAddress, privateAddress, privateHits, proxyHits, managed,
+		"Selected inbound under Direct mode",
+	)
 
-	// Persist Global, restart the same generation, and require exact readback.
+	// Persist Global/privateDirect=true, restart the same generation, and require exact readback.
 	switchCtx, switchCancel = context.WithTimeout(context.Background(), 5*time.Second)
-	if _, err := mode.Set(switchCtx, storage.RoutingModeGlobal); err != nil {
+	if _, err := mode.SetPolicy(switchCtx, storage.RoutingModeGlobal, &privateOn); err != nil {
 		switchCancel()
-		t.Fatalf("persist Global mode before restart: %v", err)
+		t.Fatalf("persist Global/privateDirect=true before restart: %v", err)
 	}
 	switchCancel()
 
@@ -237,21 +288,17 @@ func TestManagedCoreRealRoutingModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Mode != storage.RoutingModeGlobal || !restored.Applied ||
-		restored.LiveMode != storage.RoutingModeGlobal {
-		t.Fatalf("restored routing mode = %+v", restored)
+	if restored.Mode != storage.RoutingModeGlobal || !restored.PrivateDirect ||
+		!restored.Applied || restored.LiveMode != storage.RoutingModeGlobal ||
+		restored.LivePrivateDirect == nil || !*restored.LivePrivateDirect {
+		t.Fatalf("restored routing policy = %+v", restored)
 	}
 	drainRouteOutcomeSignal(proxyHits)
-	drainRouteOutcomeSignal(targetHits)
-	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
-	conn, err = socks5Connect(connectCtx, ruleAddress, targetAddress)
-	connectCancel()
-	if err == nil {
-		_ = conn.Close()
-		t.Fatal("restored Global mode unexpectedly reached target")
-	}
-	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "restored Global mode proxy")
-	assertNoRouteOutcomeSignal(t, targetHits, 150*time.Millisecond, "restored Global mode direct target")
+	drainRouteOutcomeSignal(privateHits)
+	assertRoutingModeDirectReach(
+		t, ruleAddress, privateAddress, privateHits, proxyHits, managed,
+		"restored Global/privateDirect=true private target",
+	)
 
 	finalStopCtx, finalStopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := runtime.Stop(finalStopCtx); err != nil {
@@ -259,6 +306,27 @@ func TestManagedCoreRealRoutingModes(t *testing.T) {
 		t.Fatalf("final stop routing-mode core: %v", err)
 	}
 	finalStopCancel()
+}
+
+func assertRoutingModeProxyReject(
+	t *testing.T,
+	inbound netip.AddrPort,
+	target netip.AddrPort,
+	targetHits <-chan struct{},
+	proxyHits <-chan struct{},
+	managed *ManagedCore,
+	label string,
+) {
+	t.Helper()
+	connectCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	conn, err := socks5Connect(connectCtx, inbound, target)
+	cancel()
+	if err == nil {
+		_ = conn.Close()
+		t.Fatalf("%s unexpectedly avoided rejecting CurrentSelected proxy", label)
+	}
+	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, label+" proxy")
+	assertNoRouteOutcomeSignal(t, targetHits, 150*time.Millisecond, label+" target")
 }
 
 func assertRoutingModeDirectReach(
@@ -331,7 +399,7 @@ func routingModeDeclaration(proxyPort, blockedPort uint16) []byte {
     "geosite":[],
     "geoip":[],
     "acl":[],
-    "final":{"kind":"direct"}
+    "final":{"kind":"current_selected"}
   },
   "dns":{
     "profiles":[{
