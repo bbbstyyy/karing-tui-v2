@@ -6,12 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
+	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
@@ -288,4 +291,97 @@ func routeExplainTestArtifacts(
 func routeExplainTestHash(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+
+func TestRouteExplainAPIUsesAppliedGeneration(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+
+	rules := []compiler.RouteRule{
+		{Inbound: []string{domain.InboundTagDirect}, Action: "route", Outbound: compiler.DirectOutboundTag},
+		{Inbound: []string{domain.InboundTagSelected}, Action: "route", Outbound: compiler.CurrentSelectedOutboundTag},
+		{
+			Type: "logical",
+			Mode: "and",
+			Rules: []compiler.RouteRule{
+				{Inbound: []string{domain.InboundTagRule}},
+				{Domain: []string{"blocked.example"}},
+			},
+			Action: "reject",
+		},
+		{Inbound: []string{domain.InboundTagRule}, Action: "route", Outbound: compiler.DirectOutboundTag},
+	}
+	sourceMap := []compiler.RouteSourceMapEntry{
+		{
+			RuleIndex: 2,
+			Layer:     domain.LayerACL,
+			GroupID:   "api-block",
+			Target:    domain.TargetRef{Kind: domain.TargetBlock},
+			Action:    "reject",
+		},
+		{
+			RuleIndex: 3,
+			Layer:     domain.LayerFinal,
+			Final:     true,
+			Target:    domain.TargetRef{Kind: domain.TargetDirect},
+			Action:    "route",
+			Outbound:  compiler.DirectOutboundTag,
+		},
+	}
+	artifacts := routeExplainTestArtifacts(t, rules, sourceMap)
+	attempt, err := store.PrepareApplyWithMetadata(
+		ctx,
+		0,
+		artifacts.ConfigJSON,
+		artifacts.ManifestJSON,
+		artifacts.SourceMapJSON,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginActivation(ctx, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginVerification(ctx, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitApplied(ctx, attempt.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := New(runtimepath.Paths{}).handler(store, nil)
+	body := `{"domain":"blocked.example","port":443,"network":"tcp"}`
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodPost, "/v1/route/explain", strings.NewReader(body)),
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("route explain status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response apiv1.RouteExplainResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Evidence != "simulated" || response.Decision != "reject" ||
+		response.GenerationID != attempt.GenerationID ||
+		response.ConfigRevision != attempt.TargetRevision ||
+		response.GroupID != "api-block" || response.Layer != domain.LayerACL {
+		t.Fatalf("route explain API response = %+v", response)
+	}
+
+	bad := httptest.NewRecorder()
+	handler.ServeHTTP(
+		bad,
+		httptest.NewRequest(
+			http.MethodPost,
+			"/v1/route/explain",
+			strings.NewReader(`{"domain":"blocked.example","unknown":true}`),
+		),
+	)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("route explain unknown-field status=%d body=%s", bad.Code, bad.Body.String())
+	}
 }
