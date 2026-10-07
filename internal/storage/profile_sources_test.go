@@ -53,6 +53,7 @@ func TestProfileSourceCASAndCurrentSnapshotLink(t *testing.T) {
 	updatedSpec := spec
 	updatedSpec.Fetch = profile.FetchPolicy{Mode: profile.FetchSelected}
 	updatedSpec.UserAgent = "karing-tui-v2/test"
+	updatedSpec.UpdateInterval = profile.DefaultUpdateInterval
 	updated, err := store.CommitProfileSource(ctx, 1, updatedSpec)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +67,35 @@ func TestProfileSourceCASAndCurrentSnapshotLink(t *testing.T) {
 
 	if _, err := store.CommitProfileSource(ctx, 1, spec); !errors.Is(err, ErrProfileSourceRevisionConflict) {
 		t.Fatalf("stale source CAS error = %v", err)
+	}
+}
+
+func TestListProfileSourcesIsStableAndCarriesSchedule(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	second := testRemoteProfileSource("profile-b", profile.FetchDirect)
+	second.UpdateInterval = profile.MaxUpdateInterval
+	if _, err := store.CommitProfileSource(ctx, 0, second); err != nil {
+		t.Fatal(err)
+	}
+	first := testRemoteProfileSource("profile-a", profile.FetchSelected)
+	first.UpdateInterval = profile.DefaultUpdateInterval
+	if _, err := store.CommitProfileSource(ctx, 0, first); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := store.ListProfileSources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 ||
+		items[0].Spec.ProfileID != "profile-a" ||
+		items[0].Spec.UpdateInterval != profile.DefaultUpdateInterval ||
+		items[1].Spec.ProfileID != "profile-b" ||
+		items[1].Spec.UpdateInterval != profile.MaxUpdateInterval {
+		t.Fatalf("profile source list = %+v", items)
 	}
 }
 
