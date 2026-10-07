@@ -95,6 +95,43 @@ func TestReplaceProfileNodesV1AppendsNewProfileWithoutChangingExistingOrder(t *t
 	}
 }
 
+func TestReplaceProfileNodesV1RoundTripsShadowsocksFields(t *testing.T) {
+	replacement, err := ReplaceProfileNodesV1(minimalDeclaration(), "p2", []domain.Node{{
+		ProfileID: "p2",
+		NodeID:    "ss-1",
+		Kind:      domain.NodeShadowsocks,
+		Server:    "ss.example.com",
+		Port:      8388,
+		Shadowsocks: &domain.ShadowsocksNodeOptions{
+			Method:        "aes-256-gcm",
+			Password:      "secret",
+			Plugin:        "obfs-local",
+			PluginOptions: "obfs=http",
+			Network:       domain.ProxyNetworkUDP,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := ParseV1(replacement.Document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Nodes) != 2 {
+		t.Fatalf("nodes = %+v", model.Nodes)
+	}
+	node := model.Nodes[1]
+	if node.Kind != domain.NodeShadowsocks ||
+		node.Shadowsocks == nil ||
+		node.Shadowsocks.Method != "aes-256-gcm" ||
+		node.Shadowsocks.Password != "secret" ||
+		node.Shadowsocks.Plugin != "obfs-local" ||
+		node.Shadowsocks.PluginOptions != "obfs=http" ||
+		node.Shadowsocks.Network != domain.ProxyNetworkUDP {
+		t.Fatalf("Shadowsocks declaration node = %+v", node)
+	}
+}
+
 func TestReplaceProfileNodesV1RejectsCrossProfileReplacement(t *testing.T) {
 	_, err := ReplaceProfileNodesV1(minimalDeclaration(), "p1", []domain.Node{{
 		ProfileID: "p2",
