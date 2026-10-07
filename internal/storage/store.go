@@ -1015,6 +1015,8 @@ func (s *Store) migrate(ctx context.Context) error {
 				node_id TEXT NOT NULL,
 				source_key TEXT NOT NULL,
 				source_name TEXT NOT NULL,
+				payload_json BLOB NOT NULL,
+				payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64),
 				PRIMARY KEY(snapshot_id, ordinal),
 				UNIQUE(snapshot_id, node_id),
 				UNIQUE(snapshot_id, source_key)
