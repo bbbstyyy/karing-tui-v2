@@ -115,7 +115,6 @@ func TestFetchPolicyRejectsAmbiguousReferences(t *testing.T) {
 	}
 }
 
-
 func TestSourceSpecUpdateIntervalMatchesConfirmedKaringBounds(t *testing.T) {
 	valid := []time.Duration{
 		0,
