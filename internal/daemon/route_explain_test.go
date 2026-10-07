@@ -384,3 +384,110 @@ func TestRouteExplainAPIUsesAppliedGeneration(t *testing.T) {
 		t.Fatalf("route explain unknown-field status=%d body=%s", bad.Code, bad.Body.String())
 	}
 }
+
+
+func TestRouteExplainHonorsPersistedRoutingMode(t *testing.T) {
+	generationID := int64(21)
+	rules := []compiler.RouteRule{
+		{
+			Inbound:   []string{domain.InboundTagRule},
+			ClashMode: "Global",
+			Action:    "route",
+			Outbound:  compiler.CurrentSelectedOutboundTag,
+		},
+		{
+			Inbound:   []string{domain.InboundTagRule},
+			ClashMode: "Direct",
+			Action:    "route",
+			Outbound:  compiler.DirectOutboundTag,
+		},
+		{
+			Inbound: []string{domain.InboundTagRule},
+			Action:  "reject",
+		},
+	}
+	sourceMap := []compiler.RouteSourceMapEntry{{
+		RuleIndex: 2,
+		Layer:     domain.LayerFinal,
+		Final:     true,
+		Target:    domain.TargetRef{Kind: domain.TargetBlock},
+		Action:    "reject",
+	}}
+	artifacts := routeExplainTestArtifacts(t, rules, sourceMap)
+
+	cases := []struct {
+		name         string
+		mode         storage.RoutingMode
+		decision     string
+		ruleIndex    int
+		clashMode    string
+		target       domain.TargetKind
+		source       string
+		wantResponse string
+	}{
+		{
+			name:         "rule",
+			mode:         storage.RoutingModeRule,
+			decision:     "reject",
+			ruleIndex:    2,
+			target:       domain.TargetBlock,
+			source:       "source_map",
+			wantResponse: "rule",
+		},
+		{
+			name:         "global",
+			mode:         storage.RoutingModeGlobal,
+			decision:     "route",
+			ruleIndex:    0,
+			clashMode:    "Global",
+			target:       domain.TargetCurrentSelected,
+			source:       "synthetic",
+			wantResponse: "global",
+		},
+		{
+			name:         "direct",
+			mode:         storage.RoutingModeDirect,
+			decision:     "route",
+			ruleIndex:    1,
+			clashMode:    "Direct",
+			target:       domain.TargetDirect,
+			source:       "synthetic",
+			wantResponse: "direct",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeRouteExplainStore{
+				snapshot: storage.Snapshot{
+					Revision:            8,
+					AppliedGenerationID: &generationID,
+					RoutingMode:         tc.mode,
+				},
+				artifacts: artifacts,
+			}
+			coordinator, err := NewRouteExplainCoordinator(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := coordinator.Explain(context.Background(), apiv1.RouteExplainRequest{
+				Domain:  "example.test",
+				Port:    443,
+				Network: "tcp",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.Evidence != "simulated" ||
+				response.Decision != tc.decision ||
+				response.RuleIndex == nil || *response.RuleIndex != tc.ruleIndex ||
+				response.RoutingMode != tc.wantResponse ||
+				response.Source != tc.source ||
+				response.Target == nil || response.Target.Kind != tc.target {
+				t.Fatalf("mode %q explanation = %+v", tc.mode, response)
+			}
+			if response.Trace[tc.ruleIndex].ClashMode != tc.clashMode {
+				t.Fatalf("mode %q trace clash_mode = %q, want %q", tc.mode, response.Trace[tc.ruleIndex].ClashMode, tc.clashMode)
+			}
+		})
+	}
+}
