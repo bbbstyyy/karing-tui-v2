@@ -254,6 +254,54 @@ func TestCoreDesiredStatePersistsWithoutChangingRevision(t *testing.T) {
 	}
 }
 
+func TestReadOnlyDatabaseRejectsApplyWithoutChangingConfirmedState(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	baseline, err := store.PrepareApply(ctx, 0, []byte(`{"generation":"baseline"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginActivation(ctx, baseline.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginVerification(ctx, baseline.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitApplied(ctx, baseline.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
+		t.Fatal(err)
+	}
+	defer store.db.ExecContext(context.Background(), "PRAGMA query_only = OFF")
+
+	if _, err := store.PrepareApply(ctx, 1, []byte(`{"generation":"must-not-persist"}`)); err == nil {
+		t.Fatal("read-only database unexpectedly accepted a new apply")
+	}
+
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != 1 ||
+		snapshot.AppliedGenerationID == nil || *snapshot.AppliedGenerationID != baseline.GenerationID ||
+		snapshot.LastKnownGoodGenerationID == nil || *snapshot.LastKnownGoodGenerationID != baseline.GenerationID ||
+		snapshot.ActiveAttemptID != nil ||
+		snapshot.RecoveryRequired {
+		t.Fatalf("read-only apply failure changed confirmed state: %+v", snapshot)
+	}
+	config, hash, err := store.GenerationConfig(ctx, baseline.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(config) != `{"generation":"baseline"}` || hash != baseline.ConfigSHA256 {
+		t.Fatalf("read-only failure changed baseline generation: config=%q hash=%q", config, hash)
+	}
+}
+
 func TestInvalidTransitionIsRejected(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
