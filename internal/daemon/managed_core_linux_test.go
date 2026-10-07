@@ -793,7 +793,6 @@ func TestManagedCoreStartFailsClosedWhenSelectionProvenanceMissing(t *testing.T)
 	}
 }
 
-
 func TestManagedCoreConnectionsRequiresRunningCoreAndReturnsSnapshot(t *testing.T) {
 	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
 	connections := &fakeConnectionsControl{snapshot: coreapi.ConnectionsSnapshot{
