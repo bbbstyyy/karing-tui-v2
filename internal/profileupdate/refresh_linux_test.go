@@ -305,6 +305,79 @@ func TestRefreshProfileSourceNotModifiedWithoutSnapshotFailsLease(t *testing.T) 
 	}
 }
 
+func TestRefreshProfileSourceCancellationReleasesDurableLease(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newProfileUpdateStore(t, ctx)
+	defer store.Close()
+
+	source, err := store.CommitProfileSource(
+		ctx,
+		0,
+		remoteSingBoxSource("profile-a", "https://example.com/sub"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &blockingFetcher{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		result:  profilefetch.Result{Body: []byte(validHTTPProfile(8080))},
+	}
+
+	refreshCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, err := RefreshProfileSource(
+			refreshCtx,
+			store,
+			fetcher,
+			"profile-a",
+			source.Revision,
+			"cancel-1",
+			Options{},
+		)
+		done <- err
+	}()
+
+	select {
+	case <-fetcher.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not reach cancellable fetch")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled refresh error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled refresh did not return")
+	}
+
+	state, err := store.ProfileSource(ctx, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ActiveUpdateID != "" ||
+		state.ActiveUpdateStarted != nil ||
+		state.ConsecutiveFailures != 1 ||
+		!strings.Contains(state.LastError, "context canceled") {
+		t.Fatalf("canceled refresh left durable lease/state: %+v", state)
+	}
+
+	next, err := store.BeginProfileUpdate(ctx, "profile-a", source.Revision, "cancel-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ID != "cancel-retry" {
+		t.Fatalf("post-cancel retry lease = %+v", next)
+	}
+	if err := store.FinishProfileUpdateFailure(ctx, next, "cleanup", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRefreshProfileSourceRejectsConcurrentSameProfileUpdate(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newProfileUpdateStore(t, ctx)
