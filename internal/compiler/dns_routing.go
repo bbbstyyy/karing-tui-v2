@@ -116,8 +116,9 @@ func isGlobalModeSyntheticRoute(rule RouteRule) bool {
 	return len(rule.Inbound) == 1 &&
 		rule.Inbound[0] == domain.InboundTagRule &&
 		(rule.ClashMode == "Global" || rule.ClashMode == "GlobalNoPrivate") &&
+		!rule.IPIsPrivate &&
 		rule.Action == "route" &&
-		rule.Outbound != ""
+		rule.Outbound == CurrentSelectedOutboundTag
 }
 
 func isProxyTarget(target domain.TargetRef) bool {
