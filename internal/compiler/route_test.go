@@ -82,7 +82,7 @@ func TestCompileRoutingPreservesOrderAndBooleanSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantJSON := `{"rules":[{"inbound":["in-direct"],"action":"route","outbound":"out-direct"},{"inbound":["in-selected"],"action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Global","ip_is_private":true,"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"clash_mode":"Global","action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"GlobalNoPrivate","action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Direct","action":"route","outbound":"out-direct"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"type":"logical","mode":"and","rules":[{"type":"logical","mode":"or","rules":[{"domain":["one.example"]},{"domain_suffix":["two.example"]}]},{"invert":true,"network":["udp"]}]}],"action":"route","outbound":"out-current"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"rule_set":["geosite:cn"]}],"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"clash_mode":"Rule","ip_is_private":true,"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"action":"reject"}]}`
+	wantJSON := `{"rules":[{"inbound":["in-direct"],"action":"route","outbound":"out-direct"},{"inbound":["in-selected"],"action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Global","ip_is_private":true,"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"clash_mode":"Global","action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"GlobalNoPrivate","action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Direct","action":"route","outbound":"out-direct"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"type":"logical","mode":"and","rules":[{"type":"logical","mode":"or","rules":[{"domain":["one.example"]},{"domain_suffix":["two.example"]}]},{"invert":true,"network":["udp"]}]}],"action":"route","outbound":"out-current"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"rule_set":["geosite:cn"]}],"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"clash_mode":"Rule","ip_is_private":true,"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"action":"reject"},{"inbound":["in-rule"],"clash_mode":"RuleNoPrivate","action":"reject"}]}`
 	if string(encoded) != wantJSON {
 		t.Fatalf("route JSON = %s\nwant       = %s", encoded, wantJSON)
 	}
@@ -131,11 +131,17 @@ func TestCompileRoutingCollectsDependenciesInFirstUseOrder(t *testing.T) {
 	if !result.NeedsProcessLookup {
 		t.Fatal("process predicate did not request process lookup")
 	}
-	if result.Rules[len(result.Rules)-1].Action != "route" ||
-		result.Rules[len(result.Rules)-1].Outbound != "out-node-profile-a-node-a" ||
-		!reflect.DeepEqual(result.Rules[len(result.Rules)-1].Inbound, []string{domain.InboundTagRule}) ||
-		len(result.Rules[len(result.Rules)-1].Rules) != 0 {
-		t.Fatalf("unexpected explicit FINAL rule: %+v", result.Rules[len(result.Rules)-1])
+	finalIndex := len(result.Rules) - 2
+	if result.Rules[finalIndex].Action != "route" ||
+		result.Rules[finalIndex].Outbound != "out-node-profile-a-node-a" ||
+		!reflect.DeepEqual(result.Rules[finalIndex].Inbound, []string{domain.InboundTagRule}) ||
+		len(result.Rules[finalIndex].Rules) != 0 {
+		t.Fatalf("unexpected explicit FINAL rule: %+v", result.Rules[finalIndex])
+	}
+	if marker := result.Rules[len(result.Rules)-1]; marker.ClashMode != "RuleNoPrivate" ||
+		marker.Action != "reject" ||
+		!reflect.DeepEqual(marker.Inbound, []string{domain.InboundTagRule}) {
+		t.Fatalf("unexpected RuleNoPrivate mode marker: %+v", marker)
 	}
 }
 
@@ -315,8 +321,8 @@ func TestCompileRoutingCreatesFixedEntryAndModeRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Rules) != 8 {
-		t.Fatalf("rules = %d, want entry + public/internal mode + private + FINAL rules", len(result.Rules))
+	if len(result.Rules) != 9 {
+		t.Fatalf("rules = %d, want entry + public/internal mode + private + FINAL + mode marker", len(result.Rules))
 	}
 	checks := []struct {
 		index     int
@@ -334,6 +340,7 @@ func TestCompileRoutingCreatesFixedEntryAndModeRules(t *testing.T) {
 		{5, domain.InboundTagRule, "Direct", false, "route", "out-direct"},
 		{6, domain.InboundTagRule, "Rule", true, "route", "out-direct"},
 		{7, domain.InboundTagRule, "", false, "reject", ""},
+		{8, domain.InboundTagRule, "RuleNoPrivate", false, "reject", ""},
 	}
 	for _, check := range checks {
 		rule := result.Rules[check.index]

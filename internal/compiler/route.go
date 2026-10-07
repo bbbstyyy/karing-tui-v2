@@ -193,6 +193,16 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 		})
 	}
 
+	// KaringX/sing-box derives the Clash API mode list from clash_mode values
+	// present in route/DNS rules. RuleNoPrivate intentionally shares the normal
+	// Rule tree and therefore has no reachable mode-specific rule. Keep this
+	// marker after FINAL so the core advertises the mode without changing traffic.
+	result.Rules = append(result.Rules, RouteRule{
+		Inbound:   []string{ruleInbound},
+		ClashMode: "RuleNoPrivate",
+		Action:    "reject",
+	})
+
 	return result, nil
 }
 
