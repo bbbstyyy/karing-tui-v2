@@ -31,6 +31,8 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(base, "cache"))
 	t.Setenv(corePathEnv, "")
 	t.Setenv(coreControlPortEnv, "")
+	t.Setenv(storageKeepConfirmedEnv, "")
+	t.Setenv(storageGenerationQuotaEnv, "")
 
 	paths, err := runtimepath.Resolve()
 	if err != nil {
@@ -73,6 +75,8 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	}
 	if !caps.Capabilities["daemon"] ||
 		!caps.Capabilities["sqlite_state"] ||
+		!caps.Capabilities["storage_retention"] ||
+		!caps.Capabilities["storage_retention_api"] ||
 		!caps.Capabilities["declaration_revisions"] ||
 		!caps.Capabilities["declaration_generation_link"] ||
 		!caps.Capabilities["apply_journal"] ||
@@ -285,4 +289,44 @@ func openServerTestStore(t *testing.T, ctx context.Context) *storage.Store {
 		t.Fatal(err)
 	}
 	return store
+}
+
+
+func TestStorageRetentionAPI(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+
+	handler := New(runtimepath.Paths{}).handler(store, nil)
+
+	statusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(statusRecorder, httptest.NewRequest(http.MethodGet, "/v1/storage/retention", nil))
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("retention status code = %d, body=%s", statusRecorder.Code, statusRecorder.Body.String())
+	}
+	var status apiv1.StorageRetentionResponse
+	if err := json.NewDecoder(statusRecorder.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status.ConfirmedGenerations != storage.DefaultConfirmedGenerationRetention ||
+		status.MaxGenerationBytes != storage.DefaultGenerationPayloadQuotaBytes ||
+		status.LiveGenerationCount != 0 ||
+		status.OverBudget {
+		t.Fatalf("unexpected retention status: %+v", status)
+	}
+
+	pruneRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(pruneRecorder, httptest.NewRequest(http.MethodPost, "/v1/storage/prune", nil))
+	if pruneRecorder.Code != http.StatusOK {
+		t.Fatalf("retention prune code = %d, body=%s", pruneRecorder.Code, pruneRecorder.Body.String())
+	}
+	var pruned apiv1.StorageRetentionResponse
+	if err := json.NewDecoder(pruneRecorder.Body).Decode(&pruned); err != nil {
+		t.Fatal(err)
+	}
+	if pruned.ConfirmedGenerations != status.ConfirmedGenerations ||
+		pruned.MaxGenerationBytes != status.MaxGenerationBytes ||
+		pruned.LiveGenerationCount != 0 {
+		t.Fatalf("unexpected prune response: %+v", pruned)
+	}
 }
