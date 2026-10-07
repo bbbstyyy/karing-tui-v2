@@ -55,11 +55,11 @@ type ShadowsocksNodeOptions struct {
 }
 
 type Node struct {
-	ProfileID string
-	NodeID    string
-	Kind      NodeKind
-	Server    string
-	Port      uint16
+	ProfileID   string
+	NodeID      string
+	Kind        NodeKind
+	Server      string
+	Port        uint16
 	SOCKS       *SOCKSNodeOptions
 	HTTP        *HTTPNodeOptions
 	Shadowsocks *ShadowsocksNodeOptions
