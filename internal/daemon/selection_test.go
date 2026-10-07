@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
@@ -269,4 +270,88 @@ func currentSelectionTestDeclaration() []byte {
     "outbound_profile_id":"outbound-dns"
   }
 }`)
+}
+
+
+func TestCurrentSelectionUsesAppliedDeclarationInsteadOfNewerUnappliedDeclaration(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+
+	appliedDocument := currentSelectionTestDeclaration()
+	appliedDeclaration, err := store.CommitDeclaration(ctx, 0, appliedDocument, "test:selection-applied-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, err := json.Marshal(compiler.NativeManifest{
+		SchemaID:            compiler.NativeSchemaID,
+		ConfigSHA256:        strings.Repeat("a", 64),
+		DeclarationRevision: appliedDeclaration.Revision,
+		DeclarationSHA256:   appliedDeclaration.SHA256,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := store.PrepareApplyWithMetadata(
+		ctx,
+		0,
+		[]byte(`{}`),
+		manifestJSON,
+		[]byte(`[]`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginActivation(ctx, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginVerification(ctx, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitApplied(ctx, attempt.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	newerDocument := []byte(strings.ReplaceAll(
+		string(appliedDocument),
+		`"node_id":"node-a"`,
+		`"node_id":"node-c"`,
+	))
+	if _, err := store.CommitDeclaration(
+		ctx,
+		appliedDeclaration.Revision,
+		newerDocument,
+		"test:selection-unapplied-v2",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	coordinator, err := NewCurrentSelectionCoordinator(store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := coordinator.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAppliedDefault := domain.TargetRef{
+		Kind:      domain.TargetSpecificNode,
+		ProfileID: "profile-a",
+		NodeID:    "node-a",
+	}
+	if state.Target != wantAppliedDefault {
+		t.Fatalf("selection default came from unapplied declaration: got=%+v want=%+v", state.Target, wantAppliedDefault)
+	}
+
+	unappliedOnlyTarget := domain.TargetRef{
+		Kind:      domain.TargetSpecificNode,
+		ProfileID: "profile-a",
+		NodeID:    "node-c",
+	}
+	if _, err := coordinator.Set(ctx, unappliedOnlyTarget); !errors.Is(err, ErrCurrentSelectionTarget) {
+		t.Fatalf("unapplied-only target error = %v, want ErrCurrentSelectionTarget", err)
+	}
+	if _, ok, err := store.CurrentSelectionIntent(ctx); err != nil || ok {
+		t.Fatalf("invalid unapplied target persisted selection intent: ok=%t err=%v", ok, err)
+	}
 }
