@@ -59,6 +59,11 @@ type supervisorEngine interface {
 
 type generationCheckFunc func(context.Context, string, string, io.Writer, io.Writer) error
 
+type selectorControl interface {
+	Select(context.Context, string, string) error
+	Current(context.Context, string) (coreapi.SelectorSnapshot, error)
+}
+
 type ManagedCoreOptions struct {
 	Executable      string
 	StateRoot       string
@@ -76,6 +81,7 @@ type ManagedCore struct {
 	supervisor supervisorEngine
 	probe      core.Probe
 	check      generationCheckFunc
+	selector   selectorControl
 	stdout     *core.RingBuffer
 	stderr     *core.RingBuffer
 
@@ -118,7 +124,13 @@ func NewManagedCore(state managedCoreState, options ManagedCoreOptions) (*Manage
 	check := func(ctx context.Context, path, sha string, out, errOut io.Writer) error {
 		return core.CheckGenerationConfig(ctx, options.Executable, coreartifact.Verify, path, sha, out, errOut)
 	}
-	return newManagedCore(state, files, runner, supervisor, probe, check, stdout, stderr), nil
+	selector, err := coreapi.NewSelectorClient(options.ControlEndpoint, options.ControlSecret)
+	if err != nil {
+		return nil, err
+	}
+	managed := newManagedCore(state, files, runner, supervisor, probe, check, stdout, stderr)
+	managed.selector = selector
+	return managed, nil
 }
 
 func newManagedCore(
@@ -154,6 +166,34 @@ func (m *ManagedCore) WaitReady(ctx context.Context) error {
 
 func (m *ManagedCore) Snapshot() core.Snapshot {
 	return m.supervisor.Snapshot()
+}
+
+func (m *ManagedCore) SelectCurrent(ctx context.Context, outboundTag string) error {
+	m.transitionMu.Lock()
+	defer m.transitionMu.Unlock()
+	if m.selector == nil {
+		return errors.New("core selector control is not configured")
+	}
+	if m.supervisor.Snapshot().State != core.StateRunning {
+		return core.ErrNotRunning
+	}
+	return m.selector.Select(ctx, compiler.CurrentSelectedOutboundTag, outboundTag)
+}
+
+func (m *ManagedCore) CurrentSelection(ctx context.Context) (string, error) {
+	m.transitionMu.Lock()
+	defer m.transitionMu.Unlock()
+	if m.selector == nil {
+		return "", errors.New("core selector control is not configured")
+	}
+	if m.supervisor.Snapshot().State != core.StateRunning {
+		return "", core.ErrNotRunning
+	}
+	snapshot, err := m.selector.Current(ctx, compiler.CurrentSelectedOutboundTag)
+	if err != nil {
+		return "", err
+	}
+	return snapshot.Now, nil
 }
 
 func (m *ManagedCore) StdoutTail() []byte {

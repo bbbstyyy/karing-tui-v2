@@ -11,6 +11,12 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 )
 
+const (
+	DirectOutboundTag          = "out-direct"
+	CurrentSelectedOutboundTag = "out-current"
+	GlobalURLTestOutboundTag   = "out-global-urltest"
+)
+
 var (
 	ErrDuplicateTargetID  = errors.New("duplicate target identity")
 	ErrDuplicateTargetTag = errors.New("duplicate generated outbound tag")
@@ -31,9 +37,9 @@ type TargetCatalog struct {
 
 func NewTargetCatalog(customGroupIDs []string, nodes []NodeTargetKey) (TargetCatalog, error) {
 	catalog := TargetCatalog{
-		DirectTag:          "out-direct",
-		CurrentSelectedTag: "out-current",
-		GlobalURLTestTag:   "out-global-urltest",
+		DirectTag:          DirectOutboundTag,
+		CurrentSelectedTag: CurrentSelectedOutboundTag,
+		GlobalURLTestTag:   GlobalURLTestOutboundTag,
 		CustomURLTestTags:  make(map[string]string, len(customGroupIDs)),
 		NodeTags:           make(map[NodeTargetKey]string, len(nodes)),
 	}
