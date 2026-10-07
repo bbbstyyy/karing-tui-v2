@@ -75,6 +75,11 @@ type connectionsControl interface {
 	Snapshot(context.Context) (coreapi.ConnectionsSnapshot, error)
 }
 
+type modeControl interface {
+	Set(context.Context, string) error
+	Current(context.Context) (coreapi.ModeSnapshot, error)
+}
+
 type ManagedCoreOptions struct {
 	Executable      string
 	StateRoot       string
@@ -94,6 +99,7 @@ type ManagedCore struct {
 	check       generationCheckFunc
 	selector    selectorControl
 	connections connectionsControl
+	mode        modeControl
 	stdout      *core.RingBuffer
 	stderr      *core.RingBuffer
 
@@ -144,9 +150,14 @@ func NewManagedCore(state managedCoreState, options ManagedCoreOptions) (*Manage
 	if err != nil {
 		return nil, err
 	}
+	mode, err := coreapi.NewModeClient(options.ControlEndpoint, options.ControlSecret)
+	if err != nil {
+		return nil, err
+	}
 	managed := newManagedCore(state, files, runner, supervisor, probe, check, stdout, stderr)
 	managed.selector = selector
 	managed.connections = connections
+	managed.mode = mode
 	return managed, nil
 }
 
@@ -195,6 +206,38 @@ func (m *ManagedCore) Connections(ctx context.Context) (coreapi.ConnectionsSnaps
 		return coreapi.ConnectionsSnapshot{}, core.ErrNotRunning
 	}
 	return m.connections.Snapshot(ctx)
+}
+
+func (m *ManagedCore) SetRoutingMode(ctx context.Context, mode storage.RoutingMode) error {
+	m.transitionMu.Lock()
+	defer m.transitionMu.Unlock()
+	if m.mode == nil {
+		return errors.New("core mode control is not configured")
+	}
+	if m.supervisor.Snapshot().State != core.StateRunning {
+		return core.ErrNotRunning
+	}
+	name, err := routingModeCoreName(mode)
+	if err != nil {
+		return err
+	}
+	return m.mode.Set(ctx, name)
+}
+
+func (m *ManagedCore) CurrentRoutingMode(ctx context.Context) (storage.RoutingMode, error) {
+	m.transitionMu.Lock()
+	defer m.transitionMu.Unlock()
+	if m.mode == nil {
+		return "", errors.New("core mode control is not configured")
+	}
+	if m.supervisor.Snapshot().State != core.StateRunning {
+		return "", core.ErrNotRunning
+	}
+	snapshot, err := m.mode.Current(ctx)
+	if err != nil {
+		return "", err
+	}
+	return routingModeFromCore(snapshot.Mode)
 }
 
 func (m *ManagedCore) SelectCurrent(ctx context.Context, outboundTag string) error {
@@ -270,6 +313,10 @@ func (m *ManagedCore) Start(ctx context.Context) error {
 		stopErr := m.supervisor.Stop(ctx)
 		return errors.Join(fmt.Errorf("restore current selection after core start: %w", err), stopErr)
 	}
+	if err := m.restoreRoutingMode(ctx); err != nil {
+		stopErr := m.supervisor.Stop(ctx)
+		return errors.Join(fmt.Errorf("restore routing mode after core start: %w", err), stopErr)
+	}
 	return nil
 }
 
@@ -313,6 +360,9 @@ func (m *ManagedCore) ReconcileRecovery(ctx context.Context) error {
 		}
 		if err := m.restoreSelectionForGeneration(ctx, generation.ID); err != nil {
 			return fmt.Errorf("restore current selection during recovery reconcile: %w", err)
+		}
+		if err := m.restoreRoutingMode(ctx); err != nil {
+			return fmt.Errorf("restore routing mode during recovery reconcile: %w", err)
 		}
 		if err := m.probe.Ready(ctx, nil); err != nil {
 			return fmt.Errorf("verify recovered applied generation: %w", err)
@@ -373,6 +423,9 @@ func (m *ManagedCore) Verify(ctx context.Context, generation Generation) error {
 	if err := m.restoreSelectionForGeneration(ctx, generation.ID); err != nil {
 		return fmt.Errorf("restore current selection for candidate generation: %w", err)
 	}
+	if err := m.restoreRoutingMode(ctx); err != nil {
+		return fmt.Errorf("restore routing mode for candidate generation: %w", err)
+	}
 	if err := m.probe.Ready(ctx, nil); err != nil {
 		return fmt.Errorf("verify local core health: %w", err)
 	}
@@ -408,6 +461,9 @@ func (m *ManagedCore) Rollback(ctx context.Context, previous *Generation) error 
 	}
 	if err := m.restoreSelectionForGeneration(ctx, previous.ID); err != nil {
 		return fmt.Errorf("restore current selection after rollback: %w", err)
+	}
+	if err := m.restoreRoutingMode(ctx); err != nil {
+		return fmt.Errorf("restore routing mode after rollback: %w", err)
 	}
 	if err := m.probe.Ready(ctx, nil); err != nil {
 		return fmt.Errorf("verify rolled back core health: %w", err)
@@ -472,6 +528,24 @@ func (m *ManagedCore) pruneStagedGenerations(ctx context.Context, generationID i
 
 	if _, err := pruner.PruneStagedGenerations(ctx, protected, stagedGenerationRetention); err != nil {
 		return fmt.Errorf("prune staged generations: %w", err)
+	}
+	return nil
+}
+
+func (m *ManagedCore) restoreRoutingMode(ctx context.Context) error {
+	if m.mode == nil {
+		return nil
+	}
+	snapshot, err := m.state.Snapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("read persisted routing mode: %w", err)
+	}
+	name, err := routingModeCoreName(snapshot.RoutingMode)
+	if err != nil {
+		return err
+	}
+	if err := m.mode.Set(ctx, name); err != nil {
+		return fmt.Errorf("apply persisted routing mode %q: %w", snapshot.RoutingMode, err)
 	}
 	return nil
 }

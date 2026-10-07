@@ -205,6 +205,41 @@ func (r *serverRuntime) Connections(ctx context.Context) (coreapi.ConnectionsSna
 	return controller.Connections(ctx)
 }
 
+func (r *serverRuntime) RoutingModeReady() bool {
+	if r == nil || r.core == nil {
+		return false
+	}
+	_, canSet := r.core.(interface {
+		SetRoutingMode(context.Context, storage.RoutingMode) error
+	})
+	_, canRead := r.core.(interface {
+		CurrentRoutingMode(context.Context) (storage.RoutingMode, error)
+	})
+	return canSet && canRead
+}
+
+func (r *serverRuntime) SetRoutingMode(ctx context.Context, mode storage.RoutingMode) error {
+	if !r.RoutingModeReady() {
+		return errors.New("routing mode control is not configured")
+	}
+	controller := r.core.(interface {
+		SetRoutingMode(context.Context, storage.RoutingMode) error
+	})
+	return r.gate.Do(ctx, "routing-mode-set", func(operationCtx context.Context) error {
+		return controller.SetRoutingMode(operationCtx, mode)
+	})
+}
+
+func (r *serverRuntime) CurrentRoutingMode(ctx context.Context) (storage.RoutingMode, error) {
+	if !r.RoutingModeReady() {
+		return "", errors.New("routing mode control is not configured")
+	}
+	controller := r.core.(interface {
+		CurrentRoutingMode(context.Context) (storage.RoutingMode, error)
+	})
+	return controller.CurrentRoutingMode(ctx)
+}
+
 func (r *serverRuntime) CurrentSelectionReady() bool {
 	if r == nil || r.core == nil {
 		return false
