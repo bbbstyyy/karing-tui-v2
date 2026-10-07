@@ -318,6 +318,9 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		secondArtifact.Manifest.DeclarationSHA256 != secondDeclaration.SHA256 {
 		t.Fatalf("second declaration provenance mismatch: artifact=%+v declaration=%+v", secondArtifact.Manifest, secondDeclaration)
 	}
+	if !bytes.Contains(secondArtifact.JSON, []byte(`"port":10`)) {
+		t.Fatalf("second controlled apply did not compile the structural node-port change: %s", secondArtifact.JSON)
+	}
 	snapshot, err = store.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -357,6 +360,10 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 }
 
 func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256 string) []byte {
+	nodePort := uint16(9)
+	if logLevel == "error" {
+		nodePort = 10
+	}
 	return []byte(fmt.Sprintf(`{
   "schema_version":1,
   "log_level":%q,
@@ -378,7 +385,7 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256
     "node_id":"integration-node",
     "type":"http",
     "server":"127.0.0.1",
-    "port":9,
+    "port":%d,
     "http":{}
   }],
   "selection":{
@@ -412,7 +419,7 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256
     }],
     "outbound_profile_id":"integration-outbound-dns"
   }
-}`, logLevel, ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256))
+}`, logLevel, ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256, nodePort))
 }
 
 func reserveLoopbackPorts(t *testing.T, count int) []uint16 {
