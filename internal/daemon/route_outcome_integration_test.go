@@ -43,8 +43,10 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 	}
 	defer store.Close()
 
-	proxyAddress, proxyHits, closeProxy := startRejectingHTTPProxy(t)
-	defer closeProxy()
+	proxyAAddress, proxyAHits, closeProxyA := startRejectingHTTPProxy(t)
+	defer closeProxyA()
+	proxyBAddress, proxyBHits, closeProxyB := startRejectingHTTPProxy(t)
+	defer closeProxyB()
 	fallbackDNSAddress, fallbackDNSHits, closeFallbackDNS := startFallbackDNSServer(t)
 	defer closeFallbackDNS()
 
@@ -121,7 +123,7 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 	committed, err := store.CommitDeclaration(
 		ctx,
 		0,
-		routeOutcomeDeclaration(ruleSetSHA256, proxyAddress.Port(), fallbackDNSAddress.Port()),
+		routeOutcomeDeclaration(ruleSetSHA256, proxyAAddress.Port(), proxyBAddress.Port(), fallbackDNSAddress.Port()),
 		"integration:route-outcomes",
 	)
 	if err != nil {
@@ -159,7 +161,8 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 		t.Fatal("Rule inbound unexpectedly reached loopback target despite BLOCK rule")
 	}
 	assertNoRouteOutcomeSignal(t, targetHits, 100*time.Millisecond, "Rule inbound target")
-	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "Rule inbound selected proxy")
+	assertNoRouteOutcomeSignal(t, proxyAHits, 100*time.Millisecond, "Rule inbound selected proxy A")
+	assertNoRouteOutcomeSignal(t, proxyBHits, 100*time.Millisecond, "Rule inbound selected proxy B")
 
 	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
 	conn, err = socks5Connect(connectCtx, directAddress, targetAddress)
@@ -177,7 +180,8 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 		t.Fatalf("Direct inbound target marker = %q", marker)
 	}
 	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "Direct inbound target")
-	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "Direct inbound selected proxy")
+	assertNoRouteOutcomeSignal(t, proxyAHits, 100*time.Millisecond, "Direct inbound selected proxy A")
+	assertNoRouteOutcomeSignal(t, proxyBHits, 100*time.Millisecond, "Direct inbound selected proxy B")
 
 	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
 	conn, err = socks5ConnectDomain(connectCtx, directAddress, "fallback.integration.test", targetAddress.Port())
@@ -195,7 +199,8 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 	}
 	assertRouteOutcomeSignal(t, fallbackDNSHits, 2*time.Second, "Global fallback DNS")
 	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "fallback-resolved Direct target")
-	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "fallback Direct selected proxy")
+	assertNoRouteOutcomeSignal(t, proxyAHits, 100*time.Millisecond, "fallback Direct selected proxy A")
+	assertNoRouteOutcomeSignal(t, proxyBHits, 100*time.Millisecond, "fallback Direct selected proxy B")
 
 	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
 	conn, err = socks5Connect(connectCtx, selectedAddress, targetAddress)
@@ -204,8 +209,39 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 		_ = conn.Close()
 		t.Fatal("Selected inbound unexpectedly bypassed CurrentSelected proxy")
 	}
-	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "Selected inbound current proxy")
+	assertRouteOutcomeSignal(t, proxyAHits, 2*time.Second, "Selected inbound default proxy A")
+	assertNoRouteOutcomeSignal(t, proxyBHits, 100*time.Millisecond, "Selected inbound proxy B before switch")
 	assertNoRouteOutcomeSignal(t, targetHits, 100*time.Millisecond, "Selected inbound direct target")
+
+	selection, err := NewCurrentSelectionCoordinator(store, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectionTarget := domain.TargetRef{
+		Kind:      domain.TargetSpecificNode,
+		ProfileID: "route-outcome-profile",
+		NodeID:    "route-outcome-node-b",
+	}
+	switchCtx, switchCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	selectionState, err := selection.Set(switchCtx, selectionTarget)
+	switchCancel()
+	if err != nil {
+		t.Fatalf("switch CurrentSelected to proxy B: %v; stderr=%s", err, managed.StderrTail())
+	}
+	if !selectionState.Persisted || !selectionState.Applied || selectionState.LiveRuntimeTag != selectionState.RuntimeTag {
+		t.Fatalf("selection switch was not durably applied: %+v", selectionState)
+	}
+
+	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
+	conn, err = socks5Connect(connectCtx, selectedAddress, targetAddress)
+	connectCancel()
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("Selected inbound unexpectedly reached target after switch to proxy B")
+	}
+	assertRouteOutcomeSignal(t, proxyBHits, 2*time.Second, "Selected inbound switched proxy B")
+	assertNoRouteOutcomeSignal(t, proxyAHits, 100*time.Millisecond, "Selected inbound stale proxy A after switch")
+	assertNoRouteOutcomeSignal(t, targetHits, 100*time.Millisecond, "Selected inbound direct target after switch")
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := runtime.Stop(stopCtx); err != nil {
@@ -216,9 +252,40 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 	waitManagedCoreState(t, managed, 3*time.Second, func(snapshot core.Snapshot) bool {
 		return snapshot.State == core.StateStopped && snapshot.PID == 0
 	})
+
+	restartCtx, restartCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := runtime.Start(restartCtx); err != nil {
+		restartCancel()
+		t.Fatalf("restart route-outcome generation with persisted selection: %v; stderr=%s", err, managed.StderrTail())
+	}
+	restartCancel()
+	waitManagedCoreState(t, managed, 5*time.Second, func(snapshot core.Snapshot) bool {
+		return snapshot.State == core.StateRunning && snapshot.PID > 0
+	})
+
+	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
+	conn, err = socks5Connect(connectCtx, selectedAddress, targetAddress)
+	connectCancel()
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("Selected inbound unexpectedly reached target after restart")
+	}
+	assertRouteOutcomeSignal(t, proxyBHits, 2*time.Second, "Selected inbound persisted proxy B after restart")
+	assertNoRouteOutcomeSignal(t, proxyAHits, 100*time.Millisecond, "Selected inbound reverted to proxy A after restart")
+	assertNoRouteOutcomeSignal(t, targetHits, 100*time.Millisecond, "Selected inbound direct target after restart")
+
+	finalStopCtx, finalStopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := runtime.Stop(finalStopCtx); err != nil {
+		finalStopCancel()
+		t.Fatalf("final stop route-outcome core: %v", err)
+	}
+	finalStopCancel()
+	waitManagedCoreState(t, managed, 3*time.Second, func(snapshot core.Snapshot) bool {
+		return snapshot.State == core.StateStopped && snapshot.PID == 0
+	})
 }
 
-func routeOutcomeDeclaration(ruleSetSHA256 string, proxyPort, fallbackDNSPort uint16) []byte {
+func routeOutcomeDeclaration(ruleSetSHA256 string, proxyAPort, proxyBPort, fallbackDNSPort uint16) []byte {
 	return []byte(fmt.Sprintf(`{
   "schema_version":1,
   "log_level":"warn",
@@ -229,7 +296,14 @@ func routeOutcomeDeclaration(ruleSetSHA256 string, proxyPort, fallbackDNSPort ui
   }],
   "nodes":[{
     "profile_id":"route-outcome-profile",
-    "node_id":"route-outcome-node",
+    "node_id":"route-outcome-node-a",
+    "type":"http",
+    "server":"127.0.0.1",
+    "port":%d,
+    "http":{}
+  },{
+    "profile_id":"route-outcome-profile",
+    "node_id":"route-outcome-node-b",
     "type":"http",
     "server":"127.0.0.1",
     "port":%d,
@@ -237,8 +311,11 @@ func routeOutcomeDeclaration(ruleSetSHA256 string, proxyPort, fallbackDNSPort ui
   }],
   "selection":{
     "current":{
-      "members":[{"kind":"specific_node","profile_id":"route-outcome-profile","node_id":"route-outcome-node"}],
-      "default":{"kind":"specific_node","profile_id":"route-outcome-profile","node_id":"route-outcome-node"}
+      "members":[
+        {"kind":"specific_node","profile_id":"route-outcome-profile","node_id":"route-outcome-node-a"},
+        {"kind":"specific_node","profile_id":"route-outcome-profile","node_id":"route-outcome-node-b"}
+      ],
+      "default":{"kind":"specific_node","profile_id":"route-outcome-profile","node_id":"route-outcome-node-a"}
     },
     "custom":[]
   },
@@ -272,7 +349,7 @@ func routeOutcomeDeclaration(ruleSetSHA256 string, proxyPort, fallbackDNSPort ui
     "outbound_profile_id":"route-outcome-dns",
     "fallback_profile_id":"route-outcome-fallback"
   }
-}`, ruleSetSHA256, proxyPort, fallbackDNSPort))
+}`, ruleSetSHA256, proxyAPort, proxyBPort, fallbackDNSPort))
 }
 
 func socks5Connect(ctx context.Context, inbound, target netip.AddrPort) (net.Conn, error) {
