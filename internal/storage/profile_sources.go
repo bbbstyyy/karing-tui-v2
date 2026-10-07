@@ -290,17 +290,20 @@ func (s *Store) FinishProfileUpdateSuccess(
 	if err := validateProfileUpdateLease(lease); err != nil {
 		return err
 	}
-	if err := validateProfileUpdateStatusText("source revision", success.SourceRevision, 4096, false); err != nil {
+	if err := validateProfileUpdateSuccess(success); err != nil {
 		return err
 	}
-	if err := validateProfileUpdateStatusText("ETag", success.ETag, 4096, false); err != nil {
-		return err
-	}
-	if err := validateProfileUpdateStatusText("Last-Modified", success.LastModified, 4096, false); err != nil {
-		return err
-	}
+	return finishProfileUpdateSuccessWith(ctx, s.db, lease, success)
+}
+
+func finishProfileUpdateSuccessWith(
+	ctx context.Context,
+	execer execContexter,
+	lease ProfileUpdateLease,
+	success ProfileUpdateSuccess,
+) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := s.db.ExecContext(ctx, `
+	result, err := execer.ExecContext(ctx, `
 		UPDATE profile_sources
 		SET active_update_id = NULL,
 			active_update_started_at = NULL,
@@ -327,6 +330,19 @@ func (s *Store) FinishProfileUpdateSuccess(
 		return fmt.Errorf("finish successful profile update: %w", err)
 	}
 	return requireProfileUpdateLeaseResult(result)
+}
+
+func validateProfileUpdateSuccess(success ProfileUpdateSuccess) error {
+	if err := validateProfileUpdateStatusText("source revision", success.SourceRevision, 4096, false); err != nil {
+		return err
+	}
+	if err := validateProfileUpdateStatusText("ETag", success.ETag, 4096, false); err != nil {
+		return err
+	}
+	if err := validateProfileUpdateStatusText("Last-Modified", success.LastModified, 4096, false); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) FinishProfileUpdateFailure(
