@@ -97,9 +97,10 @@ type nativeRouteConfig struct {
 }
 
 type nativeClashAPIConfig struct {
-	ExternalController string `json:"external_controller"`
-	Secret             string `json:"secret"`
-	DefaultMode        string `json:"default_mode"`
+	ExternalController string   `json:"external_controller"`
+	Secret             string   `json:"secret"`
+	DefaultMode        string   `json:"default_mode"`
+	ModeList           []string `json:"mode_list"`
 }
 
 type nativeExperimentalConfig struct {
@@ -276,6 +277,13 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 				ExternalController: input.ControlAddress.String(),
 				Secret:             input.ControlSecret,
 				DefaultMode:        "Rule",
+				ModeList: []string{
+					"Rule",
+					"RuleNoPrivate",
+					"Global",
+					"GlobalNoPrivate",
+					"Direct",
+				},
 			},
 		},
 	}
