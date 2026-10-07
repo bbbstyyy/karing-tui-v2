@@ -63,8 +63,9 @@ type nodeV1 struct {
 	Type      domain.NodeKind `json:"type"`
 	Server    string          `json:"server"`
 	Port      uint16          `json:"port"`
-	SOCKS     *socksV1        `json:"socks,omitempty"`
-	HTTP      *httpV1         `json:"http,omitempty"`
+	SOCKS       *socksV1       `json:"socks,omitempty"`
+	HTTP        *httpV1        `json:"http,omitempty"`
+	Shadowsocks *shadowsocksV1 `json:"shadowsocks,omitempty"`
 }
 
 type socksV1 struct {
@@ -79,6 +80,14 @@ type httpV1 struct {
 	Password string `json:"password,omitempty"`
 }
 
+type shadowsocksV1 struct {
+	Method        string              `json:"method"`
+	Password      string              `json:"password"`
+	Plugin        string              `json:"plugin,omitempty"`
+	PluginOptions string              `json:"plugin_opts,omitempty"`
+	Network       domain.ProxyNetwork `json:"network"`
+}
+
 func (n nodeV1) toDomain() (domain.Node, error) {
 	result := domain.Node{
 		ProfileID: n.ProfileID,
@@ -89,8 +98,8 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 	}
 	switch n.Type {
 	case domain.NodeSOCKS:
-		if n.SOCKS == nil || n.HTTP != nil {
-			return domain.Node{}, errors.New("SOCKS node requires socks options and forbids http options")
+		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil {
+			return domain.Node{}, errors.New("SOCKS node requires socks options and forbids other protocol options")
 		}
 		result.SOCKS = &domain.SOCKSNodeOptions{
 			Version:  n.SOCKS.Version,
@@ -99,10 +108,21 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 			Network:  n.SOCKS.Network,
 		}
 	case domain.NodeHTTP:
-		if n.HTTP == nil || n.SOCKS != nil {
-			return domain.Node{}, errors.New("HTTP node requires http options and forbids socks options")
+		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil {
+			return domain.Node{}, errors.New("HTTP node requires http options and forbids other protocol options")
 		}
 		result.HTTP = &domain.HTTPNodeOptions{Username: n.HTTP.Username, Password: n.HTTP.Password}
+	case domain.NodeShadowsocks:
+		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil {
+			return domain.Node{}, errors.New("Shadowsocks node requires shadowsocks options and forbids other protocol options")
+		}
+		result.Shadowsocks = &domain.ShadowsocksNodeOptions{
+			Method:        n.Shadowsocks.Method,
+			Password:      n.Shadowsocks.Password,
+			Plugin:        n.Shadowsocks.Plugin,
+			PluginOptions: n.Shadowsocks.PluginOptions,
+			Network:       n.Shadowsocks.Network,
+		}
 	default:
 		return domain.Node{}, fmt.Errorf("unsupported node type %q", n.Type)
 	}
