@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -222,6 +223,52 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		return snapshot.State == core.StateRunning && snapshot.PID > 0
 	})
 	firstPID := running.PID
+
+	// T14: the pinned core returns 204 for PUT /configs without applying
+	// structural changes. HTTP success must not be treated as an applied generation.
+	putCtx, putCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	putRequest, err := http.NewRequestWithContext(
+		putCtx,
+		http.MethodPut,
+		controlEndpoint+"/configs",
+		bytes.NewBufferString(`{"mode":"Direct","mixed-port":65534}`),
+	)
+	if err != nil {
+		putCancel()
+		t.Fatal(err)
+	}
+	putRequest.Header.Set("Authorization", "Bearer "+secret)
+	putRequest.Header.Set("Content-Type", "application/json")
+	putResponse, err := http.DefaultClient.Do(putRequest)
+	if err != nil {
+		putCancel()
+		t.Fatalf("PUT /configs no-op probe: %v", err)
+	}
+	putStatus := putResponse.StatusCode
+	_ = putResponse.Body.Close()
+	putCancel()
+	if putStatus != http.StatusNoContent {
+		t.Fatalf("PUT /configs status = %d, want 204", putStatus)
+	}
+	afterPut := managed.Snapshot()
+	if afterPut.State != core.StateRunning || afterPut.PID != firstPID {
+		t.Fatalf("PUT /configs disturbed running core: before=%+v after=%+v", running, afterPut)
+	}
+	liveMode, livePrivate, err := managed.CurrentRoutingPolicy(ctx)
+	if err != nil {
+		t.Fatalf("read routing policy after PUT /configs: %v", err)
+	}
+	if liveMode != storage.RoutingModeRule || livePrivate {
+		t.Fatalf("PUT /configs changed live routing policy to %q/%t", liveMode, livePrivate)
+	}
+	snapshot, err = store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != 1 || snapshot.AppliedGenerationID == nil ||
+		*snapshot.AppliedGenerationID != firstAttempt.GenerationID {
+		t.Fatalf("PUT /configs changed applied generation state: %+v", snapshot)
+	}
 
 	if err := syscall.Kill(-firstPID, syscall.SIGKILL); err != nil {
 		t.Fatalf("crash owned core process group: %v", err)
