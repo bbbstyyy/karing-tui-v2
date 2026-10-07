@@ -44,10 +44,10 @@ type FetchPolicy struct {
 }
 
 type SourceSpec struct {
-	ProfileID    string
-	Format       SourceFormat
-	LocationKind SourceLocationKind
-	Location     string
+	ProfileID      string
+	Format         SourceFormat
+	LocationKind   SourceLocationKind
+	Location       string
 	UserAgent      string
 	Fetch          FetchPolicy
 	UpdateInterval time.Duration
