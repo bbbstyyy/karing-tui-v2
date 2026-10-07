@@ -118,12 +118,25 @@ Implemented source/update-state foundation:
 - daemon-start recovery of interrupted update leases;
 - source configuration cannot change while its worker lease is active.
 
-Not yet implemented:
+Implemented refresh/scheduling foundation:
 
-- external HTTP/file fetch execution and conditional requests;
-- global fetch concurrency/rate budgets;
+- bounded HTTP/HTTPS fetch with explicit Direct/Selected paths and no environment-proxy inheritance;
+- ETag/Last-Modified conditional requests and 304 handling;
+- HTTP Retry-After capture without retaining remote error bodies;
+- bounded Linux local-file reads with final-component nofollow and regular-file checks;
+- refresh coordinator that acquires the source revision lease before reading the source specification;
+- atomic accepted snapshot + update-success commit;
+- Karing-confirmed remote update interval model: disabled/0, minimum 5 minutes, default constant 12 hours, maximum 365 days;
+- persisted update interval and stable profile-source listing;
+- staggered overdue startup planning, bounded exponential failure backoff and stable per-profile jitter;
+- global scheduled-refresh concurrency budget plus same-profile non-reentry;
+- scheduler cancellation waits for active workers.
+
+Still not implemented:
+
+- daemon startup wiring for the refresh scheduler;
+- Specific Node network fetch execution;
+- automatic snapshot -> declaration -> compile/apply policy after a refresh;
 - traffic quota/expiry metadata;
 - source node filter/user overlay persistence;
-- provider materialization;
-- automatic scheduled declaration/apply policy after a profile refresh;
-- timed scheduling/backoff/debounce policy.
+- provider materialization.
