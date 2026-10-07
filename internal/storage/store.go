@@ -799,7 +799,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -995,6 +995,45 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(8, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 8: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 9 {
+		statements := []string{
+			`CREATE TABLE profile_snapshots (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				profile_id TEXT NOT NULL,
+				source_kind TEXT NOT NULL,
+				source_revision TEXT NOT NULL DEFAULT '',
+				source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),
+				created_at TEXT NOT NULL
+			)`,
+			`CREATE INDEX profile_snapshots_profile_id ON profile_snapshots(profile_id, id DESC)`,
+			`CREATE TABLE profile_snapshot_nodes (
+				snapshot_id INTEGER NOT NULL REFERENCES profile_snapshots(id) ON DELETE CASCADE,
+				ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+				node_id TEXT NOT NULL,
+				source_key TEXT NOT NULL,
+				source_name TEXT NOT NULL,
+				PRIMARY KEY(snapshot_id, ordinal),
+				UNIQUE(snapshot_id, node_id),
+				UNIQUE(snapshot_id, source_key)
+			)`,
+			`CREATE TABLE profile_state (
+				profile_id TEXT PRIMARY KEY,
+				current_snapshot_id INTEGER NOT NULL REFERENCES profile_snapshots(id) ON DELETE RESTRICT,
+				previous_snapshot_id INTEGER REFERENCES profile_snapshots(id) ON DELETE RESTRICT,
+				updated_at TEXT NOT NULL,
+				CHECK(previous_snapshot_id IS NULL OR previous_snapshot_id <> current_snapshot_id)
+			)`,
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply sqlite migration 9: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(9, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 9: %w", err)
 		}
 	}
 
