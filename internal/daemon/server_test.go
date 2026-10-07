@@ -65,7 +65,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.APIVersion != "v1" || status.CoreConfigured || status.CoreState != "not-configured" || status.CoreDesiredState != "stopped" || status.ConfigRevision != 0 || status.RecoveryRequired {
+	if status.APIVersion != "v1" || status.CoreConfigured || status.CoreState != "not-configured" || status.CoreDesiredState != "stopped" || status.RoutingMode != "rule" || status.ConfigRevision != 0 || status.RecoveryRequired {
 		t.Fatalf("unexpected status: %+v", status)
 	}
 
