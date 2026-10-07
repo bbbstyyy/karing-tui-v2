@@ -206,4 +206,3 @@ func newDeclarationUpdateStore(t *testing.T, ctx context.Context) (*storage.Stor
 	}
 	return store, path
 }
-
