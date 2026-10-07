@@ -86,16 +86,16 @@ type ManagedCoreOptions struct {
 }
 
 type ManagedCore struct {
-	state      managedCoreState
-	files      generationFiles
-	binder     generationBinder
-	supervisor supervisorEngine
-	probe      core.Probe
-	check      generationCheckFunc
+	state       managedCoreState
+	files       generationFiles
+	binder      generationBinder
+	supervisor  supervisorEngine
+	probe       core.Probe
+	check       generationCheckFunc
 	selector    selectorControl
 	connections connectionsControl
 	stdout      *core.RingBuffer
-	stderr     *core.RingBuffer
+	stderr      *core.RingBuffer
 
 	transitionMu     sync.Mutex
 	pollInterval     time.Duration
