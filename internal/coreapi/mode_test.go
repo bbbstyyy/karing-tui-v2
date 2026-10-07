@@ -88,7 +88,7 @@ func TestModeClientAllowsAdvertisedInternalPolicyMode(t *testing.T) {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"mode": mode,
+				"mode":      mode,
 				"mode-list": []string{"Rule", "RuleNoPrivate", "Global", "GlobalNoPrivate", "Direct"},
 			})
 		case http.MethodPatch:
