@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
