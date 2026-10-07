@@ -107,7 +107,7 @@ func TestBindProxyTargetDNSRoutingExpandsSelectedGlobalUserRuleAndFinal(t *testi
 		rebound.SourceMap[3].Action != "route" || !rebound.SourceMap[3].Final {
 		t.Fatalf("unexpected source map: %+v", rebound.SourceMap)
 	}
-	if len(bound.Rules) != 9 || len(bound.SourceMap) != 2 || bound.Rules[1].Action != "route" {
+	if len(bound.Rules) != 10 || len(bound.SourceMap) != 2 || bound.Rules[1].Action != "route" {
 		t.Fatal("proxy DNS binding mutated original routing")
 	}
 }
