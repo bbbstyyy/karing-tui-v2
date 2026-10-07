@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -108,7 +108,6 @@ func (c *DeclarationCompileCoordinator) CompileRevision(
 	}
 	return bound, nil
 }
-
 
 func requireJSONEOF(decoder *json.Decoder) error {
 	var extra any
