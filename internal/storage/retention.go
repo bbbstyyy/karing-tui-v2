@@ -12,7 +12,7 @@ import (
 
 const (
 	DefaultConfirmedGenerationRetention = 5
-	DefaultGenerationPayloadQuotaBytes   = int64(640 << 20)
+	DefaultGenerationPayloadQuotaBytes  = int64(640 << 20)
 )
 
 type RetentionPolicy struct {

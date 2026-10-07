@@ -32,7 +32,7 @@ var (
 	ErrInvalidTransition          = errors.New("invalid apply journal transition")
 	ErrInvalidGenerationMetadata  = errors.New("invalid generation metadata")
 	ErrGenerationMetadataTooLarge = errors.New("generation metadata exceeds size limit")
-	ErrGenerationStorageBudget      = errors.New("generation storage budget exceeded")
+	ErrGenerationStorageBudget     = errors.New("generation storage budget exceeded")
 )
 
 var ErrInvalidCoreDesiredState = errors.New("invalid core desired state")
