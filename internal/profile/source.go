@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -13,6 +14,10 @@ type SourceFormat string
 
 const (
 	SourceFormatSingBox SourceFormat = "sing-box"
+
+	DefaultUpdateInterval = 12 * time.Hour
+	MinUpdateInterval     = 5 * time.Minute
+	MaxUpdateInterval     = 365 * 24 * time.Hour
 )
 
 type SourceLocationKind string
@@ -43,9 +48,10 @@ type SourceSpec struct {
 	Format       SourceFormat
 	LocationKind SourceLocationKind
 	Location     string
-	UserAgent    string
-	Fetch        FetchPolicy
-	Enabled      bool
+	UserAgent      string
+	Fetch          FetchPolicy
+	UpdateInterval time.Duration
+	Enabled        bool
 }
 
 func (s SourceSpec) Validate() error {
@@ -63,6 +69,22 @@ func (s SourceSpec) Validate() error {
 	}
 	if err := s.Fetch.Validate(); err != nil {
 		return err
+	}
+	if s.UpdateInterval != 0 {
+		if s.LocationKind != SourceLocationURL {
+			return fmt.Errorf("%w: automatic updates require a remote URL source", ErrInvalidProfileSource)
+		}
+		if s.UpdateInterval < MinUpdateInterval || s.UpdateInterval > MaxUpdateInterval {
+			return fmt.Errorf(
+				"%w: update interval must be between %s and %s",
+				ErrInvalidProfileSource,
+				MinUpdateInterval,
+				MaxUpdateInterval,
+			)
+		}
+		if s.UpdateInterval%time.Second != 0 {
+			return fmt.Errorf("%w: update interval must use whole seconds", ErrInvalidProfileSource)
+		}
 	}
 	if s.LocationKind == SourceLocationFile && s.Fetch.Mode != FetchDirect {
 		return fmt.Errorf("%w: local file sources must use direct fetch mode", ErrInvalidProfileSource)
