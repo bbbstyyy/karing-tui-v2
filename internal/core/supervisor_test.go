@@ -193,6 +193,45 @@ func TestSupervisorRestartsUnexpectedExitButNotHealthSignals(t *testing.T) {
 	}
 }
 
+func TestSupervisorOpensCircuitAfterRepeatedRuntimeCrashes(t *testing.T) {
+	runner := &fakeRunner{}
+	supervisor := newTestSupervisor(t, runner, 3)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Run(ctx) }()
+	waitSupervisorRunning(t, supervisor)
+
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for crash := 1; crash <= 3; crash++ {
+		waitState(t, supervisor, StateRunning)
+		process := runner.LastProcess()
+		process.Crash(fmt.Errorf("runtime crash %d", crash))
+		if crash < 3 {
+			waitStarts(t, runner, crash+1)
+		}
+	}
+	waitState(t, supervisor, StateFailed)
+
+	snapshot := supervisor.Snapshot()
+	if !snapshot.CircuitOpen || snapshot.ConsecutiveFails != 3 {
+		t.Fatalf("runtime crash budget did not open circuit: %+v", snapshot)
+	}
+	if got := runner.Starts(); got != 3 {
+		t.Fatalf("runtime crash starts = %d, want 3", got)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if got := runner.Starts(); got != 3 {
+		t.Fatalf("open circuit restarted core again: %d starts", got)
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSupervisorForcesOwnedProcessAfterStopTimeout(t *testing.T) {
 	runner := &fakeRunner{}
 	supervisor := newTestSupervisor(t, runner, 5)
