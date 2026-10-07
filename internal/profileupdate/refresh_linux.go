@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	singboximport "github.com/bbbstyyy/karing-tui-v2/internal/importer/singbox"
@@ -54,17 +54,18 @@ func RefreshProfileSource(
 		return RefreshResult{}, errors.New("profile fetcher is nil")
 	}
 
-	source, err := store.ProfileSource(ctx, profileID)
-	if err != nil {
-		return RefreshResult{}, err
-	}
-	result := RefreshResult{SourceBefore: source}
-
+	result := RefreshResult{}
 	lease, err := store.BeginProfileUpdate(ctx, profileID, expectedSourceRevision, updateID)
 	if err != nil {
 		return result, err
 	}
 	result.Lease = lease
+
+	source, err := store.ProfileSource(ctx, profileID)
+	if err != nil {
+		return result, finishRefreshFailure(ctx, store, lease, err)
+	}
+	result.SourceBefore = source
 
 	fetched, err := fetcher.Fetch(ctx, source.Spec, profilefetch.ConditionalRequest{
 		ETag:         source.ETag,
