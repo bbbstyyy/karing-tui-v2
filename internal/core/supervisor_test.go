@@ -207,7 +207,7 @@ func TestSupervisorOpensCircuitAfterRepeatedRuntimeCrashes(t *testing.T) {
 	for crash := 1; crash <= 3; crash++ {
 		waitState(t, supervisor, StateRunning)
 		process := runner.LastProcess()
-		process.Crash(fmt.Errorf("runtime crash %d", crash))
+		process.Crash(errors.New("runtime crash"))
 		if crash < 3 {
 			waitStarts(t, runner, crash+1)
 		}
