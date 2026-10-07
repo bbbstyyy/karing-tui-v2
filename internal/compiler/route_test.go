@@ -68,9 +68,9 @@ func TestCompileRoutingPreservesOrderAndBooleanSemantics(t *testing.T) {
 	if len(result.SourceMap) != 3 {
 		t.Fatalf("source map entries = %d, want 3", len(result.SourceMap))
 	}
-	if result.SourceMap[0].RuleIndex != 2 ||
-		result.SourceMap[1].RuleIndex != 3 ||
-		result.SourceMap[2].RuleIndex != 4 ||
+	if result.SourceMap[0].RuleIndex != 4 ||
+		result.SourceMap[1].RuleIndex != 5 ||
+		result.SourceMap[2].RuleIndex != 6 ||
 		result.SourceMap[0].Layer != domain.LayerCustom ||
 		result.SourceMap[1].Layer != domain.LayerGeoSite ||
 		result.SourceMap[2].Layer != domain.LayerFinal ||
@@ -82,7 +82,7 @@ func TestCompileRoutingPreservesOrderAndBooleanSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantJSON := `{"rules":[{"inbound":["in-direct"],"action":"route","outbound":"out-direct"},{"inbound":["in-selected"],"action":"route","outbound":"out-current"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"type":"logical","mode":"and","rules":[{"type":"logical","mode":"or","rules":[{"domain":["one.example"]},{"domain_suffix":["two.example"]}]},{"invert":true,"network":["udp"]}]}],"action":"route","outbound":"out-current"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"rule_set":["geosite:cn"]}],"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"action":"reject"}]}`
+	wantJSON := `{"rules":[{"inbound":["in-direct"],"action":"route","outbound":"out-direct"},{"inbound":["in-selected"],"action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Global","action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Direct","action":"route","outbound":"out-direct"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"type":"logical","mode":"and","rules":[{"type":"logical","mode":"or","rules":[{"domain":["one.example"]},{"domain_suffix":["two.example"]}]},{"invert":true,"network":["udp"]}]}],"action":"route","outbound":"out-current"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"rule_set":["geosite:cn"]}],"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"action":"reject"}]}`
 	if string(encoded) != wantJSON {
 		t.Fatalf("route JSON = %s\nwant       = %s", encoded, wantJSON)
 	}
@@ -309,14 +309,14 @@ func testResolver() TargetResolver {
 	})
 }
 
-func TestCompileRoutingCreatesFixedDirectAndSelectedEntryRules(t *testing.T) {
+func TestCompileRoutingCreatesFixedEntryAndModeRules(t *testing.T) {
 	plan := domain.RoutingPlan{Final: domain.TargetRef{Kind: domain.TargetBlock}}
 	result, err := CompileRouting(plan, testResolver())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Rules) != 3 {
-		t.Fatalf("rules = %d, want direct + selected + rule FINAL", len(result.Rules))
+	if len(result.Rules) != 5 {
+		t.Fatalf("rules = %d, want direct + selected + global + direct mode + rule FINAL", len(result.Rules))
 	}
 	if !reflect.DeepEqual(result.Rules[0].Inbound, []string{domain.InboundTagDirect}) ||
 		result.Rules[0].Outbound != "out-direct" ||
@@ -329,10 +329,22 @@ func TestCompileRoutingCreatesFixedDirectAndSelectedEntryRules(t *testing.T) {
 		t.Fatalf("unexpected Selected entry rule: %+v", result.Rules[1])
 	}
 	if !reflect.DeepEqual(result.Rules[2].Inbound, []string{domain.InboundTagRule}) ||
-		result.Rules[2].Action != "reject" {
-		t.Fatalf("unexpected Rule FINAL: %+v", result.Rules[2])
+		result.Rules[2].ClashMode != "Global" ||
+		result.Rules[2].Outbound != "out-current" ||
+		result.Rules[2].Action != "route" {
+		t.Fatalf("unexpected Global mode rule: %+v", result.Rules[2])
 	}
-	if len(result.SourceMap) != 1 || result.SourceMap[0].RuleIndex != 2 || !result.SourceMap[0].Final {
-		t.Fatalf("synthetic entry rules leaked into route source map: %+v", result.SourceMap)
+	if !reflect.DeepEqual(result.Rules[3].Inbound, []string{domain.InboundTagRule}) ||
+		result.Rules[3].ClashMode != "Direct" ||
+		result.Rules[3].Outbound != "out-direct" ||
+		result.Rules[3].Action != "route" {
+		t.Fatalf("unexpected Direct mode rule: %+v", result.Rules[3])
+	}
+	if !reflect.DeepEqual(result.Rules[4].Inbound, []string{domain.InboundTagRule}) ||
+		result.Rules[4].Action != "reject" {
+		t.Fatalf("unexpected Rule FINAL: %+v", result.Rules[4])
+	}
+	if len(result.SourceMap) != 1 || result.SourceMap[0].RuleIndex != 4 || !result.SourceMap[0].Final {
+		t.Fatalf("synthetic entry/mode rules leaked into route source map: %+v", result.SourceMap)
 	}
 }

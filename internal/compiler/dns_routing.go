@@ -33,14 +33,17 @@ func BindProxyTargetDNSRouting(bound BoundRouting, dns CompiledDNS) (BoundRoutin
 	for index, original := range bound.Rules {
 		rule := cloneRouteRules([]RouteRule{original})[0]
 
-		if isSelectedSyntheticRoute(rule) {
+		if isSelectedSyntheticRoute(rule) || isGlobalModeSyntheticRoute(rule) {
 			resolve := RouteRule{
-				Inbound: []string{domain.InboundTagSelected},
-				Action:  "resolve",
-				Server:  dns.ProxyResolverTag,
+				Inbound:   append([]string(nil), rule.Inbound...),
+				ClashMode: rule.ClashMode,
+				Action:    "resolve",
+				Server:    dns.ProxyResolverTag,
 			}
 			rules = append(rules, resolve)
-			selectedResolveInserted = true
+			if isSelectedSyntheticRoute(rule) {
+				selectedResolveInserted = true
+			}
 		}
 
 		entry, userRule := sourceByIndex[index]
@@ -105,6 +108,14 @@ func compiledDNSHasTag(dns CompiledDNS, tag string) bool {
 func isSelectedSyntheticRoute(rule RouteRule) bool {
 	return len(rule.Inbound) == 1 &&
 		rule.Inbound[0] == domain.InboundTagSelected &&
+		rule.Action == "route" &&
+		rule.Outbound != ""
+}
+
+func isGlobalModeSyntheticRoute(rule RouteRule) bool {
+	return len(rule.Inbound) == 1 &&
+		rule.Inbound[0] == domain.InboundTagRule &&
+		rule.ClashMode == "Global" &&
 		rule.Action == "route" &&
 		rule.Outbound != ""
 }

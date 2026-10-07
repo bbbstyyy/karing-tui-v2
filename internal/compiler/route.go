@@ -31,6 +31,7 @@ type RouteRule struct {
 	Rules         []RouteRule `json:"rules,omitempty"`
 	Invert        bool        `json:"invert,omitempty"`
 	Inbound       []string    `json:"inbound,omitempty"`
+	ClashMode     string      `json:"clash_mode,omitempty"`
 	Domain        []string    `json:"domain,omitempty"`
 	DomainSuffix  []string    `json:"domain_suffix,omitempty"`
 	DomainKeyword []string    `json:"domain_keyword,omitempty"`
@@ -113,6 +114,25 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 	ruleInbound, err := domain.InboundRule.RuntimeTag()
 	if err != nil {
 		return CompiledRouting{}, err
+	}
+	for _, mode := range []struct {
+		name   string
+		target domain.TargetRef
+	}{
+		{name: "Global", target: domain.TargetRef{Kind: domain.TargetCurrentSelected}},
+		{name: "Direct", target: domain.TargetRef{Kind: domain.TargetDirect}},
+	} {
+		action, outbound, err := lowerTarget(mode.target, resolver)
+		if err != nil {
+			return CompiledRouting{}, fmt.Errorf("resolve %s mode target: %w", mode.name, err)
+		}
+		result.Rules = append(result.Rules, RouteRule{
+			Inbound:   []string{ruleInbound},
+			ClashMode: mode.name,
+			Action:    action,
+			Outbound:  outbound,
+		})
+		recordOutbound(&result, outboundSeen, outbound)
 	}
 
 	for _, step := range steps {
