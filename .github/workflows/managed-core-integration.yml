@@ -45,4 +45,6 @@ jobs:
       - name: Run managed-core integration
         env:
           KARING_TUI_TEST_CORE: ${{ runner.temp }}/karing-tui-core
+          DISPLAY: ''
+          WAYLAND_DISPLAY: ''
         run: go test -tags=integration ./internal/daemon -run TestManagedCoreReal -count=1 -v
