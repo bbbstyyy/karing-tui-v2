@@ -92,6 +92,39 @@ func (c *Client) RouteExplain(
 	return response, nil
 }
 
+func (c *Client) RoutingMode(ctx context.Context) (apiv1.RoutingModeResponse, error) {
+	var response apiv1.RoutingModeResponse
+	if err := c.get(ctx, "/v1/routing/mode", &response); err != nil {
+		return apiv1.RoutingModeResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) SetRoutingMode(ctx context.Context, mode string) (apiv1.RoutingModeResponse, error) {
+	body, err := json.Marshal(apiv1.RoutingModeRequest{Mode: mode})
+	if err != nil {
+		return apiv1.RoutingModeResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://unix/v1/routing/mode", bytes.NewReader(body))
+	if err != nil {
+		return apiv1.RoutingModeResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.controlClient.Do(req)
+	if err != nil {
+		return apiv1.RoutingModeResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return apiv1.RoutingModeResponse{}, responseError(resp)
+	}
+	var response apiv1.RoutingModeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return apiv1.RoutingModeResponse{}, fmt.Errorf("decode daemon response: %w", err)
+	}
+	return response, nil
+}
+
 func (c *Client) CurrentSelection(ctx context.Context) (apiv1.CurrentSelectionResponse, error) {
 	var response apiv1.CurrentSelectionResponse
 	if err := c.get(ctx, "/v1/selection/current", &response); err != nil {

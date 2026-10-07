@@ -163,6 +163,11 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	if runtime != nil && runtime.ConnectionsReady() {
 		observedConnections, _ = NewObservedConnectionsCoordinator(store, runtime, routeExplain)
 	}
+	var modeCore routingModeCore
+	if runtime != nil && runtime.RoutingModeReady() {
+		modeCore = runtime
+	}
+	routingMode, _ := NewRoutingModeCoordinator(store, modeCore)
 	mux.HandleFunc("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := store.Snapshot(r.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "state database unavailable"})
@@ -219,6 +224,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		declarationApplyRuntime := runtime != nil && runtime.DeclarationApplyReady()
 		currentSelectionLive := runtime != nil && runtime.CurrentSelectionReady()
 		connectionObservation := runtime != nil && runtime.ConnectionsReady()
+		routingModeLive := runtime != nil && runtime.RoutingModeReady()
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			APIVersion: apiv1.Version,
 			Capabilities: map[string]bool{
@@ -272,6 +278,10 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"route_explain_simulated":     true,
 				"route_explain_observed":      false,
 				"connection_observation":      connectionObservation,
+				"routing_mode_intent":         true,
+				"routing_mode_api":            true,
+				"routing_mode_live":           routingModeLive,
+				"private_direct_policy":       false,
 				"routing_rule_set_closure":    true,
 				"routing_rule_set_store":      s.ruleSets != nil,
 				"rule_set_upload_api":         s.ruleSets != nil,
@@ -313,6 +323,37 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"tui":                         false,
 			},
 		})
+	})
+	mux.HandleFunc("GET /v1/routing/mode", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		state, err := routingMode.Get(ctx)
+		if err != nil {
+			writeRoutingModeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, routingModeResponse(state))
+	})
+	mux.HandleFunc("PUT /v1/routing/mode", func(w http.ResponseWriter, r *http.Request) {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+		decoder.DisallowUnknownFields()
+		var request apiv1.RoutingModeRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode routing mode request: " + err.Error()})
+			return
+		}
+		if err := requireJSONEOF(decoder); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode routing mode request: " + err.Error()})
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancel()
+		state, err := routingMode.Set(ctx, storage.RoutingMode(request.Mode))
+		if err != nil {
+			writeRoutingModeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, routingModeResponse(state))
 	})
 	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
 		if observedConnections == nil {
@@ -603,6 +644,27 @@ func writeObservedConnectionsError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrConnectionObservationBusy),
 		errors.Is(err, ErrConnectionGenerationChanged):
 		status = http.StatusConflict
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusGatewayTimeout
+	}
+	writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
+}
+
+func routingModeResponse(value RoutingModeState) apiv1.RoutingModeResponse {
+	return apiv1.RoutingModeResponse{
+		Mode:     string(value.Mode),
+		Applied:  value.Applied,
+		LiveMode: string(value.LiveMode),
+	}
+}
+
+func writeRoutingModeError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, storage.ErrInvalidRoutingMode):
+		status = http.StatusUnprocessableEntity
+	case errors.Is(err, ErrLiveRoutingModeUpdate):
+		status = http.StatusBadGateway
 	case errors.Is(err, context.DeadlineExceeded):
 		status = http.StatusGatewayTimeout
 	}

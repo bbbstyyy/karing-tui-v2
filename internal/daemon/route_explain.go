@@ -42,6 +42,7 @@ type routeExplainInput struct {
 	port        uint16
 	network     domain.NetworkType
 	processName string
+	mode        storage.RoutingMode
 }
 
 type routeEvalState uint8
@@ -79,6 +80,7 @@ func (c *RouteExplainCoordinator) Explain(
 	if snapshot.AppliedGenerationID == nil {
 		return apiv1.RouteExplainResponse{}, ErrRouteExplainUnavailable
 	}
+	input.mode = snapshot.RoutingMode
 	generationID := *snapshot.AppliedGenerationID
 	artifacts, err := c.store.GenerationArtifacts(ctx, generationID)
 	if err != nil {
@@ -101,6 +103,7 @@ func (c *RouteExplainCoordinator) Explain(
 		ConfigRevision:      snapshot.Revision,
 		GenerationID:        generationID,
 		DeclarationRevision: manifest.DeclarationRevision,
+		RoutingMode:         string(snapshot.RoutingMode),
 		Entry:               string(input.entry),
 		Input:               request,
 		Trace:               make([]apiv1.RouteExplainStep, 0, len(rules)),
@@ -349,9 +352,16 @@ func evaluateLogicalRouteRule(rule compiler.RouteRule, input routeExplainInput) 
 }
 
 func evaluateRouteRuleFields(rule compiler.RouteRule, input routeExplainInput) routeEvalResult {
-	parts := make([]routeEvalResult, 0, 10)
+	parts := make([]routeEvalResult, 0, 11)
 	if len(rule.Inbound) != 0 {
 		parts = append(parts, routeBool(stringSliceContains(rule.Inbound, input.inboundTag)))
+	}
+	if rule.ClashMode != "" {
+		if input.mode == "" {
+			parts = append(parts, routeUnknown("routing_mode"))
+		} else {
+			parts = append(parts, routeBool(strings.EqualFold(rule.ClashMode, string(input.mode))))
+		}
 	}
 	if len(rule.Domain) != 0 {
 		if input.domain == "" {
@@ -505,6 +515,7 @@ func routeExplainStep(
 		RuleIndex:         index,
 		Result:            routeEvalString(evaluation.state),
 		Source:            "synthetic",
+		ClashMode:         rule.ClashMode,
 		Action:            rule.Action,
 		Outbound:          rule.Outbound,
 		Server:            rule.Server,

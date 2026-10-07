@@ -136,6 +136,7 @@ type RouteExplainStep struct {
 	RuleIndex         int                 `json:"rule_index"`
 	Result            string              `json:"result"`
 	Source            string              `json:"source"`
+	ClashMode         string              `json:"clash_mode,omitempty"`
 	Layer             domain.RoutingLayer `json:"layer,omitempty"`
 	GroupID           string              `json:"group_id,omitempty"`
 	Final             bool                `json:"final,omitempty"`
@@ -154,6 +155,7 @@ type RouteExplainResponse struct {
 	ConfigRevision      uint64              `json:"config_revision"`
 	GenerationID        int64               `json:"generation_id"`
 	DeclarationRevision uint64              `json:"declaration_revision"`
+	RoutingMode         string              `json:"routing_mode"`
 	Entry               string              `json:"entry"`
 	Input               RouteExplainRequest `json:"input"`
 	RuleIndex           *int                `json:"rule_index,omitempty"`
@@ -210,4 +212,15 @@ type ObservedConnectionResponse struct {
 	SourceTarget            *domain.TargetRef   `json:"source_target,omitempty"`
 	SourceDNSProfileID      string              `json:"source_dns_profile_id,omitempty"`
 	SourceUnknownConditions []string            `json:"source_unknown_conditions,omitempty"`
+}
+
+
+type RoutingModeRequest struct {
+	Mode string `json:"mode"`
+}
+
+type RoutingModeResponse struct {
+	Mode     string `json:"mode"`
+	Applied  bool   `json:"applied"`
+	LiveMode string `json:"live_mode,omitempty"`
 }

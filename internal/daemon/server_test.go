@@ -105,6 +105,10 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["route_explain_simulated"] ||
 		caps.Capabilities["route_explain_observed"] ||
 		caps.Capabilities["connection_observation"] ||
+		!caps.Capabilities["routing_mode_intent"] ||
+		!caps.Capabilities["routing_mode_api"] ||
+		caps.Capabilities["routing_mode_live"] ||
+		caps.Capabilities["private_direct_policy"] ||
 		!caps.Capabilities["routing_rule_set_closure"] ||
 		!caps.Capabilities["routing_rule_set_store"] ||
 		!caps.Capabilities["selection_group_model"] ||

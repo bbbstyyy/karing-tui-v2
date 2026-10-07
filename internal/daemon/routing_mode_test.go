@@ -2,10 +2,16 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
@@ -105,5 +111,58 @@ func TestRoutingModeCoordinatorRetainsIntentOnLiveFailure(t *testing.T) {
 	}
 	if store.snapshot.RoutingMode != storage.RoutingModeGlobal {
 		t.Fatalf("failed live update did not retain durable mode: %q", store.snapshot.RoutingMode)
+	}
+}
+
+
+func TestRoutingModeAPIPersistsWhileCoreUnavailable(t *testing.T) {
+	ctx := context.Background()
+	store := openServerTestStore(t, ctx)
+	defer store.Close()
+	handler := New(runtimepath.Paths{}).handler(store, nil)
+
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/v1/routing/mode", nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("mode GET status=%d body=%s", get.Code, get.Body.String())
+	}
+	var initial apiv1.RoutingModeResponse
+	if err := json.NewDecoder(get.Body).Decode(&initial); err != nil {
+		t.Fatal(err)
+	}
+	if initial.Mode != string(storage.RoutingModeRule) || initial.Applied {
+		t.Fatalf("initial mode response = %+v", initial)
+	}
+
+	put := httptest.NewRecorder()
+	handler.ServeHTTP(
+		put,
+		httptest.NewRequest(http.MethodPut, "/v1/routing/mode", strings.NewReader(`{"mode":"global"}`)),
+	)
+	if put.Code != http.StatusOK {
+		t.Fatalf("mode PUT status=%d body=%s", put.Code, put.Body.String())
+	}
+	var updated apiv1.RoutingModeResponse
+	if err := json.NewDecoder(put.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Mode != string(storage.RoutingModeGlobal) || updated.Applied {
+		t.Fatalf("updated mode response = %+v", updated)
+	}
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.RoutingMode != storage.RoutingModeGlobal {
+		t.Fatalf("persisted routing mode = %q", snapshot.RoutingMode)
+	}
+
+	bad := httptest.NewRecorder()
+	handler.ServeHTTP(
+		bad,
+		httptest.NewRequest(http.MethodPut, "/v1/routing/mode", strings.NewReader(`{"mode":"unsupported"}`)),
+	)
+	if bad.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid mode status=%d body=%s", bad.Code, bad.Body.String())
 	}
 }
