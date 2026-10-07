@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -112,9 +112,9 @@ func TestRefreshProfileSourceHTTPFailurePreservesSnapshotAndRetryAfter(t *testin
 	store, _ := newProfileUpdateStore(t, ctx)
 	defer store.Close()
 
-	var fail bool
+	var fail atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if fail {
+		if fail.Load() {
 			w.Header().Set("Retry-After", "60")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte("secret remote body"))
@@ -139,7 +139,7 @@ func TestRefreshProfileSourceHTTPFailurePreservesSnapshotAndRetryAfter(t *testin
 	}
 	snapshotID := first.Commit.Snapshot.ID
 
-	fail = true
+	fail.Store(true)
 	before := time.Now().UTC().Add(59 * time.Second)
 	failed, err := RefreshProfileSource(ctx, store, fetcher, "profile-a", source.Revision, "refresh-2", Options{})
 	after := time.Now().UTC().Add(61 * time.Second)
@@ -174,9 +174,9 @@ func TestRefreshProfileSourceImportFailurePreservesAcceptedSnapshot(t *testing.T
 	store, _ := newProfileUpdateStore(t, ctx)
 	defer store.Close()
 
-	var invalid bool
+	var invalid atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if invalid {
+		if invalid.Load() {
 			_, _ = w.Write([]byte(`{
   "outbounds":[{"type":"vmess","tag":"unsupported","server":"example.com","server_port":443,"uuid":"00000000-0000-0000-0000-000000000000"}
 }`))
@@ -200,7 +200,7 @@ func TestRefreshProfileSourceImportFailurePreservesAcceptedSnapshot(t *testing.T
 	}
 	snapshotID := first.Commit.Snapshot.ID
 
-	invalid = true
+	invalid.Store(true)
 	failed, err := RefreshProfileSource(ctx, store, fetcher, "profile-a", source.Revision, "refresh-2", Options{})
 	if !errors.Is(err, ErrImportBlocked) {
 		t.Fatalf("unsupported import error = %v", err)
