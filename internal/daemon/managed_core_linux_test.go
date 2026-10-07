@@ -508,7 +508,6 @@ func testSHA256(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-
 func TestManagedCoreReconcileRecoveryRestoresAppliedGeneration(t *testing.T) {
 	id := int64(7)
 	state := &fakeManagedState{

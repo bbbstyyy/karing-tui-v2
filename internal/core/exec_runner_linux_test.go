@@ -82,7 +82,6 @@ func TestRingBufferConcurrentWritersRemainBounded(t *testing.T) {
 	}
 }
 
-
 func TestExecRunnerKillsManagedChildWhenParentDies(t *testing.T) {
 	const (
 		parentHelperEnv = "KARING_TUI_EXEC_PARENT_HELPER"
