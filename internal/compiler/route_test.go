@@ -319,12 +319,12 @@ func TestCompileRoutingCreatesFixedEntryAndModeRules(t *testing.T) {
 		t.Fatalf("rules = %d, want entry + public/internal mode + private + FINAL rules", len(result.Rules))
 	}
 	checks := []struct {
-		index       int
-		inbound     string
-		clashMode   string
-		private     bool
-		action      string
-		outbound    string
+		index     int
+		inbound   string
+		clashMode string
+		private   bool
+		action    string
+		outbound  string
 	}{
 		{0, domain.InboundTagDirect, "", false, "route", "out-direct"},
 		{1, domain.InboundTagSelected, "", false, "route", "out-current"},
