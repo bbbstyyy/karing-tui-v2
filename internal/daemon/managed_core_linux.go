@@ -19,6 +19,7 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreapi"
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
+	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
@@ -34,6 +35,12 @@ type managedCoreState interface {
 
 type managedCoreArtifactState interface {
 	GenerationArtifacts(context.Context, int64) (storage.GenerationArtifacts, error)
+}
+
+type managedCoreSelectionState interface {
+	GenerationArtifacts(context.Context, int64) (storage.GenerationArtifacts, error)
+	Declaration(context.Context, uint64) (storage.DeclarationRevision, error)
+	CurrentSelectionIntent(context.Context) (storage.SelectionIntent, bool, error)
 }
 
 type generationFiles interface {
@@ -234,7 +241,14 @@ func (m *ManagedCore) Start(ctx context.Context) error {
 	if err := m.supervisor.Start(ctx); err != nil {
 		return err
 	}
-	return m.waitRunning(ctx)
+	if err := m.waitRunning(ctx); err != nil {
+		return err
+	}
+	if err := m.restoreSelectionForGeneration(ctx, generation.ID); err != nil {
+		stopErr := m.supervisor.Stop(ctx)
+		return errors.Join(fmt.Errorf("restore current selection after core start: %w", err), stopErr)
+	}
+	return nil
 }
 
 func (m *ManagedCore) Stop(ctx context.Context) error {
@@ -274,6 +288,9 @@ func (m *ManagedCore) ReconcileRecovery(ctx context.Context) error {
 		}
 		if err := m.restartLocked(ctx, true); err != nil {
 			return fmt.Errorf("restore applied generation during recovery reconcile: %w", err)
+		}
+		if err := m.restoreSelectionForGeneration(ctx, generation.ID); err != nil {
+			return fmt.Errorf("restore current selection during recovery reconcile: %w", err)
 		}
 		if err := m.probe.Ready(ctx, nil); err != nil {
 			return fmt.Errorf("verify recovered applied generation: %w", err)
@@ -324,12 +341,15 @@ func (m *ManagedCore) Activate(ctx context.Context, generation Generation) error
 	return m.restartLocked(ctx, true)
 }
 
-func (m *ManagedCore) Verify(ctx context.Context, _ Generation) error {
+func (m *ManagedCore) Verify(ctx context.Context, generation Generation) error {
 	m.transitionMu.Lock()
 	defer m.transitionMu.Unlock()
 
 	if err := m.waitRunning(ctx); err != nil {
 		return err
+	}
+	if err := m.restoreSelectionForGeneration(ctx, generation.ID); err != nil {
+		return fmt.Errorf("restore current selection for candidate generation: %w", err)
 	}
 	if err := m.probe.Ready(ctx, nil); err != nil {
 		return fmt.Errorf("verify local core health: %w", err)
@@ -363,6 +383,9 @@ func (m *ManagedCore) Rollback(ctx context.Context, previous *Generation) error 
 	}
 	if err := m.restartLocked(ctx, true); err != nil {
 		return err
+	}
+	if err := m.restoreSelectionForGeneration(ctx, previous.ID); err != nil {
+		return fmt.Errorf("restore current selection after rollback: %w", err)
 	}
 	if err := m.probe.Ready(ctx, nil); err != nil {
 		return fmt.Errorf("verify rolled back core health: %w", err)
@@ -427,6 +450,61 @@ func (m *ManagedCore) pruneStagedGenerations(ctx context.Context, generationID i
 
 	if _, err := pruner.PruneStagedGenerations(ctx, protected, stagedGenerationRetention); err != nil {
 		return fmt.Errorf("prune staged generations: %w", err)
+	}
+	return nil
+}
+
+func (m *ManagedCore) restoreSelectionForGeneration(ctx context.Context, generationID int64) error {
+	if m.selector == nil {
+		return nil
+	}
+	state, ok := m.state.(managedCoreSelectionState)
+	if !ok {
+		return nil
+	}
+	intent, exists, err := state.CurrentSelectionIntent(ctx)
+	if err != nil {
+		return fmt.Errorf("read persisted current selection: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	target, err := decodeSelectionTarget(intent.TargetJSON)
+	if err != nil {
+		return err
+	}
+	artifacts, err := state.GenerationArtifacts(ctx, generationID)
+	if err != nil {
+		return fmt.Errorf("load generation %d metadata for current selection: %w", generationID, err)
+	}
+	if len(artifacts.ManifestJSON) == 0 {
+		return fmt.Errorf("generation %d has no declaration provenance for persisted current selection", generationID)
+	}
+	var manifest compiler.NativeManifest
+	if err := json.Unmarshal(artifacts.ManifestJSON, &manifest); err != nil {
+		return fmt.Errorf("decode generation %d manifest for current selection: %w", generationID, err)
+	}
+	if manifest.DeclarationRevision == 0 || manifest.DeclarationSHA256 == "" {
+		return fmt.Errorf("generation %d has no declaration binding for persisted current selection", generationID)
+	}
+	stored, err := state.Declaration(ctx, manifest.DeclarationRevision)
+	if err != nil {
+		return fmt.Errorf("load declaration revision %d for current selection: %w", manifest.DeclarationRevision, err)
+	}
+	if stored.SHA256 != manifest.DeclarationSHA256 {
+		return fmt.Errorf(
+			"generation %d declaration hash mismatch for current selection: state=%s manifest=%s",
+			generationID,
+			stored.SHA256,
+			manifest.DeclarationSHA256,
+		)
+	}
+	runtimeTag, err := declaration.CurrentSelectionRuntimeTag(stored.DocumentJSON, target)
+	if err != nil {
+		return fmt.Errorf("resolve persisted current selection against declaration revision %d: %w", stored.Revision, err)
+	}
+	if err := m.selector.Select(ctx, compiler.CurrentSelectedOutboundTag, runtimeTag); err != nil {
+		return fmt.Errorf("apply persisted current selection %q: %w", runtimeTag, err)
 	}
 	return nil
 }

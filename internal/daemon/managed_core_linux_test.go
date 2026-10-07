@@ -15,6 +15,9 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/coreapi"
+	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
+	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
@@ -50,6 +53,56 @@ func (s *fakeManagedArtifactState) GenerationArtifacts(context.Context, int64) (
 	out.ManifestJSON = append([]byte(nil), s.artifacts.ManifestJSON...)
 	out.SourceMapJSON = append([]byte(nil), s.artifacts.SourceMapJSON...)
 	return out, nil
+}
+
+type fakeManagedSelectionState struct {
+	*fakeManagedArtifactState
+	declaration storage.DeclarationRevision
+	intent      storage.SelectionIntent
+	hasIntent   bool
+}
+
+func (s *fakeManagedSelectionState) Declaration(_ context.Context, revision uint64) (storage.DeclarationRevision, error) {
+	if s.err != nil {
+		return storage.DeclarationRevision{}, s.err
+	}
+	if s.declaration.Revision != revision {
+		return storage.DeclarationRevision{}, storage.ErrDeclarationNotFound
+	}
+	out := s.declaration
+	out.DocumentJSON = append([]byte(nil), out.DocumentJSON...)
+	return out, nil
+}
+
+func (s *fakeManagedSelectionState) CurrentSelectionIntent(context.Context) (storage.SelectionIntent, bool, error) {
+	if s.err != nil {
+		return storage.SelectionIntent{}, false, s.err
+	}
+	out := s.intent
+	out.TargetJSON = append([]byte(nil), out.TargetJSON...)
+	return out, s.hasIntent, nil
+}
+
+type fakeSelectorControl struct {
+	selected string
+	calls    []string
+	err      error
+}
+
+func (s *fakeSelectorControl) Select(_ context.Context, selectorTag, outboundTag string) error {
+	s.calls = append(s.calls, selectorTag+"=>"+outboundTag)
+	if s.err != nil {
+		return s.err
+	}
+	s.selected = outboundTag
+	return nil
+}
+
+func (s *fakeSelectorControl) Current(context.Context, string) (coreapi.SelectorSnapshot, error) {
+	if s.err != nil {
+		return coreapi.SelectorSnapshot{}, s.err
+	}
+	return coreapi.SelectorSnapshot{Now: s.selected, All: []string{s.selected}}, nil
 }
 
 type fakeGenerationFiles struct {
@@ -594,5 +647,135 @@ func TestManagedCoreReconcileRecoveryRequiresAppliedGenerationForRunningIntent(t
 	}
 	if supervisor.starts != 0 {
 		t.Fatalf("recovery started core without an applied generation: %d", supervisor.starts)
+	}
+}
+
+
+func TestManagedCoreStartRestoresSelectionFromAppliedGenerationProvenance(t *testing.T) {
+	ctx := context.Background()
+	id := int64(7)
+	document := currentSelectionTestDeclaration()
+	target := []byte(`{"kind":"specific_node","profile_id":"profile-a","node_id":"node-b"}`)
+	sum := sha256.Sum256(document)
+	declarationHash := hex.EncodeToString(sum[:])
+	manifestJSON, err := json.Marshal(compiler.NativeManifest{
+		SchemaID:            compiler.NativeSchemaID,
+		ConfigSHA256:        testSHA256([]byte("{}")),
+		DeclarationRevision: 3,
+		DeclarationSHA256:   declarationHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &fakeManagedSelectionState{
+		fakeManagedArtifactState: &fakeManagedArtifactState{
+			fakeManagedState: &fakeManagedState{
+				snapshot: storage.Snapshot{AppliedGenerationID: &id},
+				config:   []byte("{}"),
+				hash:     testSHA256([]byte("{}")),
+			},
+			artifacts: storage.GenerationArtifacts{
+				ConfigJSON:      []byte("{}"),
+				ConfigSHA256:    testSHA256([]byte("{}")),
+				ManifestJSON:    manifestJSON,
+				ManifestSHA256:  testSHA256(manifestJSON),
+				SourceMapJSON:   []byte("[]"),
+				SourceMapSHA256: testSHA256([]byte("[]")),
+			},
+		},
+		declaration: storage.DeclarationRevision{
+			Revision:     3,
+			DocumentJSON: document,
+			SHA256:       declarationHash,
+		},
+		intent:    storage.SelectionIntent{TargetJSON: target},
+		hasIntent: true,
+	}
+	files := &fakeGenerationFiles{path: "/state/generations/7/config.json"}
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
+	selector := &fakeSelectorControl{}
+	managed := newManagedCore(state, files, &fakeBinder{}, supervisor, &fakeProbe{}, nil, nil, nil)
+	managed.selector = selector
+
+	if err := managed.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantTag, err := declaration.CurrentSelectionRuntimeTag(document, domain.TargetRef{
+		Kind: domain.TargetSpecificNode, ProfileID: "profile-a", NodeID: "node-b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selector.selected != wantTag || len(selector.calls) != 1 {
+		t.Fatalf("restored selector = %q calls=%v, want %q", selector.selected, selector.calls, wantTag)
+	}
+}
+
+func TestManagedCoreVerifyRestoresSelectionForCandidateGeneration(t *testing.T) {
+	ctx := context.Background()
+	document := currentSelectionTestDeclaration()
+	target := []byte(`{"kind":"specific_node","profile_id":"profile-a","node_id":"node-b"}`)
+	sum := sha256.Sum256(document)
+	declarationHash := hex.EncodeToString(sum[:])
+	manifestJSON, err := json.Marshal(compiler.NativeManifest{
+		SchemaID:            compiler.NativeSchemaID,
+		ConfigSHA256:        testSHA256([]byte("{}")),
+		DeclarationRevision: 4,
+		DeclarationSHA256:   declarationHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &fakeManagedSelectionState{
+		fakeManagedArtifactState: &fakeManagedArtifactState{
+			fakeManagedState: &fakeManagedState{
+				snapshot: storage.Snapshot{CoreDesiredState: storage.CoreDesiredRunning},
+			},
+			artifacts: storage.GenerationArtifacts{ManifestJSON: manifestJSON},
+		},
+		declaration: storage.DeclarationRevision{
+			Revision:     4,
+			DocumentJSON: document,
+			SHA256:       declarationHash,
+		},
+		intent:    storage.SelectionIntent{TargetJSON: target},
+		hasIntent: true,
+	}
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateRunning, DesiredRunning: true, PID: 123}}
+	selector := &fakeSelectorControl{}
+	managed := newManagedCore(state, &fakeGenerationFiles{}, &fakeBinder{}, supervisor, &fakeProbe{}, nil, nil, nil)
+	managed.selector = selector
+
+	if err := managed.Verify(ctx, Generation{ID: 10, Config: []byte("{}"), SHA256: testSHA256([]byte("{}"))}); err != nil {
+		t.Fatal(err)
+	}
+	if len(selector.calls) != 1 {
+		t.Fatalf("candidate selection restore calls=%v", selector.calls)
+	}
+}
+
+func TestManagedCoreStartFailsClosedWhenSelectionProvenanceMissing(t *testing.T) {
+	id := int64(7)
+	state := &fakeManagedSelectionState{
+		fakeManagedArtifactState: &fakeManagedArtifactState{
+			fakeManagedState: &fakeManagedState{
+				snapshot: storage.Snapshot{AppliedGenerationID: &id},
+				config:   []byte("{}"),
+				hash:     testSHA256([]byte("{}")),
+			},
+			artifacts: storage.GenerationArtifacts{},
+		},
+		intent:    storage.SelectionIntent{TargetJSON: []byte(`{"kind":"specific_node","profile_id":"profile-a","node_id":"node-b"}`)},
+		hasIntent: true,
+	}
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
+	managed := newManagedCore(state, &fakeGenerationFiles{path: "/state/generations/7/config.json"}, &fakeBinder{}, supervisor, &fakeProbe{}, nil, nil, nil)
+	managed.selector = &fakeSelectorControl{}
+
+	if err := managed.Start(context.Background()); err == nil {
+		t.Fatal("core start unexpectedly ignored persisted selection without provenance")
+	}
+	if supervisor.starts != 1 || supervisor.stops != 1 {
+		t.Fatalf("failed selection restore did not stop mismatched core: starts=%d stops=%d", supervisor.starts, supervisor.stops)
 	}
 }
