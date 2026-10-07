@@ -239,15 +239,15 @@ func newHTTPTransport(proxy *url.URL) *http.Transport {
 		KeepAlive: 30 * time.Second,
 	}
 	transport := &http.Transport{
-		Proxy:                 nil,
-		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          8,
-		MaxIdleConnsPerHost:   2,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
-		ExpectContinueTimeout: time.Second,
+		Proxy:                  nil,
+		DialContext:            dialer.DialContext,
+		ForceAttemptHTTP2:      true,
+		MaxIdleConns:           8,
+		MaxIdleConnsPerHost:    2,
+		IdleConnTimeout:        30 * time.Second,
+		TLSHandshakeTimeout:    10 * time.Second,
+		ResponseHeaderTimeout:  20 * time.Second,
+		ExpectContinueTimeout:  time.Second,
 		MaxResponseHeaderBytes: 1 << 20,
 	}
 	if proxy != nil {
