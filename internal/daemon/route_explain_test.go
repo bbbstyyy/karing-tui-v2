@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/netip"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
