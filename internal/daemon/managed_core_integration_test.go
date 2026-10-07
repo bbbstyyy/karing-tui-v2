@@ -422,6 +422,141 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256
 }`, logLevel, ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256, nodePort))
 }
 
+func TestManagedCoreRealPortConflictFailsClosed(t *testing.T) {
+	corePath := os.Getenv("KARING_TUI_TEST_CORE")
+	if corePath == "" {
+		t.Skip("KARING_TUI_TEST_CORE is not set")
+	}
+
+	stateDir := t.TempDir()
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	store, err := storage.Open(ctx, filepath.Join(stateDir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ports := reserveLoopbackPorts(t, 4)
+	inbounds := domain.InboundSet{
+		Listen:       netip.MustParseAddr("127.0.0.1"),
+		RulePort:     ports[0],
+		DirectPort:   ports[1],
+		SelectedPort: ports[2],
+	}
+	const secret = "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	controlEndpoint := fmt.Sprintf("http://127.0.0.1:%d", ports[3])
+
+	artifact := integrationCoreArtifact(t, inbounds, ports[3], secret, "warn")
+	manifestJSON, sourceMapJSON, err := artifact.MetadataJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := store.PrepareApplyWithMetadata(
+		ctx,
+		0,
+		artifact.JSON,
+		manifestJSON,
+		sourceMapJSON,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginActivation(ctx, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginVerification(ctx, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitApplied(ctx, attempt.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetCoreDesiredState(ctx, storage.CoreDesiredRunning); err != nil {
+		t.Fatal(err)
+	}
+
+	owner, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", inbounds.RulePort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+
+	policy := core.DefaultPolicy()
+	policy.InitialBackoff = 20 * time.Millisecond
+	policy.MaxBackoff = 40 * time.Millisecond
+	policy.FailureWindow = 5 * time.Second
+	policy.MaxFailures = 2
+	policy.ReadyTimeout = 500 * time.Millisecond
+	policy.StopTimeout = time.Second
+	managed, err := NewManagedCore(store, ManagedCoreOptions{
+		Executable:      corePath,
+		StateRoot:       filepath.Join(stateDir, "core"),
+		ControlEndpoint: controlEndpoint,
+		ControlSecret:   secret,
+		Inbounds:        inbounds,
+		Policy:          policy,
+		LogCapacity:     64 << 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- managed.Run(runCtx)
+	}()
+	defer func() {
+		runCancel()
+		select {
+		case err := <-runDone:
+			if err != nil {
+				t.Errorf("port-conflict supervisor shutdown: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Errorf("port-conflict supervisor did not shut down")
+		}
+	}()
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), time.Second)
+	if err := managed.WaitReady(readyCtx); err != nil {
+		readyCancel()
+		t.Fatal(err)
+	}
+	readyCancel()
+
+	startCtx, startCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err = managed.Start(startCtx)
+	startCancel()
+	if err == nil {
+		t.Fatal("core unexpectedly started by avoiding the occupied declared RulePort")
+	}
+	failed := managed.Snapshot()
+	if failed.State != core.StateFailed || !failed.CircuitOpen || failed.PID != 0 {
+		t.Fatalf("port conflict did not fail closed: %+v; stderr=%s", failed, managed.StderrTail())
+	}
+
+	probe, err := net.DialTimeout("tcp4", owner.Addr().String(), 250*time.Millisecond)
+	if err != nil {
+		t.Fatalf("declared port owner disappeared after core start attempts: %v", err)
+	}
+	_ = probe.Close()
+	if replacement, err := net.Listen("tcp4", owner.Addr().String()); err == nil {
+		_ = replacement.Close()
+		t.Fatal("declared RulePort became free; core must never kill the existing owner")
+	}
+
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != 1 || snapshot.AppliedGenerationID == nil ||
+		*snapshot.AppliedGenerationID != attempt.GenerationID {
+		t.Fatalf("port conflict changed confirmed generation state: %+v", snapshot)
+	}
+}
+
 func reserveLoopbackPorts(t *testing.T, count int) []uint16 {
 	t.Helper()
 	listeners := make([]net.Listener, 0, count)
