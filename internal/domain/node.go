@@ -11,8 +11,9 @@ import (
 type NodeKind string
 
 const (
-	NodeSOCKS NodeKind = "socks"
-	NodeHTTP  NodeKind = "http"
+	NodeSOCKS       NodeKind = "socks"
+	NodeHTTP        NodeKind = "http"
+	NodeShadowsocks NodeKind = "shadowsocks"
 )
 
 type SOCKSVersion string
@@ -45,14 +46,23 @@ type HTTPNodeOptions struct {
 	Password string
 }
 
+type ShadowsocksNodeOptions struct {
+	Method        string
+	Password      string
+	Plugin        string
+	PluginOptions string
+	Network       ProxyNetwork
+}
+
 type Node struct {
 	ProfileID string
 	NodeID    string
 	Kind      NodeKind
 	Server    string
 	Port      uint16
-	SOCKS     *SOCKSNodeOptions
-	HTTP      *HTTPNodeOptions
+	SOCKS       *SOCKSNodeOptions
+	HTTP        *HTTPNodeOptions
+	Shadowsocks *ShadowsocksNodeOptions
 }
 
 func (n Node) Validate() error {
@@ -71,17 +81,24 @@ func (n Node) Validate() error {
 
 	switch n.Kind {
 	case NodeSOCKS:
-		if n.SOCKS == nil || n.HTTP != nil {
+		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil {
 			return fmt.Errorf("%w: SOCKS node must contain only SOCKS options", ErrInvalidNode)
 		}
 		if err := n.SOCKS.Validate(); err != nil {
 			return err
 		}
 	case NodeHTTP:
-		if n.HTTP == nil || n.SOCKS != nil {
+		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil {
 			return fmt.Errorf("%w: HTTP node must contain only HTTP options", ErrInvalidNode)
 		}
 		if err := n.HTTP.Validate(); err != nil {
+			return err
+		}
+	case NodeShadowsocks:
+		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil {
+			return fmt.Errorf("%w: Shadowsocks node must contain only Shadowsocks options", ErrInvalidNode)
+		}
+		if err := n.Shadowsocks.Validate(); err != nil {
 			return err
 		}
 	default:
@@ -133,6 +150,33 @@ func (o HTTPNodeOptions) Validate() error {
 	return nil
 }
 
+func (o ShadowsocksNodeOptions) Validate() error {
+	if err := validateNodeToken("Shadowsocks method", o.Method, 128, true); err != nil {
+		return err
+	}
+	if err := validateCredential(o.Password); err != nil {
+		return fmt.Errorf("%w: Shadowsocks password: %v", ErrInvalidNode, err)
+	}
+	if o.Password == "" {
+		return fmt.Errorf("%w: Shadowsocks password must not be empty", ErrInvalidNode)
+	}
+	if err := validateNodeToken("Shadowsocks plugin", o.Plugin, 256, false); err != nil {
+		return err
+	}
+	if err := validateCredential(o.PluginOptions); err != nil {
+		return fmt.Errorf("%w: Shadowsocks plugin options: %v", ErrInvalidNode, err)
+	}
+	if o.Plugin == "" && o.PluginOptions != "" {
+		return fmt.Errorf("%w: Shadowsocks plugin options require a plugin", ErrInvalidNode)
+	}
+	switch o.Network {
+	case ProxyNetworkBoth, ProxyNetworkTCP, ProxyNetworkUDP:
+	default:
+		return fmt.Errorf("%w: unsupported Shadowsocks network %q", ErrInvalidNode, o.Network)
+	}
+	return nil
+}
+
 func validateNodeID(value string) error {
 	if value == "" {
 		return errors.New("stable ID must not be empty")
@@ -149,6 +193,27 @@ func validateNodeID(value string) error {
 	for _, r := range value {
 		if r < 0x20 || r == 0x7f {
 			return errors.New("stable ID contains a control character")
+		}
+	}
+	return nil
+}
+
+func validateNodeToken(label, value string, limit int, required bool) error {
+	if required && value == "" {
+		return fmt.Errorf("%w: %s must not be empty", ErrInvalidNode, label)
+	}
+	if len(value) > limit {
+		return fmt.Errorf("%w: %s exceeds %d bytes", ErrInvalidNode, label, limit)
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%w: %s must not have leading or trailing whitespace", ErrInvalidNode, label)
+	}
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%w: %s is not valid UTF-8", ErrInvalidNode, label)
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("%w: %s contains a control character", ErrInvalidNode, label)
 		}
 	}
 	return nil
