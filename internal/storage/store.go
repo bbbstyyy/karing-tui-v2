@@ -799,7 +799,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 10
+const currentSchemaVersion = 11
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1077,6 +1077,22 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(10, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 10: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 11 {
+		if _, err := tx.ExecContext(ctx, `
+			ALTER TABLE profile_sources
+			ADD COLUMN update_interval_seconds INTEGER NOT NULL DEFAULT 0
+			CHECK(
+				update_interval_seconds = 0 OR
+				update_interval_seconds BETWEEN 300 AND 31536000
+			)
+		`); err != nil {
+			return fmt.Errorf("apply sqlite migration 11: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(11, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 11: %w", err)
 		}
 	}
 
