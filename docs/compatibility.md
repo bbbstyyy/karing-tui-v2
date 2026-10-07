@@ -108,12 +108,22 @@ Implemented profile foundation:
 - profile node replacement reports added/removed/retained NodeIDs and fails closed when a removed node is still referenced;
 - successful snapshot-to-declaration updates use declaration revision CAS and record `profile-snapshot/<id>` provenance.
 
+Implemented source/update-state foundation:
+
+- revisioned ProfileSource configuration with CAS;
+- HTTP/HTTPS URL and absolute local-file source modelling;
+- Direct / CurrentSelected / Specific Node fetch-policy modelling;
+- persisted ETag, Last-Modified, Retry-After and consecutive-failure metadata;
+- one crash-safe active update lease per profile;
+- daemon-start recovery of interrupted update leases;
+- source configuration cannot change while its worker lease is active.
+
 Not yet implemented:
 
-- subscription URL/fetch scheduling;
-- ETag/Last-Modified fetch state;
+- external HTTP/file fetch execution and conditional requests;
+- global fetch concurrency/rate budgets;
 - traffic quota/expiry metadata;
-- source enable/disable/filter overlays;
+- source node filter/user overlay persistence;
 - provider materialization;
 - automatic scheduled declaration/apply policy after a profile refresh;
-- timed update/backoff/debounce.
+- timed scheduling/backoff/debounce policy.
