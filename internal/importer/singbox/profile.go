@@ -409,9 +409,9 @@ func parseBasicShadowsocksOutbound(raw []byte, tag string) (BasicNode, error) {
 		return BasicNode{}, err
 	}
 	if _, err := node.Materialize(profile.NodeIdentity{
-		ProfileID: "validation-profile",
-		NodeID:    identity,
-		SourceKey: tag,
+		ProfileID:  "validation-profile",
+		NodeID:     identity,
+		SourceKey:  tag,
 		SourceName: tag,
 	}); err != nil {
 		return BasicNode{}, err
