@@ -61,9 +61,10 @@ func TestCompileNativeConfigBuildsDeterministicRunnableEnvelope(t *testing.T) {
 		} `json:"route"`
 		Experimental struct {
 			ClashAPI struct {
-				ExternalController string `json:"external_controller"`
-				Secret             string `json:"secret"`
-				DefaultMode        string `json:"default_mode"`
+				ExternalController string   `json:"external_controller"`
+				Secret             string   `json:"secret"`
+				DefaultMode        string   `json:"default_mode"`
+				ModeList           []string `json:"mode_list"`
 			} `json:"clash_api"`
 		} `json:"experimental"`
 	}
@@ -90,7 +91,14 @@ func TestCompileNativeConfigBuildsDeterministicRunnableEnvelope(t *testing.T) {
 	}
 	if decoded.Experimental.ClashAPI.ExternalController != "127.0.0.1:3057" ||
 		decoded.Experimental.ClashAPI.Secret != nativeTestSecret ||
-		decoded.Experimental.ClashAPI.DefaultMode != "Rule" {
+		decoded.Experimental.ClashAPI.DefaultMode != "Rule" ||
+		!reflect.DeepEqual(decoded.Experimental.ClashAPI.ModeList, []string{
+			"Rule",
+			"RuleNoPrivate",
+			"Global",
+			"GlobalNoPrivate",
+			"Direct",
+		}) {
 		t.Fatalf("unexpected Clash API config: %+v", decoded.Experimental.ClashAPI)
 	}
 }
