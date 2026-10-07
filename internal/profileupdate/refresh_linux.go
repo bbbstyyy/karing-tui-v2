@@ -17,6 +17,8 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
+const refreshFinalizeTimeout = 5 * time.Second
+
 var ErrNotModifiedWithoutSnapshot = errors.New("profile source returned not modified without an accepted snapshot")
 
 type Fetcher interface {
@@ -97,7 +99,7 @@ func RefreshProfileSource(
 			ETag:           fetched.ETag,
 			LastModified:   fetched.LastModified,
 		}); err != nil {
-			return result, err
+			return result, finishRefreshFailure(ctx, store, lease, err)
 		}
 		result.NotModified = true
 		result.SourceAfter, err = store.ProfileSource(ctx, profileID)
@@ -187,7 +189,12 @@ func finishRefreshFailure(
 ) error {
 	retryAfter := retryAfterFromError(cause)
 	status := safeRefreshFailure(cause)
-	if err := store.FinishProfileUpdateFailure(ctx, lease, status, retryAfter); err != nil {
+	finalizeCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		refreshFinalizeTimeout,
+	)
+	defer cancel()
+	if err := store.FinishProfileUpdateFailure(finalizeCtx, lease, status, retryAfter); err != nil {
 		return errors.Join(cause, err)
 	}
 	return cause
