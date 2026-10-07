@@ -1,6 +1,10 @@
 package apiv1
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
+)
 
 const Version = "v1"
 
@@ -104,4 +108,18 @@ type StorageRetentionResponse struct {
 	PrunedGenerationCount    int64 `json:"pruned_generation_count,omitempty"`
 	ReclaimedGenerationBytes int64 `json:"reclaimed_generation_bytes,omitempty"`
 	OverBudget               bool  `json:"over_budget"`
+}
+
+
+type CurrentSelectionRequest struct {
+	Target domain.TargetRef `json:"target"`
+}
+
+type CurrentSelectionResponse struct {
+	Target         domain.TargetRef `json:"target"`
+	RuntimeTag     string           `json:"runtime_tag"`
+	Persisted      bool             `json:"persisted"`
+	UpdatedAt      string           `json:"updated_at,omitempty"`
+	Applied        bool             `json:"applied"`
+	LiveRuntimeTag string           `json:"live_runtime_tag,omitempty"`
 }

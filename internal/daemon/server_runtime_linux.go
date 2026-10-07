@@ -184,6 +184,41 @@ func (r *serverRuntime) Snapshot() core.Snapshot {
 	return r.core.Snapshot()
 }
 
+func (r *serverRuntime) CurrentSelectionReady() bool {
+	if r == nil || r.core == nil {
+		return false
+	}
+	_, canSelect := r.core.(interface {
+		SelectCurrent(context.Context, string) error
+	})
+	_, canRead := r.core.(interface {
+		CurrentSelection(context.Context) (string, error)
+	})
+	return canSelect && canRead
+}
+
+func (r *serverRuntime) SelectCurrent(ctx context.Context, outboundTag string) error {
+	if !r.CurrentSelectionReady() {
+		return errors.New("current selection control is not configured")
+	}
+	controller := r.core.(interface {
+		SelectCurrent(context.Context, string) error
+	})
+	return r.gate.Do(ctx, "selection-set", func(operationCtx context.Context) error {
+		return controller.SelectCurrent(operationCtx, outboundTag)
+	})
+}
+
+func (r *serverRuntime) CurrentSelection(ctx context.Context) (string, error) {
+	if !r.CurrentSelectionReady() {
+		return "", errors.New("current selection control is not configured")
+	}
+	controller := r.core.(interface {
+		CurrentSelection(context.Context) (string, error)
+	})
+	return controller.CurrentSelection(ctx)
+}
+
 func (r *serverRuntime) Start(ctx context.Context) error {
 	if r == nil {
 		return errors.New("core runtime is not configured")

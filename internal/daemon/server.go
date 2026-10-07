@@ -153,6 +153,11 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Handler {
 	mux := http.NewServeMux()
+	var selectionCore currentSelectionCore
+	if runtime != nil && runtime.CurrentSelectionReady() {
+		selectionCore = runtime
+	}
+	selection, _ := NewCurrentSelectionCoordinator(store, selectionCore)
 	mux.HandleFunc("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := store.Snapshot(r.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "state database unavailable"})
@@ -207,6 +212,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		managedApplyRuntime := runtime != nil && runtime.ManagedApplyReady()
 		declarationCompileRuntime := runtime != nil && runtime.DeclarationCompilerReady()
 		declarationApplyRuntime := runtime != nil && runtime.DeclarationApplyReady()
+		currentSelectionLive := runtime != nil && runtime.CurrentSelectionReady()
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			APIVersion: apiv1.Version,
 			Capabilities: map[string]bool{
@@ -262,6 +268,9 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"rule_set_upload_api":         s.ruleSets != nil,
 				"selection_group_model":       true,
 				"selection_group_lowerer":     true,
+				"current_selection_intent":    true,
+				"current_selection_api":       true,
+				"current_selection_live":      currentSelectionLive,
 				"basic_node_model":            true,
 				"basic_node_lowerer":          true,
 				"native_config_emitter":       true,
@@ -294,6 +303,33 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"tui":                         false,
 			},
 		})
+	})
+	mux.HandleFunc("GET /v1/selection/current", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		state, err := selection.Get(ctx)
+		if err != nil {
+			writeCurrentSelectionError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, currentSelectionResponse(state))
+	})
+	mux.HandleFunc("PUT /v1/selection/current", func(w http.ResponseWriter, r *http.Request) {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, storage.MaxSelectionTargetBytes+1024))
+		decoder.DisallowUnknownFields()
+		var request apiv1.CurrentSelectionRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode current selection request: " + err.Error()})
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancel()
+		state, err := selection.Set(ctx, request.Target)
+		if err != nil {
+			writeCurrentSelectionError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, currentSelectionResponse(state))
 	})
 	mux.HandleFunc("GET /v1/storage/retention", func(w http.ResponseWriter, r *http.Request) {
 		report, err := store.RetentionStatus(r.Context())
@@ -508,6 +544,36 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		runCoreOperation(w, r, runtime, "stop")
 	})
 	return mux
+}
+
+func currentSelectionResponse(value CurrentSelectionState) apiv1.CurrentSelectionResponse {
+	response := apiv1.CurrentSelectionResponse{
+		Target:         value.Target,
+		RuntimeTag:     value.RuntimeTag,
+		Persisted:      value.Persisted,
+		Applied:        value.Applied,
+		LiveRuntimeTag: value.LiveRuntimeTag,
+	}
+	if !value.UpdatedAt.IsZero() {
+		response.UpdatedAt = value.UpdatedAt.Format(time.RFC3339Nano)
+	}
+	return response
+}
+
+func writeCurrentSelectionError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, ErrCurrentSelectionUnavailable):
+		status = http.StatusConflict
+	case errors.Is(err, ErrCurrentSelectionTarget),
+		errors.Is(err, storage.ErrInvalidSelectionIntent):
+		status = http.StatusUnprocessableEntity
+	case errors.Is(err, ErrLiveSelectionUpdate):
+		status = http.StatusBadGateway
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusGatewayTimeout
+	}
+	writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
 }
 
 func storageRetentionResponse(value storage.RetentionReport) apiv1.StorageRetentionResponse {

@@ -106,6 +106,9 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["routing_rule_set_store"] ||
 		!caps.Capabilities["selection_group_model"] ||
 		!caps.Capabilities["selection_group_lowerer"] ||
+		!caps.Capabilities["current_selection_intent"] ||
+		!caps.Capabilities["current_selection_api"] ||
+		caps.Capabilities["current_selection_live"] ||
 		!caps.Capabilities["basic_node_model"] ||
 		!caps.Capabilities["basic_node_lowerer"] ||
 		!caps.Capabilities["native_config_emitter"] ||
