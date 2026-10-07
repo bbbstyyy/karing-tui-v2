@@ -172,31 +172,71 @@ func TestRoutingModeAPIPersistsWhileCoreUnavailable(t *testing.T) {
 	if err := json.NewDecoder(get.Body).Decode(&initial); err != nil {
 		t.Fatal(err)
 	}
-	if initial.Mode != string(storage.RoutingModeRule) || initial.Applied {
-		t.Fatalf("initial mode response = %+v", initial)
+	if initial.Mode != string(storage.RoutingModeRule) || initial.PrivateDirect || initial.Applied {
+		t.Fatalf("initial policy response = %+v", initial)
 	}
 
 	put := httptest.NewRecorder()
 	handler.ServeHTTP(
 		put,
-		httptest.NewRequest(http.MethodPut, "/v1/routing/mode", strings.NewReader(`{"mode":"global"}`)),
+		httptest.NewRequest(
+			http.MethodPut,
+			"/v1/routing/mode",
+			strings.NewReader(`{"mode":"global","private_direct":true}`),
+		),
 	)
 	if put.Code != http.StatusOK {
-		t.Fatalf("mode PUT status=%d body=%s", put.Code, put.Body.String())
+		t.Fatalf("policy PUT status=%d body=%s", put.Code, put.Body.String())
 	}
 	var updated apiv1.RoutingModeResponse
 	if err := json.NewDecoder(put.Body).Decode(&updated); err != nil {
 		t.Fatal(err)
 	}
-	if updated.Mode != string(storage.RoutingModeGlobal) || updated.Applied {
-		t.Fatalf("updated mode response = %+v", updated)
+	if updated.Mode != string(storage.RoutingModeGlobal) || !updated.PrivateDirect || updated.Applied {
+		t.Fatalf("updated policy response = %+v", updated)
 	}
 	snapshot, err := store.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.RoutingMode != storage.RoutingModeGlobal {
-		t.Fatalf("persisted routing mode = %q", snapshot.RoutingMode)
+	if snapshot.RoutingMode != storage.RoutingModeGlobal || !snapshot.PrivateDirect {
+		t.Fatalf("persisted routing policy = %+v", snapshot)
+	}
+
+	privateOnly := httptest.NewRecorder()
+	handler.ServeHTTP(
+		privateOnly,
+		httptest.NewRequest(
+			http.MethodPut,
+			"/v1/routing/mode",
+			strings.NewReader(`{"private_direct":false}`),
+		),
+	)
+	if privateOnly.Code != http.StatusOK {
+		t.Fatalf("private-only PUT status=%d body=%s", privateOnly.Code, privateOnly.Body.String())
+	}
+	var privateUpdated apiv1.RoutingModeResponse
+	if err := json.NewDecoder(privateOnly.Body).Decode(&privateUpdated); err != nil {
+		t.Fatal(err)
+	}
+	if privateUpdated.Mode != string(storage.RoutingModeGlobal) || privateUpdated.PrivateDirect {
+		t.Fatalf("private-only response = %+v", privateUpdated)
+	}
+	snapshot, err = store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.RoutingMode != storage.RoutingModeGlobal || snapshot.PrivateDirect {
+		t.Fatalf("private-only update changed wrong fields: %+v", snapshot)
+	}
+
+	empty := httptest.NewRecorder()
+	handler.ServeHTTP(
+		empty,
+		httptest.NewRequest(http.MethodPut, "/v1/routing/mode", strings.NewReader(`{}`)),
+	)
+	if empty.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty policy status=%d body=%s", empty.Code, empty.Body.String())
 	}
 
 	bad := httptest.NewRecorder()
@@ -206,5 +246,18 @@ func TestRoutingModeAPIPersistsWhileCoreUnavailable(t *testing.T) {
 	)
 	if bad.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid mode status=%d body=%s", bad.Code, bad.Body.String())
+	}
+
+	unknown := httptest.NewRecorder()
+	handler.ServeHTTP(
+		unknown,
+		httptest.NewRequest(
+			http.MethodPut,
+			"/v1/routing/mode",
+			strings.NewReader(`{"private_direct":true,"unknown":1}`),
+		),
+	)
+	if unknown.Code != http.StatusBadRequest {
+		t.Fatalf("unknown-field status=%d body=%s", unknown.Code, unknown.Body.String())
 	}
 }

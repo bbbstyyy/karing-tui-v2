@@ -65,7 +65,9 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.APIVersion != "v1" || status.CoreConfigured || status.CoreState != "not-configured" || status.CoreDesiredState != "stopped" || status.RoutingMode != "rule" || status.ConfigRevision != 0 || status.RecoveryRequired {
+	if status.APIVersion != "v1" || status.CoreConfigured || status.CoreState != "not-configured" ||
+		status.CoreDesiredState != "stopped" || status.RoutingMode != "rule" || status.PrivateDirect ||
+		status.ConfigRevision != 0 || status.RecoveryRequired {
 		t.Fatalf("unexpected status: %+v", status)
 	}
 
@@ -108,7 +110,8 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["routing_mode_intent"] ||
 		!caps.Capabilities["routing_mode_api"] ||
 		caps.Capabilities["routing_mode_live"] ||
-		caps.Capabilities["private_direct_policy"] ||
+		!caps.Capabilities["private_direct_policy"] ||
+		caps.Capabilities["private_direct_live"] ||
 		!caps.Capabilities["routing_rule_set_closure"] ||
 		!caps.Capabilities["routing_rule_set_store"] ||
 		!caps.Capabilities["selection_group_model"] ||
