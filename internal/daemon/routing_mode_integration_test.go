@@ -203,6 +203,34 @@ func TestManagedCoreRealRoutingModes(t *testing.T) {
 		"Global/privateDirect=false private target",
 	)
 
+	// Repeated upstream/proxy failures are data-plane failures, not core-process
+	// failures. They must not consume the supervisor restart budget.
+	stable := managed.Snapshot()
+	for attempt := 0; attempt < 4; attempt++ {
+		drainRouteOutcomeSignal(proxyHits)
+		drainRouteOutcomeSignal(privateHits)
+		assertRoutingModeProxyReject(
+			t,
+			ruleAddress,
+			privateAddress,
+			privateHits,
+			proxyHits,
+			managed,
+			fmt.Sprintf("Global external failure %d", attempt+1),
+		)
+	}
+	afterExternalFailure := managed.Snapshot()
+	if afterExternalFailure.State != core.StateRunning ||
+		afterExternalFailure.PID != stable.PID ||
+		afterExternalFailure.ConsecutiveFails != stable.ConsecutiveFails ||
+		afterExternalFailure.CircuitOpen != stable.CircuitOpen {
+		t.Fatalf(
+			"external proxy failures disturbed core supervisor: before=%+v after=%+v",
+			stable,
+			afterExternalFailure,
+		)
+	}
+
 	// Enabling privateDirect while staying Global makes the same private target DIRECT.
 	switchCtx, switchCancel = context.WithTimeout(context.Background(), 5*time.Second)
 	globalPrivate, err := mode.SetPolicy(switchCtx, "", &privateOn)
