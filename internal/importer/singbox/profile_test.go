@@ -58,6 +58,113 @@ func TestAnalyzeBasicProfileExtractsSupportedNodesAndReportsIgnoredPolicy(t *tes
 	}
 }
 
+func TestAnalyzeBasicProfileShadowsocksPreservesSupportedFields(t *testing.T) {
+	data := []byte(`{
+  "outbounds":[{
+    "type":"shadowsocks",
+    "tag":"ss-a",
+    "server":"ss.example.com",
+    "server_port":8388,
+    "method":"aes-256-gcm",
+    "password":"secret",
+    "plugin":"obfs-local",
+    "plugin_opts":"obfs=http;obfs-host=example.com",
+    "network":["tcp","udp"]
+  }]
+}`)
+	analysis, err := AnalyzeBasicProfile(data, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !analysis.CanCommit() || len(analysis.Nodes) != 1 {
+		t.Fatalf("Shadowsocks analysis = %+v", analysis)
+	}
+	imported := analysis.Nodes[0]
+	if imported.Kind != domain.NodeShadowsocks ||
+		imported.Shadowsocks == nil ||
+		imported.Shadowsocks.Method != "aes-256-gcm" ||
+		imported.Shadowsocks.Password != "secret" ||
+		imported.Shadowsocks.Plugin != "obfs-local" ||
+		imported.Shadowsocks.PluginOptions != "obfs=http;obfs-host=example.com" ||
+		imported.Shadowsocks.Network != domain.ProxyNetworkBoth {
+		t.Fatalf("Shadowsocks node = %+v", imported)
+	}
+
+	identity := profile.NodeIdentity{
+		ProfileID:  "profile-a",
+		NodeID:     "stable-ss",
+		SourceKey:  "ss-a",
+		SourceName: "ss-a",
+	}
+	node, err := DecodeBasicNode(imported.Source.PayloadJSON, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.NodeID != "stable-ss" ||
+		node.Kind != domain.NodeShadowsocks ||
+		node.Shadowsocks == nil ||
+		node.Shadowsocks.PluginOptions != imported.Shadowsocks.PluginOptions {
+		t.Fatalf("decoded Shadowsocks node = %+v", node)
+	}
+}
+
+func TestAnalyzeBasicProfileBlocksUnsupportedShadowsocksExtensions(t *testing.T) {
+	data := []byte(`{
+  "outbounds":[{
+    "type":"shadowsocks",
+    "tag":"ss-a",
+    "server":"ss.example.com",
+    "server_port":8388,
+    "method":"aes-256-gcm",
+    "password":"secret",
+    "udp_over_tcp":{"enabled":true}
+  }]
+}`)
+	analysis, err := AnalyzeBasicProfile(data, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.CanCommit() || len(analysis.Nodes) != 0 {
+		t.Fatalf("Shadowsocks extension was silently accepted: %+v", analysis)
+	}
+	if !hasDiagnostic(
+		analysis.Diagnostics,
+		DiagnosticError,
+		"outbounds[0]",
+		"unsupported_or_invalid_node",
+	) {
+		t.Fatalf("Shadowsocks extension diagnostic = %+v", analysis.Diagnostics)
+	}
+	if !strings.Contains(
+		analysis.Diagnostics[len(analysis.Diagnostics)-1].Message,
+		"udp_over_tcp",
+	) {
+		t.Fatalf("unsupported Shadowsocks field not reported: %+v", analysis.Diagnostics)
+	}
+}
+
+func TestAnalyzeBasicProfileAcceptsCoreNetworkListArray(t *testing.T) {
+	data := []byte(`{
+  "outbounds":[{
+    "type":"socks",
+    "tag":"socks-a",
+    "server":"127.0.0.1",
+    "server_port":1080,
+    "network":["udp","tcp"]
+  }]
+}`)
+	analysis, err := AnalyzeBasicProfile(data, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !analysis.CanCommit() ||
+		len(analysis.Nodes) != 1 ||
+		analysis.Nodes[0].SOCKS == nil ||
+		analysis.Nodes[0].SOCKS.Network != domain.ProxyNetworkBoth {
+		t.Fatalf("network-list analysis = %+v", analysis)
+	}
+}
+
 func TestAnalyzeBasicProfileRejectsUnsupportedNodeFieldsWithoutPartialApply(t *testing.T) {
 	data := []byte(`{
   "outbounds":[
