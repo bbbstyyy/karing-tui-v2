@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
@@ -162,13 +163,11 @@ func decodeSelectionTarget(content []byte) (domain.TargetRef, error) {
 		return domain.TargetRef{}, fmt.Errorf("%w: decode persisted target: %v", ErrCurrentSelectionTarget, err)
 	}
 	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, context.Canceled) {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return domain.TargetRef{}, fmt.Errorf("%w: persisted target has multiple JSON values", ErrCurrentSelectionTarget)
 		}
-		if !errors.Is(err, io.EOF) {
-			return domain.TargetRef{}, fmt.Errorf("%w: decode persisted target: %v", ErrCurrentSelectionTarget, err)
-		}
+		return domain.TargetRef{}, fmt.Errorf("%w: decode persisted target: %v", ErrCurrentSelectionTarget, err)
 	}
 	return target, nil
 }
