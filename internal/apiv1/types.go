@@ -170,7 +170,6 @@ type RouteExplainResponse struct {
 	Trace               []RouteExplainStep  `json:"trace"`
 }
 
-
 type ObservedConnectionsResponse struct {
 	APIVersion     string                       `json:"api_version"`
 	Evidence       string                       `json:"evidence"`
