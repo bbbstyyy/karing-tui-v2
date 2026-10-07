@@ -105,10 +105,11 @@ func (s *Store) CommitProfileSource(
 				fetch_profile_id,
 				fetch_node_id,
 				enabled,
+				update_interval_seconds,
 				created_at,
 				updated_at
 			)
-			VALUES(?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES(?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			spec.ProfileID,
 			spec.Format,
@@ -119,6 +120,7 @@ func (s *Store) CommitProfileSource(
 			spec.Fetch.ProfileID,
 			spec.Fetch.NodeID,
 			boolInt(spec.Enabled),
+			int64(spec.UpdateInterval/time.Second),
 			now.Format(time.RFC3339Nano),
 			now.Format(time.RFC3339Nano),
 		); err != nil {
@@ -150,6 +152,7 @@ func (s *Store) CommitProfileSource(
 				fetch_profile_id = ?,
 				fetch_node_id = ?,
 				enabled = ?,
+				update_interval_seconds = ?,
 				updated_at = ?
 			WHERE profile_id = ? AND revision = ?
 		`,
@@ -161,6 +164,7 @@ func (s *Store) CommitProfileSource(
 			spec.Fetch.ProfileID,
 			spec.Fetch.NodeID,
 			boolInt(spec.Enabled),
+			int64(spec.UpdateInterval/time.Second),
 			now,
 			spec.ProfileID,
 			currentRevision,
@@ -189,6 +193,27 @@ func (s *Store) ProfileSource(ctx context.Context, profileID string) (ProfileSou
 	}
 	row := s.db.QueryRowContext(ctx, profileSourceSelect+` WHERE s.profile_id = ?`, profileID)
 	return scanProfileSource(row)
+}
+
+func (s *Store) ListProfileSources(ctx context.Context) ([]ProfileSourceState, error) {
+	rows, err := s.db.QueryContext(ctx, profileSourceSelect+` ORDER BY s.profile_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list profile sources: %w", err)
+	}
+	defer rows.Close()
+
+	var result []ProfileSourceState
+	for rows.Next() {
+		state, err := scanProfileSource(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate profile sources: %w", err)
+	}
+	return result, nil
 }
 
 func (s *Store) BeginProfileUpdate(
@@ -461,6 +486,7 @@ const profileSourceSelect = `
 		s.fetch_profile_id,
 		s.fetch_node_id,
 		s.enabled,
+		s.update_interval_seconds,
 		s.created_at,
 		s.updated_at,
 		s.last_attempt_at,
@@ -483,6 +509,7 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		state              ProfileSourceState
 		revision           int64
 		enabled            int
+		updateInterval     int64
 		createdAt          string
 		updatedAt          string
 		lastAttempt        sql.NullString
@@ -504,6 +531,7 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		&state.Spec.Fetch.ProfileID,
 		&state.Spec.Fetch.NodeID,
 		&enabled,
+		&updateInterval,
 		&createdAt,
 		&updatedAt,
 		&lastAttempt,
@@ -523,11 +551,12 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		}
 		return ProfileSourceState{}, fmt.Errorf("read profile source: %w", err)
 	}
-	if revision <= 0 || consecutiveFailure < 0 {
+	if revision <= 0 || consecutiveFailure < 0 || updateInterval < 0 {
 		return ProfileSourceState{}, errors.New("profile source contains invalid persisted counters")
 	}
 	state.Revision = uint64(revision)
 	state.Spec.Enabled = enabled != 0
+	state.Spec.UpdateInterval = time.Duration(updateInterval) * time.Second
 	state.ConsecutiveFailures = uint32(consecutiveFailure)
 	state.ActiveUpdateID = activeUpdate.String
 	state.CurrentSnapshotID = nullInt64Ptr(currentSnapshot)
