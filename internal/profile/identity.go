@@ -48,9 +48,16 @@ type ReconcileResult struct {
 // StableNodeID derives the project-owned identity for a newly observed source
 // node. Importers own SourceKey semantics; this function deliberately does not
 // use the display name as a fallback identity.
-func StableNodeID(profileID, sourceKey string) (string, error) {
+func ValidateProfileID(profileID string) error {
 	if err := validateStableID(profileID); err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidProfileID, err)
+		return fmt.Errorf("%w: %v", ErrInvalidProfileID, err)
+	}
+	return nil
+}
+
+func StableNodeID(profileID, sourceKey string) (string, error) {
+	if err := ValidateProfileID(profileID); err != nil {
+		return "", err
 	}
 	if err := validateSourceKey(sourceKey); err != nil {
 		return "", err
@@ -69,8 +76,8 @@ func ReconcileNodeIdentities(
 	previous []NodeIdentity,
 	incoming []SourceNode,
 ) (ReconcileResult, error) {
-	if err := validateStableID(profileID); err != nil {
-		return ReconcileResult{}, fmt.Errorf("%w: %v", ErrInvalidProfileID, err)
+	if err := ValidateProfileID(profileID); err != nil {
+		return ReconcileResult{}, err
 	}
 
 	previousByKey := make(map[string]NodeIdentity, len(previous))
