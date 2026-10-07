@@ -291,7 +291,6 @@ func openServerTestStore(t *testing.T, ctx context.Context) *storage.Store {
 	return store
 }
 
-
 func TestStorageRetentionAPI(t *testing.T) {
 	ctx := context.Background()
 	store := openServerTestStore(t, ctx)

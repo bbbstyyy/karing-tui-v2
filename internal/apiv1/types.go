@@ -92,7 +92,6 @@ type RuleSetUploadResponse struct {
 	Bytes  int64  `json:"bytes"`
 }
 
-
 type StorageRetentionResponse struct {
 	ConfirmedGenerations     int   `json:"confirmed_generations"`
 	MaxGenerationBytes       int64 `json:"max_generation_bytes"`
