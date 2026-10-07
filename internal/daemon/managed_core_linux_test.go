@@ -650,7 +650,6 @@ func TestManagedCoreReconcileRecoveryRequiresAppliedGenerationForRunningIntent(t
 	}
 }
 
-
 func TestManagedCoreStartRestoresSelectionFromAppliedGenerationProvenance(t *testing.T) {
 	ctx := context.Background()
 	id := int64(7)
