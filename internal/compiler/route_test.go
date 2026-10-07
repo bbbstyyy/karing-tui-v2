@@ -355,10 +355,10 @@ func TestCompileRoutingPlacesPrivateDirectAfterGroupsAndBeforeFinal(t *testing.T
 	match := domain.Atom(domain.Predicate{Kind: domain.PredicatePort, Port: domain.PortRange{Start: 443, End: 443}})
 	result, err := CompileRouting(domain.RoutingPlan{
 		Custom: []domain.RouteGroup{{
-			ID:    "block-first",
-			Layer: domain.LayerCustom,
-			Order: 1,
-			Match: &match,
+			ID:      "block-first",
+			Layer:   domain.LayerCustom,
+			Order:   1,
+			Match:   &match,
 			Binding: domain.RouteBinding{Enabled: true, Target: domain.TargetRef{Kind: domain.TargetBlock}},
 		}},
 		Final: domain.TargetRef{Kind: domain.TargetCurrentSelected},
