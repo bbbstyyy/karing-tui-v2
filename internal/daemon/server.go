@@ -72,6 +72,9 @@ func (s *Server) Run(ctx context.Context) error {
 	if _, err := store.RecoverInterrupted(ctx); err != nil {
 		return fmt.Errorf("recover interrupted apply journal: %w", err)
 	}
+	if _, err := store.RecoverInterruptedProfileUpdates(ctx); err != nil {
+		return fmt.Errorf("recover interrupted profile updates: %w", err)
+	}
 
 	daemonCtx, daemonCancel := context.WithCancel(ctx)
 	defer daemonCancel()
