@@ -71,7 +71,14 @@ func (r *ExecRunner) Start(ctx context.Context) (Process, error) {
 	cmd.Env = append(os.Environ(), r.config.Env...)
 	cmd.Stdout = r.config.Stdout
 	cmd.Stderr = r.config.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Normal shutdown is owned by Supervisor, but an abrupt daemon death must
+	// not leave the managed core detached from its owner. SIGKILL is
+	// intentional here: after parent death there is no supervisor left to
+	// escalate a graceful termination timeout.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid:   true,
+		Pdeathsig: syscall.SIGKILL,
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start core executable: %w", err)
 	}

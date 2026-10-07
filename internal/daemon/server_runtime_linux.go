@@ -33,11 +33,13 @@ type managedCoreRuntime interface {
 	Activate(context.Context, Generation) error
 	Verify(context.Context, Generation) error
 	Rollback(context.Context, *Generation) error
+	ReconcileRecovery(context.Context) error
 }
 
 type serverRuntime struct {
 	core         daemonCoreRuntime
 	lifecycle    *LifecycleCoordinator
+	recovery     *RecoveryCoordinator
 	apply        *ApplyCoordinator
 	declarations *DeclarationCompileCoordinator
 	gate         *OperationGate
@@ -102,6 +104,10 @@ func startServerRuntimeWithDeclarations(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	recovery, err := NewRecoveryCoordinator(store, managed)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	apply, err := NewApplyCoordinator(store, managed, DefaultApplyPolicy())
 	if err != nil {
 		return nil, nil, nil, err
@@ -128,6 +134,7 @@ func startServerRuntimeWithDeclarations(
 	runtime := &serverRuntime{
 		core:         managed,
 		lifecycle:    lifecycle,
+		recovery:     recovery,
 		apply:        apply,
 		declarations: declarations,
 		gate:         NewOperationGate(),
@@ -142,7 +149,16 @@ func (r *serverRuntime) Restore(ctx context.Context) {
 	restoreCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	err := r.gate.Do(restoreCtx, "core-restore", r.lifecycle.Restore)
+	err := r.gate.Do(restoreCtx, "core-restore", func(operationCtx context.Context) error {
+		recovered, err := r.recovery.Reconcile(operationCtx)
+		if err != nil {
+			return err
+		}
+		if recovered {
+			return nil
+		}
+		return r.lifecycle.Restore(operationCtx)
+	})
 	r.mu.Lock()
 	if err != nil {
 		r.restoreErr = err.Error()

@@ -507,3 +507,93 @@ func testSHA256(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
 }
+
+
+func TestManagedCoreReconcileRecoveryRestoresAppliedGeneration(t *testing.T) {
+	id := int64(7)
+	state := &fakeManagedState{
+		snapshot: storage.Snapshot{
+			AppliedGenerationID: &id,
+			RecoveryRequired:    true,
+			CoreDesiredState:    storage.CoreDesiredRunning,
+		},
+		config: []byte("{}"),
+		hash:   "applied",
+	}
+	files := &fakeGenerationFiles{path: "/state/generations/7/config.json"}
+	binder := &fakeBinder{}
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
+	probe := &fakeProbe{}
+	managed := newManagedCore(state, files, binder, supervisor, probe, nil, nil, nil)
+
+	if err := managed.ReconcileRecovery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if files.stageCount != 1 || files.lastID != id || binder.hash != "applied" {
+		t.Fatalf("applied generation was not restored: files=%+v binder=%+v", files, binder)
+	}
+	if supervisor.stops != 1 || supervisor.starts != 1 || supervisor.resets != 1 {
+		t.Fatalf("unexpected recovery restart counts: stops=%d starts=%d resets=%d", supervisor.stops, supervisor.starts, supervisor.resets)
+	}
+	if probe.calls != 1 {
+		t.Fatalf("recovery probe calls = %d, want 1", probe.calls)
+	}
+}
+
+func TestManagedCoreReconcileRecoveryHonorsStoppedIntent(t *testing.T) {
+	id := int64(7)
+	files := &fakeGenerationFiles{path: "/state/generations/7/config.json"}
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
+	managed := newManagedCore(
+		&fakeManagedState{
+			snapshot: storage.Snapshot{
+				AppliedGenerationID: &id,
+				RecoveryRequired:    true,
+				CoreDesiredState:    storage.CoreDesiredStopped,
+			},
+			config: []byte("{}"),
+			hash:   "applied",
+		},
+		files,
+		&fakeBinder{},
+		supervisor,
+		&fakeProbe{},
+		nil,
+		nil,
+		nil,
+	)
+
+	if err := managed.ReconcileRecovery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if supervisor.stops != 1 || supervisor.starts != 0 || supervisor.resets != 0 {
+		t.Fatalf("stopped recovery changed runtime intent: stops=%d starts=%d resets=%d", supervisor.stops, supervisor.starts, supervisor.resets)
+	}
+	if files.stageCount != 0 {
+		t.Fatalf("stopped recovery unnecessarily staged a generation: %+v", files)
+	}
+}
+
+func TestManagedCoreReconcileRecoveryRequiresAppliedGenerationForRunningIntent(t *testing.T) {
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
+	managed := newManagedCore(
+		&fakeManagedState{snapshot: storage.Snapshot{
+			RecoveryRequired: true,
+			CoreDesiredState: storage.CoreDesiredRunning,
+		}},
+		&fakeGenerationFiles{},
+		&fakeBinder{},
+		supervisor,
+		&fakeProbe{},
+		nil,
+		nil,
+		nil,
+	)
+
+	if err := managed.ReconcileRecovery(context.Background()); !errors.Is(err, ErrNoAppliedGeneration) {
+		t.Fatalf("recovery error = %v, want ErrNoAppliedGeneration", err)
+	}
+	if supervisor.starts != 0 {
+		t.Fatalf("recovery started core without an applied generation: %d", supervisor.starts)
+	}
+}

@@ -3,11 +3,20 @@
 package core
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestExecRunnerRejectsRelativeExecutable(t *testing.T) {
@@ -71,4 +80,110 @@ func TestRingBufferConcurrentWritersRemainBounded(t *testing.T) {
 	if got := len(buffer.Bytes()); got > capacity {
 		t.Fatalf("buffer length = %d, capacity = %d", got, capacity)
 	}
+}
+
+
+func TestExecRunnerKillsManagedChildWhenParentDies(t *testing.T) {
+	const (
+		parentHelperEnv = "KARING_TUI_EXEC_PARENT_HELPER"
+		childHelperEnv  = "KARING_TUI_EXEC_CHILD_HELPER"
+	)
+
+	if os.Getenv(childHelperEnv) == "1" {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	if os.Getenv(parentHelperEnv) == "1" {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner, err := NewExecRunner(ExecConfig{
+			Executable: executable,
+			Args:       []string{"-test.run=^TestExecRunnerKillsManagedChildWhenParentDies$"},
+			Env:        []string{childHelperEnv + "=1"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		process, err := runner.Start(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Printf("CHILD_PID %d\n", process.PID())
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := exec.Command(executable, "-test.run=^TestExecRunnerKillsManagedChildWhenParentDies$")
+	parent.Env = append(os.Environ(), parentHelperEnv+"=1")
+	stdout, err := parent.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	parent.Stderr = &stderr
+	if err := parent.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	childPID := 0
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 || fields[0] != "CHILD_PID" {
+			continue
+		}
+		childPID, err = strconv.Atoi(fields[1])
+		if err != nil {
+			t.Fatalf("parse child pid %q: %v", fields[1], err)
+		}
+		break
+	}
+	if childPID <= 0 {
+		_ = parent.Process.Kill()
+		_ = parent.Wait()
+		t.Fatalf("parent helper did not report child pid: scan=%v stderr=%s", scanner.Err(), stderr.String())
+	}
+	defer syscall.Kill(childPID, syscall.SIGKILL)
+
+	if err := parent.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = parent.Wait()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if processNoLongerRunning(childPID) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("managed child pid %d survived parent death", childPID)
+}
+
+func processNoLongerRunning(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	if errors.Is(err, syscall.ESRCH) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+
+	content, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(content))
+	return len(fields) > 2 && fields[2] == "Z"
 }

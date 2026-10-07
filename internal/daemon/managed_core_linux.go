@@ -203,6 +203,47 @@ func (m *ManagedCore) Stop(ctx context.Context) error {
 	return m.supervisor.Stop(ctx)
 }
 
+func (m *ManagedCore) ReconcileRecovery(ctx context.Context) error {
+	m.transitionMu.Lock()
+	defer m.transitionMu.Unlock()
+
+	snapshot, err := m.state.Snapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("read persisted state before recovery reconcile: %w", err)
+	}
+	if !snapshot.RecoveryRequired {
+		return nil
+	}
+
+	switch snapshot.CoreDesiredState {
+	case storage.CoreDesiredStopped:
+		if err := m.supervisor.Stop(ctx); err != nil && !errors.Is(err, core.ErrNotRunning) {
+			return fmt.Errorf("enforce stopped core during recovery reconcile: %w", err)
+		}
+		return nil
+	case storage.CoreDesiredRunning:
+		if snapshot.AppliedGenerationID == nil {
+			return ErrNoAppliedGeneration
+		}
+		generation, err := m.loadGeneration(ctx, *snapshot.AppliedGenerationID)
+		if err != nil {
+			return err
+		}
+		if err := m.stageAndBind(ctx, generation); err != nil {
+			return err
+		}
+		if err := m.restartLocked(ctx, true); err != nil {
+			return fmt.Errorf("restore applied generation during recovery reconcile: %w", err)
+		}
+		if err := m.probe.Ready(ctx, nil); err != nil {
+			return fmt.Errorf("verify recovered applied generation: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", storage.ErrInvalidCoreDesiredState, snapshot.CoreDesiredState)
+	}
+}
+
 func (m *ManagedCore) Check(ctx context.Context, generation Generation) error {
 	if err := m.verifyGenerationArtifacts(ctx, generation); err != nil {
 		return err
