@@ -83,6 +83,20 @@ func (s *fakeManagedSelectionState) CurrentSelectionIntent(context.Context) (sto
 	return out, s.hasIntent, nil
 }
 
+type fakeConnectionsControl struct {
+	snapshot coreapi.ConnectionsSnapshot
+	calls    int
+	err      error
+}
+
+func (c *fakeConnectionsControl) Snapshot(context.Context) (coreapi.ConnectionsSnapshot, error) {
+	c.calls++
+	if c.err != nil {
+		return coreapi.ConnectionsSnapshot{}, c.err
+	}
+	return c.snapshot, nil
+}
+
 type fakeSelectorControl struct {
 	selected string
 	calls    []string
@@ -776,5 +790,43 @@ func TestManagedCoreStartFailsClosedWhenSelectionProvenanceMissing(t *testing.T)
 	}
 	if supervisor.starts != 1 || supervisor.stops != 1 {
 		t.Fatalf("failed selection restore did not stop mismatched core: starts=%d stops=%d", supervisor.starts, supervisor.stops)
+	}
+}
+
+
+func TestManagedCoreConnectionsRequiresRunningCoreAndReturnsSnapshot(t *testing.T) {
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
+	connections := &fakeConnectionsControl{snapshot: coreapi.ConnectionsSnapshot{
+		Connections: []coreapi.ConnectionInfo{{
+			ID:       "connection-1",
+			Metadata: coreapi.ConnectionMetadata{Network: "tcp"},
+		}},
+	}}
+	managed := newManagedCore(
+		&fakeManagedState{},
+		&fakeGenerationFiles{},
+		&fakeBinder{},
+		supervisor,
+		&fakeProbe{},
+		nil,
+		nil,
+		nil,
+	)
+	managed.connections = connections
+
+	if _, err := managed.Connections(context.Background()); !errors.Is(err, core.ErrNotRunning) {
+		t.Fatalf("stopped connections error = %v, want ErrNotRunning", err)
+	}
+	if connections.calls != 0 {
+		t.Fatalf("stopped core queried connections API: %d", connections.calls)
+	}
+
+	supervisor.snapshot = core.Snapshot{State: core.StateRunning, DesiredRunning: true, PID: 123}
+	snapshot, err := managed.Connections(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connections.calls != 1 || len(snapshot.Connections) != 1 || snapshot.Connections[0].ID != "connection-1" {
+		t.Fatalf("connections snapshot = calls:%d %+v", connections.calls, snapshot)
 	}
 }

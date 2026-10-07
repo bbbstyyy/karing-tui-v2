@@ -71,6 +71,10 @@ type selectorControl interface {
 	Current(context.Context, string) (coreapi.SelectorSnapshot, error)
 }
 
+type connectionsControl interface {
+	Snapshot(context.Context) (coreapi.ConnectionsSnapshot, error)
+}
+
 type ManagedCoreOptions struct {
 	Executable      string
 	StateRoot       string
@@ -88,8 +92,9 @@ type ManagedCore struct {
 	supervisor supervisorEngine
 	probe      core.Probe
 	check      generationCheckFunc
-	selector   selectorControl
-	stdout     *core.RingBuffer
+	selector    selectorControl
+	connections connectionsControl
+	stdout      *core.RingBuffer
 	stderr     *core.RingBuffer
 
 	transitionMu     sync.Mutex
@@ -135,8 +140,13 @@ func NewManagedCore(state managedCoreState, options ManagedCoreOptions) (*Manage
 	if err != nil {
 		return nil, err
 	}
+	connections, err := coreapi.NewConnectionsClient(options.ControlEndpoint, options.ControlSecret)
+	if err != nil {
+		return nil, err
+	}
 	managed := newManagedCore(state, files, runner, supervisor, probe, check, stdout, stderr)
 	managed.selector = selector
+	managed.connections = connections
 	return managed, nil
 }
 
@@ -173,6 +183,18 @@ func (m *ManagedCore) WaitReady(ctx context.Context) error {
 
 func (m *ManagedCore) Snapshot() core.Snapshot {
 	return m.supervisor.Snapshot()
+}
+
+func (m *ManagedCore) Connections(ctx context.Context) (coreapi.ConnectionsSnapshot, error) {
+	m.transitionMu.Lock()
+	defer m.transitionMu.Unlock()
+	if m.connections == nil {
+		return coreapi.ConnectionsSnapshot{}, errors.New("core connections control is not configured")
+	}
+	if m.supervisor.Snapshot().State != core.StateRunning {
+		return coreapi.ConnectionsSnapshot{}, core.ErrNotRunning
+	}
+	return m.connections.Snapshot(ctx)
 }
 
 func (m *ManagedCore) SelectCurrent(ctx context.Context, outboundTag string) error {
