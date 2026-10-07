@@ -20,6 +20,9 @@ type NodeOutboundConfig struct {
 	Version        string `json:"version,omitempty"`
 	Username       string `json:"username,omitempty"`
 	Password       string `json:"password,omitempty"`
+	Method         string `json:"method,omitempty"`
+	Plugin         string `json:"plugin,omitempty"`
+	PluginOptions  string `json:"plugin_opts,omitempty"`
 	Network        string `json:"network,omitempty"`
 	DomainResolver string `json:"domain_resolver,omitempty"`
 }
@@ -111,6 +114,32 @@ func compileBasicNode(node domain.Node, tag string) (NodeOutboundConfig, error) 
 			ServerPort: node.Port,
 			Username:   node.HTTP.Username,
 			Password:   node.HTTP.Password,
+		}, nil
+	case domain.NodeShadowsocks:
+		network := ""
+		switch node.Shadowsocks.Network {
+		case domain.ProxyNetworkBoth:
+		case domain.ProxyNetworkTCP:
+			network = "tcp"
+		case domain.ProxyNetworkUDP:
+			network = "udp"
+		default:
+			return NodeOutboundConfig{}, fmt.Errorf(
+				"%w: unsupported Shadowsocks network %q",
+				domain.ErrInvalidNode,
+				node.Shadowsocks.Network,
+			)
+		}
+		return NodeOutboundConfig{
+			Type:          "shadowsocks",
+			Tag:           tag,
+			Server:        node.Server,
+			ServerPort:    node.Port,
+			Method:        node.Shadowsocks.Method,
+			Password:      node.Shadowsocks.Password,
+			Plugin:        node.Shadowsocks.Plugin,
+			PluginOptions: node.Shadowsocks.PluginOptions,
+			Network:       network,
 		}, nil
 	default:
 		return NodeOutboundConfig{}, fmt.Errorf("%w: unsupported basic node kind %q", domain.ErrInvalidNode, node.Kind)
