@@ -33,7 +33,7 @@ func TestModeClientUpdatesAndReadsBack(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"mode":      current,
-				"mode-list": []string{"Rule", "Global", "Direct"},
+				"mode-list": []string{"Rule", "RuleNoPrivate", "Global", "GlobalNoPrivate", "Direct"},
 			})
 		case http.MethodPatch:
 			var body struct {
@@ -71,8 +71,56 @@ func TestModeClientUpdatesAndReadsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Mode != "Global" || len(snapshot.ModeList) != 3 {
+	if snapshot.Mode != "Global" || len(snapshot.ModeList) != 5 {
 		t.Fatalf("mode snapshot = %+v", snapshot)
+	}
+}
+
+func TestModeClientAllowsAdvertisedInternalPolicyMode(t *testing.T) {
+	const secret = "test-secret"
+	mode := "Rule"
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"mode": mode,
+				"mode-list": []string{"Rule", "RuleNoPrivate", "Global", "GlobalNoPrivate", "Direct"},
+			})
+		case http.MethodPatch:
+			var body struct {
+				Mode string `json:"mode"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			mode = body.Mode
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	server := httptest.NewUnstartedServer(handler)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	client, err := NewModeClient(server.URL, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(context.Background(), "GlobalNoPrivate"); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "GlobalNoPrivate" {
+		t.Fatalf("core mode = %q, want GlobalNoPrivate", mode)
 	}
 }
 

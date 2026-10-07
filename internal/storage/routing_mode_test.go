@@ -23,10 +23,10 @@ func TestRoutingModeDefaultsAndPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.RoutingMode != RoutingModeRule {
-		t.Fatalf("initial routing mode = %q, want rule", initial.RoutingMode)
+	if initial.RoutingMode != RoutingModeRule || initial.PrivateDirect {
+		t.Fatalf("initial routing policy = mode=%q private_direct=%t, want rule/false", initial.RoutingMode, initial.PrivateDirect)
 	}
-	if err := store.SetRoutingMode(ctx, RoutingModeGlobal); err != nil {
+	if err := store.SetRoutingPolicy(ctx, RoutingModeGlobal, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -42,8 +42,8 @@ func TestRoutingModeDefaultsAndPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.RoutingMode != RoutingModeGlobal {
-		t.Fatalf("reopened routing mode = %q, want global", snapshot.RoutingMode)
+	if snapshot.RoutingMode != RoutingModeGlobal || !snapshot.PrivateDirect {
+		t.Fatalf("reopened routing policy = mode=%q private_direct=%t, want global/true", snapshot.RoutingMode, snapshot.PrivateDirect)
 	}
 	if err := reopened.SetRoutingMode(ctx, RoutingMode("unsupported")); !errors.Is(err, ErrInvalidRoutingMode) {
 		t.Fatalf("invalid routing mode error = %v", err)

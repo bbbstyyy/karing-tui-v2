@@ -85,8 +85,8 @@ func TestCompileNativeConfigBuildsDeterministicRunnableEnvelope(t *testing.T) {
 	}; !reflect.DeepEqual(got, []string{"direct", "http", "selector"}) {
 		t.Fatalf("outbound type order = %#v", got)
 	}
-	if len(decoded.Route.Rules) != 5 {
-		t.Fatalf("route rules = %d, want Direct + Selected + Global + Direct mode + Rule FINAL", len(decoded.Route.Rules))
+	if len(decoded.Route.Rules) != 8 {
+		t.Fatalf("route rules = %d, want entry/mode/private rules plus Rule FINAL", len(decoded.Route.Rules))
 	}
 	if decoded.Experimental.ClashAPI.ExternalController != "127.0.0.1:3057" ||
 		decoded.Experimental.ClashAPI.Secret != nativeTestSecret ||
@@ -414,7 +414,7 @@ func TestNativeConfigArtifactMetadataJSONIsDeterministic(t *testing.T) {
 	if strings.Contains(string(manifestA), "SchemaID") || strings.Contains(string(sourceMapA), "RuleIndex") {
 		t.Fatalf("metadata leaked Go field names: manifest=%s source-map=%s", manifestA, sourceMapA)
 	}
-	if !strings.Contains(string(sourceMapA), `"rule_index":4`) ||
+	if !strings.Contains(string(sourceMapA), `"rule_index":6`) ||
 		!strings.Contains(string(sourceMapA), `"layer":"custom"`) ||
 		!strings.Contains(string(sourceMapA), `"group_id":"custom-a"`) ||
 		!strings.Contains(string(sourceMapA), `"target":{"kind":"direct"}`) {

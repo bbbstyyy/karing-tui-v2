@@ -54,8 +54,8 @@ func TestBindProxyTargetDNSRoutingExpandsSelectedGlobalUserRuleAndFinal(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rebound.Rules) != 10 {
-		t.Fatalf("rules = %d, want direct + selected/global resolve pairs + direct mode + group/final resolve pairs", len(rebound.Rules))
+	if len(rebound.Rules) != 14 {
+		t.Fatalf("rules = %d, want entry/mode/private rules plus selected/global proxy resolves and group/final pairs", len(rebound.Rules))
 	}
 	if rebound.Rules[1].Action != "resolve" || rebound.Rules[1].Server != proxyTag ||
 		!reflect.DeepEqual(rebound.Rules[1].Inbound, []string{domain.InboundTagSelected}) {
@@ -64,22 +64,31 @@ func TestBindProxyTargetDNSRoutingExpandsSelectedGlobalUserRuleAndFinal(t *testi
 	if rebound.Rules[2].Action != "route" || rebound.Rules[2].Outbound != targets.CurrentSelectedTag {
 		t.Fatalf("unexpected Selected route: %+v", rebound.Rules[2])
 	}
-	if rebound.Rules[3].Action != "resolve" || rebound.Rules[3].Server != proxyTag ||
-		rebound.Rules[3].ClashMode != "Global" ||
-		rebound.Rules[4].Action != "route" || rebound.Rules[4].Outbound != targets.CurrentSelectedTag ||
-		rebound.Rules[4].ClashMode != "Global" {
-		t.Fatalf("unexpected Global resolve/route pair: %+v / %+v", rebound.Rules[3], rebound.Rules[4])
+	if !rebound.Rules[3].IPIsPrivate || rebound.Rules[3].ClashMode != "Global" ||
+		rebound.Rules[3].Outbound != targets.DirectTag {
+		t.Fatalf("unexpected Global private rule: %+v", rebound.Rules[3])
 	}
-	if rebound.Rules[5].ClashMode != "Direct" || rebound.Rules[5].Outbound != targets.DirectTag {
-		t.Fatalf("unexpected Direct mode rule: %+v", rebound.Rules[5])
+	for _, pair := range [][2]int{{4, 5}, {6, 7}} {
+		resolve, route := rebound.Rules[pair[0]], rebound.Rules[pair[1]]
+		if resolve.Action != "resolve" || resolve.Server != proxyTag ||
+			route.Action != "route" || route.Outbound != targets.CurrentSelectedTag ||
+			resolve.ClashMode != route.ClashMode {
+			t.Fatalf("unexpected mode resolve/route pair %v: %+v / %+v", pair, resolve, route)
+		}
 	}
-	if rebound.Rules[6].Action != "resolve" || rebound.Rules[6].Server != proxyTag ||
-		rebound.Rules[7].Action != "route" || rebound.Rules[7].Outbound != targets.CurrentSelectedTag {
-		t.Fatalf("unexpected user resolve/route pair: %+v / %+v", rebound.Rules[6], rebound.Rules[7])
+	if rebound.Rules[8].ClashMode != "Direct" || rebound.Rules[8].Outbound != targets.DirectTag {
+		t.Fatalf("unexpected Direct mode rule: %+v", rebound.Rules[8])
 	}
-	if rebound.Rules[8].Action != "resolve" || rebound.Rules[8].Server != proxyTag ||
-		rebound.Rules[9].Action != "route" || rebound.Rules[9].Outbound != targets.CurrentSelectedTag {
-		t.Fatalf("unexpected FINAL resolve/route pair: %+v / %+v", rebound.Rules[8], rebound.Rules[9])
+	if rebound.Rules[9].Action != "resolve" || rebound.Rules[9].Server != proxyTag ||
+		rebound.Rules[10].Action != "route" || rebound.Rules[10].Outbound != targets.CurrentSelectedTag {
+		t.Fatalf("unexpected user resolve/route pair: %+v / %+v", rebound.Rules[9], rebound.Rules[10])
+	}
+	if !rebound.Rules[11].IPIsPrivate || rebound.Rules[11].ClashMode != "Rule" {
+		t.Fatalf("unexpected Rule private rule: %+v", rebound.Rules[11])
+	}
+	if rebound.Rules[12].Action != "resolve" || rebound.Rules[12].Server != proxyTag ||
+		rebound.Rules[13].Action != "route" || rebound.Rules[13].Outbound != targets.CurrentSelectedTag {
+		t.Fatalf("unexpected FINAL resolve/route pair: %+v / %+v", rebound.Rules[12], rebound.Rules[13])
 	}
 	if len(rebound.SourceMap) != 4 {
 		t.Fatalf("source map entries = %d, want resolve+route for group and FINAL", len(rebound.SourceMap))
@@ -89,7 +98,7 @@ func TestBindProxyTargetDNSRoutingExpandsSelectedGlobalUserRuleAndFinal(t *testi
 		rebound.SourceMap[1].RuleIndex,
 		rebound.SourceMap[2].RuleIndex,
 		rebound.SourceMap[3].RuleIndex,
-	}; !reflect.DeepEqual(got, []int{6, 7, 8, 9}) {
+	}; !reflect.DeepEqual(got, []int{9, 10, 12, 13}) {
 		t.Fatalf("source map indexes = %#v", got)
 	}
 	if rebound.SourceMap[0].Action != "resolve" || rebound.SourceMap[0].Server != proxyTag ||
@@ -98,7 +107,7 @@ func TestBindProxyTargetDNSRoutingExpandsSelectedGlobalUserRuleAndFinal(t *testi
 		rebound.SourceMap[3].Action != "route" || !rebound.SourceMap[3].Final {
 		t.Fatalf("unexpected source map: %+v", rebound.SourceMap)
 	}
-	if len(bound.Rules) != 6 || len(bound.SourceMap) != 2 || bound.Rules[1].Action != "route" {
+	if len(bound.Rules) != 9 || len(bound.SourceMap) != 2 || bound.Rules[1].Action != "route" {
 		t.Fatal("proxy DNS binding mutated original routing")
 	}
 }
@@ -134,8 +143,8 @@ func TestBindProxyTargetDNSRoutingLeavesDirectAndBlockRulesUnresolved(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rebound.Rules) != len(bound.Rules)+2 {
-		t.Fatalf("Selected and Global synthetic proxy rules should gain resolve: %d -> %d", len(bound.Rules), len(rebound.Rules))
+	if len(rebound.Rules) != len(bound.Rules)+3 {
+		t.Fatalf("Selected, Global, and GlobalNoPrivate proxy rules should gain resolve: %d -> %d", len(bound.Rules), len(rebound.Rules))
 	}
 	for _, entry := range rebound.SourceMap {
 		if entry.Action == "resolve" {

@@ -68,9 +68,9 @@ func TestCompileRoutingPreservesOrderAndBooleanSemantics(t *testing.T) {
 	if len(result.SourceMap) != 3 {
 		t.Fatalf("source map entries = %d, want 3", len(result.SourceMap))
 	}
-	if result.SourceMap[0].RuleIndex != 4 ||
-		result.SourceMap[1].RuleIndex != 5 ||
-		result.SourceMap[2].RuleIndex != 6 ||
+	if result.SourceMap[0].RuleIndex != 6 ||
+		result.SourceMap[1].RuleIndex != 7 ||
+		result.SourceMap[2].RuleIndex != 9 ||
 		result.SourceMap[0].Layer != domain.LayerCustom ||
 		result.SourceMap[1].Layer != domain.LayerGeoSite ||
 		result.SourceMap[2].Layer != domain.LayerFinal ||
@@ -82,7 +82,7 @@ func TestCompileRoutingPreservesOrderAndBooleanSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantJSON := `{"rules":[{"inbound":["in-direct"],"action":"route","outbound":"out-direct"},{"inbound":["in-selected"],"action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Global","action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Direct","action":"route","outbound":"out-direct"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"type":"logical","mode":"and","rules":[{"type":"logical","mode":"or","rules":[{"domain":["one.example"]},{"domain_suffix":["two.example"]}]},{"invert":true,"network":["udp"]}]}],"action":"route","outbound":"out-current"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"rule_set":["geosite:cn"]}],"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"action":"reject"}]}`
+	wantJSON := `{"rules":[{"inbound":["in-direct"],"action":"route","outbound":"out-direct"},{"inbound":["in-selected"],"action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Global","ip_is_private":true,"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"clash_mode":"Global","action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"GlobalNoPrivate","action":"route","outbound":"out-current"},{"inbound":["in-rule"],"clash_mode":"Direct","action":"route","outbound":"out-direct"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"type":"logical","mode":"and","rules":[{"type":"logical","mode":"or","rules":[{"domain":["one.example"]},{"domain_suffix":["two.example"]}]},{"invert":true,"network":["udp"]}]}],"action":"route","outbound":"out-current"},{"type":"logical","mode":"and","rules":[{"inbound":["in-rule"]},{"rule_set":["geosite:cn"]}],"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"clash_mode":"Rule","ip_is_private":true,"action":"route","outbound":"out-direct"},{"inbound":["in-rule"],"action":"reject"}]}`
 	if string(encoded) != wantJSON {
 		t.Fatalf("route JSON = %s\nwant       = %s", encoded, wantJSON)
 	}
@@ -315,36 +315,80 @@ func TestCompileRoutingCreatesFixedEntryAndModeRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Rules) != 5 {
-		t.Fatalf("rules = %d, want direct + selected + global + direct mode + rule FINAL", len(result.Rules))
+	if len(result.Rules) != 8 {
+		t.Fatalf("rules = %d, want entry + public/internal mode + private + FINAL rules", len(result.Rules))
 	}
-	if !reflect.DeepEqual(result.Rules[0].Inbound, []string{domain.InboundTagDirect}) ||
-		result.Rules[0].Outbound != "out-direct" ||
-		result.Rules[0].Action != "route" {
-		t.Fatalf("unexpected Direct entry rule: %+v", result.Rules[0])
+	checks := []struct {
+		index       int
+		inbound     string
+		clashMode   string
+		private     bool
+		action      string
+		outbound    string
+	}{
+		{0, domain.InboundTagDirect, "", false, "route", "out-direct"},
+		{1, domain.InboundTagSelected, "", false, "route", "out-current"},
+		{2, domain.InboundTagRule, "Global", true, "route", "out-direct"},
+		{3, domain.InboundTagRule, "Global", false, "route", "out-current"},
+		{4, domain.InboundTagRule, "GlobalNoPrivate", false, "route", "out-current"},
+		{5, domain.InboundTagRule, "Direct", false, "route", "out-direct"},
+		{6, domain.InboundTagRule, "Rule", true, "route", "out-direct"},
+		{7, domain.InboundTagRule, "", false, "reject", ""},
 	}
-	if !reflect.DeepEqual(result.Rules[1].Inbound, []string{domain.InboundTagSelected}) ||
-		result.Rules[1].Outbound != "out-current" ||
-		result.Rules[1].Action != "route" {
-		t.Fatalf("unexpected Selected entry rule: %+v", result.Rules[1])
+	for _, check := range checks {
+		rule := result.Rules[check.index]
+		if !reflect.DeepEqual(rule.Inbound, []string{check.inbound}) ||
+			rule.ClashMode != check.clashMode ||
+			rule.IPIsPrivate != check.private ||
+			rule.Action != check.action ||
+			rule.Outbound != check.outbound {
+			t.Fatalf("rule[%d] = %+v, want inbound=%q mode=%q private=%t action=%q outbound=%q",
+				check.index, rule, check.inbound, check.clashMode, check.private, check.action, check.outbound)
+		}
 	}
-	if !reflect.DeepEqual(result.Rules[2].Inbound, []string{domain.InboundTagRule}) ||
-		result.Rules[2].ClashMode != "Global" ||
-		result.Rules[2].Outbound != "out-current" ||
-		result.Rules[2].Action != "route" {
-		t.Fatalf("unexpected Global mode rule: %+v", result.Rules[2])
+	if len(result.SourceMap) != 1 || result.SourceMap[0].RuleIndex != 7 || !result.SourceMap[0].Final {
+		t.Fatalf("synthetic entry/mode/private rules leaked into route source map: %+v", result.SourceMap)
 	}
-	if !reflect.DeepEqual(result.Rules[3].Inbound, []string{domain.InboundTagRule}) ||
-		result.Rules[3].ClashMode != "Direct" ||
-		result.Rules[3].Outbound != "out-direct" ||
-		result.Rules[3].Action != "route" {
-		t.Fatalf("unexpected Direct mode rule: %+v", result.Rules[3])
+}
+
+func TestCompileRoutingPlacesPrivateDirectAfterGroupsAndBeforeFinal(t *testing.T) {
+	match := domain.Atom(domain.Predicate{Kind: domain.PredicatePort, Port: domain.PortRange{Start: 443, End: 443}})
+	result, err := CompileRouting(domain.RoutingPlan{
+		Custom: []domain.RouteGroup{{
+			ID:    "block-first",
+			Layer: domain.LayerCustom,
+			Order: 1,
+			Match: &match,
+			Binding: domain.RouteBinding{Enabled: true, Target: domain.TargetRef{Kind: domain.TargetBlock}},
+		}},
+		Final: domain.TargetRef{Kind: domain.TargetCurrentSelected},
+	}, testResolver())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(result.Rules[4].Inbound, []string{domain.InboundTagRule}) ||
-		result.Rules[4].Action != "reject" {
-		t.Fatalf("unexpected Rule FINAL: %+v", result.Rules[4])
+	var globalPrivate, globalCatch, groupRule, rulePrivate, finalRule = -1, -1, -1, -1, -1
+	for i, rule := range result.Rules {
+		switch {
+		case rule.ClashMode == "Global" && rule.IPIsPrivate:
+			globalPrivate = i
+		case rule.ClashMode == "Global" && !rule.IPIsPrivate:
+			globalCatch = i
+		case rule.ClashMode == "Rule" && rule.IPIsPrivate:
+			rulePrivate = i
+		}
 	}
-	if len(result.SourceMap) != 1 || result.SourceMap[0].RuleIndex != 4 || !result.SourceMap[0].Final {
-		t.Fatalf("synthetic entry/mode rules leaked into route source map: %+v", result.SourceMap)
+	for _, entry := range result.SourceMap {
+		if entry.GroupID == "block-first" {
+			groupRule = entry.RuleIndex
+		}
+		if entry.Final {
+			finalRule = entry.RuleIndex
+		}
+	}
+	if globalPrivate < 0 || globalCatch < 0 || globalPrivate >= globalCatch {
+		t.Fatalf("Global private order invalid: private=%d catch=%d", globalPrivate, globalCatch)
+	}
+	if groupRule < 0 || rulePrivate < 0 || finalRule < 0 || !(groupRule < rulePrivate && rulePrivate < finalRule) {
+		t.Fatalf("Rule private order invalid: group=%d private=%d final=%d", groupRule, rulePrivate, finalRule)
 	}
 }
