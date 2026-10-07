@@ -272,7 +272,6 @@ func currentSelectionTestDeclaration() []byte {
 }`)
 }
 
-
 func TestCurrentSelectionUsesAppliedDeclarationInsteadOfNewerUnappliedDeclaration(t *testing.T) {
 	ctx := context.Background()
 	store := openServerTestStore(t, ctx)
