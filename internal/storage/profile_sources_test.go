@@ -116,7 +116,11 @@ func TestProfileUpdateLeaseFailureThenSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.FinishProfileUpdateSuccess(ctx, second, "etag-2"); err != nil {
+	if err := store.FinishProfileUpdateSuccess(ctx, second, ProfileUpdateSuccess{
+		SourceRevision: "source-revision-2",
+		ETag:           "\"etag-2\"",
+		LastModified:   "Wed, 07 Oct 2026 16:00:00 GMT",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	succeeded, err := store.ProfileSource(ctx, "profile-a")
@@ -125,7 +129,9 @@ func TestProfileUpdateLeaseFailureThenSuccess(t *testing.T) {
 	}
 	if succeeded.ActiveUpdateID != "" || succeeded.ActiveUpdateStarted != nil ||
 		succeeded.LastAttemptAt == nil || succeeded.LastSuccessAt == nil ||
-		succeeded.LastError != "" || succeeded.LastSourceRevision != "etag-2" ||
+		succeeded.LastError != "" || succeeded.LastSourceRevision != "source-revision-2" ||
+		succeeded.ETag != "\"etag-2\"" ||
+		succeeded.LastModified != "Wed, 07 Oct 2026 16:00:00 GMT" ||
 		succeeded.ConsecutiveFailures != 0 || succeeded.RetryAfterAt != nil {
 		t.Fatalf("successful update state = %+v", succeeded)
 	}
@@ -133,7 +139,7 @@ func TestProfileUpdateLeaseFailureThenSuccess(t *testing.T) {
 		t.Fatalf("last success precedes last attempt: %+v", succeeded)
 	}
 
-	if err := store.FinishProfileUpdateSuccess(ctx, first, "stale"); !errors.Is(err, ErrProfileUpdateLeaseMismatch) {
+	if err := store.FinishProfileUpdateSuccess(ctx, first, ProfileUpdateSuccess{SourceRevision: "stale"}); !errors.Is(err, ErrProfileUpdateLeaseMismatch) {
 		t.Fatalf("stale lease completion error = %v", err)
 	}
 }
