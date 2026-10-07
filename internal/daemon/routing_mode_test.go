@@ -114,7 +114,6 @@ func TestRoutingModeCoordinatorRetainsIntentOnLiveFailure(t *testing.T) {
 	}
 }
 
-
 func TestRoutingModeAPIPersistsWhileCoreUnavailable(t *testing.T) {
 	ctx := context.Background()
 	store := openServerTestStore(t, ctx)
