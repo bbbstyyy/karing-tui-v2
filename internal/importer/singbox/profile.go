@@ -85,7 +85,7 @@ func (a ProfileAnalysis) CanCommit() bool {
 	return true
 }
 
-func (a ProfileAnalysis) SnapshotCandidate(sourceRevision string) (profileNodes []profile.SourceNode, sourceSHA256 string, ok bool) {
+func (a ProfileAnalysis) SnapshotNodes() (profileNodes []profile.SourceNode, sourceSHA256 string, ok bool) {
 	if !a.CanCommit() {
 		return nil, a.SourceSHA256, false
 	}
