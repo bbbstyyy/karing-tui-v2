@@ -254,6 +254,68 @@ func TestCoreDesiredStatePersistsWithoutChangingRevision(t *testing.T) {
 	}
 }
 
+func TestSQLiteFullRejectsApplyWithoutChangingConfirmedState(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	baseline, err := store.PrepareApply(ctx, 0, []byte(`{"generation":"baseline"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginActivation(ctx, baseline.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginVerification(ctx, baseline.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitApplied(ctx, baseline.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	var pageCount int64
+	if err := store.db.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount); err != nil {
+		t.Fatal(err)
+	}
+	if pageCount <= 0 {
+		t.Fatalf("invalid SQLite page_count %d", pageCount)
+	}
+	var maxPageCount int64
+	if err := store.db.QueryRowContext(
+		ctx,
+		fmt.Sprintf("PRAGMA max_page_count = %d", pageCount),
+	).Scan(&maxPageCount); err != nil {
+		t.Fatal(err)
+	}
+	if maxPageCount != pageCount {
+		t.Fatalf("SQLite max_page_count = %d, want %d", maxPageCount, pageCount)
+	}
+
+	largeCandidate := []byte(`{"generation":"` + strings.Repeat("x", 2<<20) + `"}`)
+	if _, err := store.PrepareApply(ctx, 1, largeCandidate); err == nil {
+		t.Fatal("SQLite full fixture unexpectedly accepted a new apply")
+	}
+
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != 1 ||
+		snapshot.AppliedGenerationID == nil || *snapshot.AppliedGenerationID != baseline.GenerationID ||
+		snapshot.LastKnownGoodGenerationID == nil || *snapshot.LastKnownGoodGenerationID != baseline.GenerationID ||
+		snapshot.ActiveAttemptID != nil ||
+		snapshot.RecoveryRequired {
+		t.Fatalf("SQLite full failure changed confirmed state: %+v", snapshot)
+	}
+	config, hash, err := store.GenerationConfig(ctx, baseline.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(config) != `{"generation":"baseline"}` || hash != baseline.ConfigSHA256 {
+		t.Fatalf("SQLite full failure changed baseline generation: config=%q hash=%q", config, hash)
+	}
+}
+
 func TestReadOnlyDatabaseRejectsApplyWithoutChangingConfirmedState(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
