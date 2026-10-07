@@ -31,11 +31,19 @@ type ProfileSourceState struct {
 	LastSuccessAt       *time.Time
 	LastError           string
 	LastSourceRevision  string
+	ETag                string
+	LastModified        string
 	ConsecutiveFailures uint32
 	RetryAfterAt        *time.Time
 	ActiveUpdateID      string
 	ActiveUpdateStarted *time.Time
 	CurrentSnapshotID   *int64
+}
+
+type ProfileUpdateSuccess struct {
+	SourceRevision string
+	ETag           string
+	LastModified   string
 }
 
 type ProfileUpdateLease struct {
@@ -277,12 +285,18 @@ func (s *Store) BeginProfileUpdate(
 func (s *Store) FinishProfileUpdateSuccess(
 	ctx context.Context,
 	lease ProfileUpdateLease,
-	sourceRevision string,
+	success ProfileUpdateSuccess,
 ) error {
 	if err := validateProfileUpdateLease(lease); err != nil {
 		return err
 	}
-	if err := validateProfileUpdateStatusText("source revision", sourceRevision, 4096, false); err != nil {
+	if err := validateProfileUpdateStatusText("source revision", success.SourceRevision, 4096, false); err != nil {
+		return err
+	}
+	if err := validateProfileUpdateStatusText("ETag", success.ETag, 4096, false); err != nil {
+		return err
+	}
+	if err := validateProfileUpdateStatusText("Last-Modified", success.LastModified, 4096, false); err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -293,6 +307,8 @@ func (s *Store) FinishProfileUpdateSuccess(
 			last_success_at = ?,
 			last_error = '',
 			last_source_revision = ?,
+			etag = ?,
+			last_modified = ?,
 			consecutive_failures = 0,
 			retry_after_at = NULL
 		WHERE profile_id = ?
@@ -300,7 +316,9 @@ func (s *Store) FinishProfileUpdateSuccess(
 		  AND active_update_id = ?
 	`,
 		now,
-		sourceRevision,
+		success.SourceRevision,
+		success.ETag,
+		success.LastModified,
 		lease.ProfileID,
 		lease.SourceRevision,
 		lease.ID,
@@ -429,6 +447,8 @@ const profileSourceSelect = `
 		s.last_success_at,
 		s.last_error,
 		s.last_source_revision,
+		s.etag,
+		s.last_modified,
 		s.consecutive_failures,
 		s.retry_after_at,
 		s.active_update_id,
@@ -470,6 +490,8 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		&lastSuccess,
 		&state.LastError,
 		&state.LastSourceRevision,
+		&state.ETag,
+		&state.LastModified,
 		&consecutiveFailure,
 		&retryAfter,
 		&activeUpdate,
