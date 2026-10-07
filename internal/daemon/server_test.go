@@ -133,6 +133,11 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["group_dns_route_binding"] ||
 		!caps.Capabilities["dns_fallback_lowerer"] ||
 		!caps.Capabilities["dns_runtime_paths_observed"] ||
+		!caps.Capabilities["profile_source_state"] ||
+		!caps.Capabilities["profile_refresh_fetch"] ||
+		!caps.Capabilities["profile_refresh_scheduler"] ||
+		caps.Capabilities["profile_fetch_selected"] ||
+		caps.Capabilities["profile_fetch_specific_node"] ||
 		!caps.Capabilities["cn_preset_snapshot"] ||
 		!caps.Capabilities["cn_preset_resource_refs"] ||
 		!caps.Capabilities["cn_preset_overrides"] ||
