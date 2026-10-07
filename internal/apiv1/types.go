@@ -110,7 +110,6 @@ type StorageRetentionResponse struct {
 	OverBudget               bool  `json:"over_budget"`
 }
 
-
 type CurrentSelectionRequest struct {
 	Target domain.TargetRef `json:"target"`
 }
