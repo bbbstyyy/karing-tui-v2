@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
@@ -84,6 +85,65 @@ func TestCommitBasicSingBoxProfilePreservesNodeIDAcrossPayloadUpdate(t *testing.
 	}
 	if len(reloadedNodes) != 1 || reloadedNodes[0].Port != 9090 || reloadedNodes[0].NodeID != firstNodeID {
 		t.Fatalf("reloaded nodes = %+v", reloadedNodes)
+	}
+}
+
+func TestCommitBasicSingBoxProfilePersistsShadowsocksAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	store, path := newProfileUpdateStore(t, ctx)
+
+	result, err := CommitBasicSingBoxProfile(ctx, store, "profile-ss", "v1", []byte(`{
+  "outbounds":[{
+    "type":"shadowsocks",
+    "tag":"ss-a",
+    "server":"ss.example.com",
+    "server_port":8388,
+    "method":"aes-256-gcm",
+    "password":"secret",
+    "plugin":"obfs-local",
+    "plugin_opts":"obfs=http",
+    "network":"tcp"
+  }]
+}`), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Nodes) != 1 ||
+		result.Nodes[0].Kind != domain.NodeShadowsocks ||
+		result.Nodes[0].Shadowsocks == nil ||
+		result.Nodes[0].Shadowsocks.PluginOptions != "obfs=http" {
+		t.Fatalf("committed Shadowsocks nodes = %+v", result.Nodes)
+	}
+	nodeID := result.Nodes[0].NodeID
+	snapshotID := result.Commit.Snapshot.ID
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+
+	snapshot, err := reopened.ProfileSnapshotByID(ctx, "profile-ss", snapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := MaterializeBasicSingBoxSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 ||
+		nodes[0].NodeID != nodeID ||
+		nodes[0].Kind != domain.NodeShadowsocks ||
+		nodes[0].Shadowsocks == nil ||
+		nodes[0].Shadowsocks.Method != "aes-256-gcm" ||
+		nodes[0].Shadowsocks.Password != "secret" ||
+		nodes[0].Shadowsocks.Plugin != "obfs-local" ||
+		nodes[0].Shadowsocks.PluginOptions != "obfs=http" ||
+		nodes[0].Shadowsocks.Network != domain.ProxyNetworkTCP {
+		t.Fatalf("reopened Shadowsocks nodes = %+v", nodes)
 	}
 }
 
