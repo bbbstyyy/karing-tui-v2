@@ -118,6 +118,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["proxy_dns_route_binding"] ||
 		!caps.Capabilities["group_dns_lowerer"] ||
 		!caps.Capabilities["group_dns_route_binding"] ||
+		!caps.Capabilities["dns_fallback_lowerer"] ||
 		!caps.Capabilities["cn_preset_snapshot"] ||
 		!caps.Capabilities["cn_preset_resource_refs"] ||
 		!caps.Capabilities["cn_preset_overrides"] ||
