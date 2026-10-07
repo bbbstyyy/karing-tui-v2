@@ -173,7 +173,6 @@ func TestObservedConnectionsRejectsActiveOperation(t *testing.T) {
 	}
 }
 
-
 func TestObservedConnectionsDowngradesSourceWhenLiveModeDiffers(t *testing.T) {
 	generationID := int64(12)
 	store := &fakeObservedConnectionsStore{snapshots: []storage.Snapshot{{
