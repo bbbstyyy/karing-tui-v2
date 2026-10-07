@@ -119,6 +119,31 @@ func (s *fakeSelectorControl) Current(context.Context, string) (coreapi.Selector
 	return coreapi.SelectorSnapshot{Now: s.selected, All: []string{s.selected}}, nil
 }
 
+type fakeModeControl struct {
+	mode  string
+	calls []string
+	err   error
+}
+
+func (m *fakeModeControl) Set(_ context.Context, mode string) error {
+	m.calls = append(m.calls, mode)
+	if m.err != nil {
+		return m.err
+	}
+	m.mode = mode
+	return nil
+}
+
+func (m *fakeModeControl) Current(context.Context) (coreapi.ModeSnapshot, error) {
+	if m.err != nil {
+		return coreapi.ModeSnapshot{}, m.err
+	}
+	return coreapi.ModeSnapshot{
+		Mode:     m.mode,
+		ModeList: []string{"Rule", "RuleNoPrivate", "Global", "GlobalNoPrivate", "Direct"},
+	}, nil
+}
+
 type fakeGenerationFiles struct {
 	path       string
 	stageCount int
@@ -603,6 +628,114 @@ func TestManagedCoreReconcileRecoveryRestoresAppliedGeneration(t *testing.T) {
 	}
 	if probe.calls != 1 {
 		t.Fatalf("recovery probe calls = %d, want 1", probe.calls)
+	}
+}
+
+func TestManagedCoreReconcileRecoveryRestoresGenerationRulesSelectionAndRoutingPolicy(t *testing.T) {
+	ctx := context.Background()
+	appliedID := int64(7)
+	config := []byte(`{"generation":"confirmed"}`)
+	configHash := testSHA256(config)
+
+	ruleContent := []byte("confirmed-rule-set")
+	ruleHash := testSHA256(ruleContent)
+	ruleDir := t.TempDir()
+	rulePath := filepath.Join(ruleDir, ruleHash+".srs")
+	if err := os.WriteFile(rulePath, ruleContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	document := currentSelectionTestDeclaration()
+	declarationHash := testSHA256(document)
+	manifestJSON, err := json.Marshal(compiler.NativeManifest{
+		SchemaID:            compiler.NativeSchemaID,
+		ConfigSHA256:        configHash,
+		DeclarationRevision: 3,
+		DeclarationSHA256:   declarationHash,
+		RuleSets: []compiler.NativeRuleSetManifest{{
+			Ref:         "acl:confirmed",
+			RuntimeTag:  "rs-confirmed",
+			RuntimePath: rulePath,
+			SHA256:      ruleHash,
+			Format:      compiler.RuleSetFormatBinary,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceMapJSON := []byte("[]")
+	targetJSON := []byte(`{"kind":"specific_node","profile_id":"profile-a","node_id":"node-b"}`)
+	state := &fakeManagedSelectionState{
+		fakeManagedArtifactState: &fakeManagedArtifactState{
+			fakeManagedState: &fakeManagedState{
+				snapshot: storage.Snapshot{
+					AppliedGenerationID: &appliedID,
+					RecoveryRequired:    true,
+					CoreDesiredState:    storage.CoreDesiredRunning,
+					RoutingMode:         storage.RoutingModeGlobal,
+					PrivateDirect:       true,
+				},
+				config: config,
+				hash:   configHash,
+			},
+			artifacts: storage.GenerationArtifacts{
+				ConfigJSON:      config,
+				ConfigSHA256:    configHash,
+				ManifestJSON:    manifestJSON,
+				ManifestSHA256:  testSHA256(manifestJSON),
+				SourceMapJSON:   sourceMapJSON,
+				SourceMapSHA256: testSHA256(sourceMapJSON),
+			},
+		},
+		declaration: storage.DeclarationRevision{
+			Revision:     3,
+			DocumentJSON: document,
+			SHA256:       declarationHash,
+		},
+		intent:    storage.SelectionIntent{TargetJSON: targetJSON},
+		hasIntent: true,
+	}
+
+	files := &fakeGenerationFiles{path: "/state/generations/7/config.json"}
+	binder := &fakeBinder{}
+	supervisor := &fakeSupervisor{snapshot: core.Snapshot{State: core.StateStopped}}
+	probe := &fakeProbe{}
+	selector := &fakeSelectorControl{}
+	mode := &fakeModeControl{mode: "RuleNoPrivate"}
+	managed := newManagedCore(state, files, binder, supervisor, probe, nil, nil, nil)
+	managed.selector = selector
+	managed.mode = mode
+
+	if err := managed.ReconcileRecovery(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if files.stageCount != 1 || files.lastID != appliedID || files.lastHash != configHash ||
+		binder.hash != configHash {
+		t.Fatalf("confirmed generation was not rebound atomically: files=%+v binder=%+v", files, binder)
+	}
+	wantSelection, err := declaration.CurrentSelectionRuntimeTag(document, domain.TargetRef{
+		Kind:      domain.TargetSpecificNode,
+		ProfileID: "profile-a",
+		NodeID:    "node-b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selector.selected != wantSelection || len(selector.calls) != 1 {
+		t.Fatalf("recovered selection = %q calls=%v, want %q", selector.selected, selector.calls, wantSelection)
+	}
+	if mode.mode != "Global" || len(mode.calls) != 1 || mode.calls[0] != "Global" {
+		t.Fatalf("recovered routing mode = %q calls=%v, want Global", mode.mode, mode.calls)
+	}
+	if supervisor.stops != 1 || supervisor.starts != 1 || supervisor.resets != 1 ||
+		probe.calls != 1 {
+		t.Fatalf(
+			"unexpected recovery lifecycle: stops=%d starts=%d resets=%d probes=%d",
+			supervisor.stops,
+			supervisor.starts,
+			supervisor.resets,
+			probe.calls,
+		)
 	}
 }
 
