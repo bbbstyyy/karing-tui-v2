@@ -38,7 +38,7 @@ func ReadFileSource(
 
 	fd, err := syscall.Open(
 		spec.Location,
-		syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW,
+		syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK,
 		0,
 	)
 	if err != nil {
