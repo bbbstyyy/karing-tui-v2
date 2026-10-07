@@ -120,6 +120,82 @@ func TestRouteExplainSimulatesMappedRuleAndFinal(t *testing.T) {
 	}
 }
 
+func TestRouteExplainDomainSuffixUsesLabelBoundary(t *testing.T) {
+	id := int64(13)
+	rules := []compiler.RouteRule{
+		{Inbound: []string{domain.InboundTagDirect}, Action: "route", Outbound: compiler.DirectOutboundTag},
+		{Inbound: []string{domain.InboundTagSelected}, Action: "route", Outbound: compiler.CurrentSelectedOutboundTag},
+		{Inbound: []string{domain.InboundTagRule}, ClashMode: "Global", Action: "route", Outbound: compiler.CurrentSelectedOutboundTag},
+		{Inbound: []string{domain.InboundTagRule}, ClashMode: "Direct", Action: "route", Outbound: compiler.DirectOutboundTag},
+		{
+			Type: "logical",
+			Mode: "and",
+			Rules: []compiler.RouteRule{
+				{Inbound: []string{domain.InboundTagRule}},
+				{DomainSuffix: []string{"example.com"}},
+			},
+			Action: "reject",
+		},
+		{Inbound: []string{domain.InboundTagRule}, Action: "route", Outbound: compiler.DirectOutboundTag},
+	}
+	sourceMap := []compiler.RouteSourceMapEntry{
+		{
+			RuleIndex: 4,
+			Layer:     domain.LayerCustom,
+			GroupID:   "suffix-block",
+			Target:    domain.TargetRef{Kind: domain.TargetBlock},
+			Action:    "reject",
+		},
+		{
+			RuleIndex: 5,
+			Layer:     domain.LayerFinal,
+			Final:     true,
+			Target:    domain.TargetRef{Kind: domain.TargetDirect},
+			Action:    "route",
+			Outbound:  compiler.DirectOutboundTag,
+		},
+	}
+	store := &fakeRouteExplainStore{
+		snapshot: storage.Snapshot{
+			Revision:            7,
+			AppliedGenerationID: &id,
+			RoutingMode:         storage.RoutingModeRule,
+		},
+		artifacts: routeExplainTestArtifacts(t, rules, sourceMap),
+	}
+	coordinator, err := NewRouteExplainCoordinator(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"example.com", "api.example.com"} {
+		response, err := coordinator.Explain(context.Background(), apiv1.RouteExplainRequest{
+			Domain:  name,
+			Port:    443,
+			Network: "tcp",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.Decision != "reject" || response.RuleIndex == nil || *response.RuleIndex != 4 {
+			t.Fatalf("suffix match for %q = %+v", name, response)
+		}
+	}
+
+	response, err := coordinator.Explain(context.Background(), apiv1.RouteExplainRequest{
+		Domain:  "notexample.com",
+		Port:    443,
+		Network: "tcp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Decision != "route" || response.RuleIndex == nil || *response.RuleIndex != 5 ||
+		response.Target == nil || response.Target.Kind != domain.TargetDirect {
+		t.Fatalf("label-boundary suffix non-match = %+v", response)
+	}
+}
+
 func TestRouteExplainStopsAtUnknownOpaqueRuleSet(t *testing.T) {
 	id := int64(10)
 	rules := []compiler.RouteRule{
