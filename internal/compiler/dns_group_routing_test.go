@@ -41,16 +41,16 @@ func TestBindGroupDNSRoutingExpandsResolveRoutePair(t *testing.T) {
 	if len(got.Rules) != len(bound.Rules)+1 {
 		t.Fatalf("rules = %d, want %d", len(got.Rules), len(bound.Rules)+1)
 	}
-	if got.Rules[4].Action != "resolve" || got.Rules[4].Server != tag || got.Rules[4].Outbound != "" {
-		t.Fatalf("resolve rule = %+v", got.Rules[4])
+	if got.Rules[6].Action != "resolve" || got.Rules[6].Server != tag || got.Rules[6].Outbound != "" {
+		t.Fatalf("resolve rule = %+v", got.Rules[6])
 	}
-	if got.Rules[5].Action != "route" || got.Rules[5].Outbound != targets.CurrentSelectedTag {
-		t.Fatalf("route rule = %+v", got.Rules[5])
+	if got.Rules[7].Action != "route" || got.Rules[7].Outbound != targets.CurrentSelectedTag {
+		t.Fatalf("route rule = %+v", got.Rules[7])
 	}
 	if len(got.SourceMap) != 3 {
 		t.Fatalf("source map = %+v", got.SourceMap)
 	}
-	if idx := []int{got.SourceMap[0].RuleIndex, got.SourceMap[1].RuleIndex, got.SourceMap[2].RuleIndex}; !reflect.DeepEqual(idx, []int{4, 5, 6}) {
+	if idx := []int{got.SourceMap[0].RuleIndex, got.SourceMap[1].RuleIndex, got.SourceMap[2].RuleIndex}; !reflect.DeepEqual(idx, []int{6, 7, 9}) {
 		t.Fatalf("source-map indexes = %#v", idx)
 	}
 	if got.SourceMap[0].Action != "resolve" || got.SourceMap[0].Server != tag ||
@@ -58,7 +58,7 @@ func TestBindGroupDNSRoutingExpandsResolveRoutePair(t *testing.T) {
 		got.SourceMap[1].Action != "route" || got.SourceMap[1].DNSProfileID != "group-dns" {
 		t.Fatalf("source map = %+v", got.SourceMap)
 	}
-	if bound.Rules[4].Action != "route" || len(bound.SourceMap) != 2 {
+	if bound.Rules[6].Action != "route" || len(bound.SourceMap) != 2 {
 		t.Fatal("binding mutated original routing")
 	}
 }

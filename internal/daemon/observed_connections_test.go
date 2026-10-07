@@ -36,6 +36,7 @@ type fakeObservedConnectionsRuntime struct {
 	raw      coreapi.ConnectionsSnapshot
 	err      error
 	mode     storage.RoutingMode
+	priv     bool
 	modeErr  error
 }
 
@@ -51,8 +52,10 @@ func (r *fakeObservedConnectionsRuntime) ActiveOperation() OperationSnapshot {
 	return r.active
 }
 
-func (r *fakeObservedConnectionsRuntime) CurrentRoutingMode(context.Context) (storage.RoutingMode, error) {
-	return r.mode, r.modeErr
+func (r *fakeObservedConnectionsRuntime) CurrentRoutingPolicy(
+	context.Context,
+) (storage.RoutingMode, bool, error) {
+	return r.mode, r.priv, r.modeErr
 }
 
 type fakeObservedRouteExplainer struct {
@@ -244,5 +247,35 @@ func TestObservedConnectionsRejectsRoutingModeChange(t *testing.T) {
 	}
 	if _, err := coordinator.List(context.Background()); !errors.Is(err, ErrConnectionRoutingModeChanged) {
 		t.Fatalf("routing mode change error = %v", err)
+	}
+}
+
+func TestObservedConnectionsRejectsPrivateDirectChange(t *testing.T) {
+	generationID := int64(14)
+	store := &fakeObservedConnectionsStore{snapshots: []storage.Snapshot{
+		{
+			Revision:            8,
+			AppliedGenerationID: &generationID,
+			RoutingMode:         storage.RoutingModeRule,
+			PrivateDirect:       false,
+		},
+		{
+			Revision:            8,
+			AppliedGenerationID: &generationID,
+			RoutingMode:         storage.RoutingModeRule,
+			PrivateDirect:       true,
+		},
+	}}
+	runtime := &fakeObservedConnectionsRuntime{
+		snapshot: core.Snapshot{State: core.StateRunning, PID: 123},
+		mode:     storage.RoutingModeRule,
+		raw:      coreapi.ConnectionsSnapshot{},
+	}
+	coordinator, err := NewObservedConnectionsCoordinator(store, runtime, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.List(context.Background()); !errors.Is(err, ErrConnectionRoutingModeChanged) {
+		t.Fatalf("private-direct change error = %v", err)
 	}
 }

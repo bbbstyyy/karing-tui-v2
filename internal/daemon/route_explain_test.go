@@ -28,7 +28,11 @@ func (s *fakeRouteExplainStore) Snapshot(context.Context) (storage.Snapshot, err
 	if s.err != nil {
 		return storage.Snapshot{}, s.err
 	}
-	return s.snapshot, nil
+	snapshot := s.snapshot
+	if snapshot.RoutingMode == "" {
+		snapshot.RoutingMode = storage.RoutingModeRule
+	}
+	return snapshot, nil
 }
 
 func (s *fakeRouteExplainStore) GenerationArtifacts(context.Context, int64) (storage.GenerationArtifacts, error) {
@@ -472,6 +476,12 @@ func TestRouteExplainHonorsPersistedRoutingMode(t *testing.T) {
 		},
 		{
 			Inbound:   []string{domain.InboundTagRule},
+			ClashMode: "GlobalNoPrivate",
+			Action:    "route",
+			Outbound:  compiler.CurrentSelectedOutboundTag,
+		},
+		{
+			Inbound:   []string{domain.InboundTagRule},
 			ClashMode: "Direct",
 			Action:    "route",
 			Outbound:  compiler.DirectOutboundTag,
@@ -482,7 +492,7 @@ func TestRouteExplainHonorsPersistedRoutingMode(t *testing.T) {
 		},
 	}
 	sourceMap := []compiler.RouteSourceMapEntry{{
-		RuleIndex: 2,
+		RuleIndex: 3,
 		Layer:     domain.LayerFinal,
 		Final:     true,
 		Target:    domain.TargetRef{Kind: domain.TargetBlock},
@@ -491,43 +501,50 @@ func TestRouteExplainHonorsPersistedRoutingMode(t *testing.T) {
 	artifacts := routeExplainTestArtifacts(t, rules, sourceMap)
 
 	cases := []struct {
-		name         string
-		mode         storage.RoutingMode
-		decision     string
-		ruleIndex    int
-		clashMode    string
-		target       domain.TargetKind
-		source       string
-		wantResponse string
+		name          string
+		mode          storage.RoutingMode
+		privateDirect bool
+		decision      string
+		ruleIndex     int
+		clashMode     string
+		target        domain.TargetKind
+		source        string
 	}{
 		{
-			name:         "rule",
-			mode:         storage.RoutingModeRule,
-			decision:     "reject",
-			ruleIndex:    2,
-			target:       domain.TargetBlock,
-			source:       "source_map",
-			wantResponse: "rule",
+			name:      "rule",
+			mode:      storage.RoutingModeRule,
+			decision:  "reject",
+			ruleIndex: 3,
+			target:    domain.TargetBlock,
+			source:    "source_map",
 		},
 		{
-			name:         "global",
-			mode:         storage.RoutingModeGlobal,
-			decision:     "route",
-			ruleIndex:    0,
-			clashMode:    "Global",
-			target:       domain.TargetCurrentSelected,
-			source:       "synthetic",
-			wantResponse: "global",
+			name:          "global_private",
+			mode:          storage.RoutingModeGlobal,
+			privateDirect: true,
+			decision:      "route",
+			ruleIndex:     0,
+			clashMode:     "Global",
+			target:        domain.TargetCurrentSelected,
+			source:        "synthetic",
 		},
 		{
-			name:         "direct",
-			mode:         storage.RoutingModeDirect,
-			decision:     "route",
-			ruleIndex:    1,
-			clashMode:    "Direct",
-			target:       domain.TargetDirect,
-			source:       "synthetic",
-			wantResponse: "direct",
+			name:      "global_no_private",
+			mode:      storage.RoutingModeGlobal,
+			decision:  "route",
+			ruleIndex: 1,
+			clashMode: "GlobalNoPrivate",
+			target:    domain.TargetCurrentSelected,
+			source:    "synthetic",
+		},
+		{
+			name:      "direct",
+			mode:      storage.RoutingModeDirect,
+			decision:  "route",
+			ruleIndex: 2,
+			clashMode: "Direct",
+			target:    domain.TargetDirect,
+			source:    "synthetic",
 		},
 	}
 	for _, tc := range cases {
@@ -537,6 +554,7 @@ func TestRouteExplainHonorsPersistedRoutingMode(t *testing.T) {
 					Revision:            8,
 					AppliedGenerationID: &generationID,
 					RoutingMode:         tc.mode,
+					PrivateDirect:       tc.privateDirect,
 				},
 				artifacts: artifacts,
 			}
@@ -555,14 +573,36 @@ func TestRouteExplainHonorsPersistedRoutingMode(t *testing.T) {
 			if response.Evidence != "simulated" ||
 				response.Decision != tc.decision ||
 				response.RuleIndex == nil || *response.RuleIndex != tc.ruleIndex ||
-				response.RoutingMode != tc.wantResponse ||
+				response.RoutingMode != string(tc.mode) ||
+				response.PrivateDirect != tc.privateDirect ||
 				response.Source != tc.source ||
 				response.Target == nil || response.Target.Kind != tc.target {
-				t.Fatalf("mode %q explanation = %+v", tc.mode, response)
+				t.Fatalf("policy %q/%t explanation = %+v", tc.mode, tc.privateDirect, response)
 			}
 			if response.Trace[tc.ruleIndex].ClashMode != tc.clashMode {
-				t.Fatalf("mode %q trace clash_mode = %q, want %q", tc.mode, response.Trace[tc.ruleIndex].ClashMode, tc.clashMode)
+				t.Fatalf("policy %q/%t trace clash_mode = %q, want %q",
+					tc.mode, tc.privateDirect, response.Trace[tc.ruleIndex].ClashMode, tc.clashMode)
 			}
 		})
+	}
+}
+
+func TestRouteExplainPrivateAddressPredicateMatchesPinnedCoreSemantics(t *testing.T) {
+	cases := []struct {
+		address string
+		private bool
+	}{
+		{"10.0.0.1", true},
+		{"127.0.0.1", true},
+		{"169.254.1.1", true},
+		{"224.0.0.1", true},
+		{"0.0.0.0", true},
+		{"8.8.8.8", false},
+	}
+	for _, tc := range cases {
+		address := netip.MustParseAddr(tc.address)
+		if got := routeAddressIsPrivate(address); got != tc.private {
+			t.Fatalf("routeAddressIsPrivate(%s)=%t, want %t", tc.address, got, tc.private)
+		}
 	}
 }
