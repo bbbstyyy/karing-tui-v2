@@ -385,7 +385,6 @@ func TestRouteExplainAPIUsesAppliedGeneration(t *testing.T) {
 	}
 }
 
-
 func TestRouteExplainHonorsPersistedRoutingMode(t *testing.T) {
 	generationID := int64(21)
 	rules := []compiler.RouteRule{
