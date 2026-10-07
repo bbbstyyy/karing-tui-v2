@@ -91,3 +91,18 @@ type RuleSetUploadResponse struct {
 	Format string `json:"format"`
 	Bytes  int64  `json:"bytes"`
 }
+
+
+type StorageRetentionResponse struct {
+	ConfirmedGenerations     int   `json:"confirmed_generations"`
+	MaxGenerationBytes       int64 `json:"max_generation_bytes"`
+	LiveGenerationCount      int   `json:"live_generation_count"`
+	LiveGenerationBytes      int64 `json:"live_generation_bytes"`
+	ProtectedGenerationCount int   `json:"protected_generation_count"`
+	ActiveAttemptCount       int   `json:"active_attempt_count"`
+	ArchivedAttemptCount     int   `json:"archived_attempt_count"`
+	ArchivedThisRun          int64 `json:"archived_this_run,omitempty"`
+	PrunedGenerationCount    int64 `json:"pruned_generation_count,omitempty"`
+	ReclaimedGenerationBytes int64 `json:"reclaimed_generation_bytes,omitempty"`
+	OverBudget               bool  `json:"over_budget"`
+}

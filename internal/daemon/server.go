@@ -37,6 +37,10 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.paths.Ensure(); err != nil {
 		return err
 	}
+	retentionPolicy, err := resolveStorageRetentionPolicy()
+	if err != nil {
+		return fmt.Errorf("configure storage retention: %w", err)
+	}
 	if err := prepareSocket(s.paths.Socket); err != nil {
 		return err
 	}
@@ -60,7 +64,7 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("secure unix socket: %w", err)
 	}
 
-	store, err := storage.Open(ctx, s.paths.Database)
+	store, err := storage.OpenWithRetention(ctx, s.paths.Database, retentionPolicy)
 	if err != nil {
 		return fmt.Errorf("open daemon state: %w", err)
 	}
@@ -211,6 +215,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"secure_runtime_paths":        true,
 				"proxy_only_import_guard":     true,
 				"sqlite_state":                true,
+				"storage_retention":           true,
+				"storage_retention_api":       true,
 				"declaration_revisions":       true,
 				"declaration_generation_link": true,
 				"declaration_schema_v1":       true,
@@ -287,6 +293,28 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"tui":                         false,
 			},
 		})
+	})
+	mux.HandleFunc("GET /v1/storage/retention", func(w http.ResponseWriter, r *http.Request) {
+		report, err := store.RetentionStatus(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, apiv1.ErrorResponse{Error: "read storage retention status: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, storageRetentionResponse(report))
+	})
+	mux.HandleFunc("POST /v1/storage/prune", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+		defer cancel()
+		report, err := store.PruneRetention(ctx)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, context.DeadlineExceeded) {
+				status = http.StatusGatewayTimeout
+			}
+			writeJSON(w, status, apiv1.ErrorResponse{Error: "prune storage retention: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, storageRetentionResponse(report))
 	})
 	mux.HandleFunc("PUT /v1/rule-sets/{sha256}", func(w http.ResponseWriter, r *http.Request) {
 		if s.ruleSets == nil {
@@ -453,6 +481,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				errors.Is(err, declaration.ErrRuleSetResourceMissing),
 				errors.Is(err, declaration.ErrRuleSetResourceUnavailable):
 				status = http.StatusUnprocessableEntity
+			case errors.Is(err, storage.ErrGenerationStorageBudget):
+				status = http.StatusInsufficientStorage
 			case errors.Is(err, context.DeadlineExceeded):
 				status = http.StatusGatewayTimeout
 			}
@@ -477,6 +507,22 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		runCoreOperation(w, r, runtime, "stop")
 	})
 	return mux
+}
+
+func storageRetentionResponse(value storage.RetentionReport) apiv1.StorageRetentionResponse {
+	return apiv1.StorageRetentionResponse{
+		ConfirmedGenerations:     value.Policy.ConfirmedGenerations,
+		MaxGenerationBytes:       value.Policy.MaxGenerationBytes,
+		LiveGenerationCount:      value.LiveGenerationCount,
+		LiveGenerationBytes:      value.LiveGenerationBytes,
+		ProtectedGenerationCount: value.ProtectedGenerationCount,
+		ActiveAttemptCount:       value.ActiveAttemptCount,
+		ArchivedAttemptCount:     value.ArchivedAttemptCount,
+		ArchivedThisRun:          value.ArchivedThisRun,
+		PrunedGenerationCount:    value.PrunedGenerationCount,
+		ReclaimedGenerationBytes: value.ReclaimedGenerationBytes,
+		OverBudget:               value.OverBudget,
+	}
 }
 
 func declarationResponse(value storage.DeclarationRevision) apiv1.DeclarationResponse {
