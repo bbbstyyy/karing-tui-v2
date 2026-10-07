@@ -82,6 +82,46 @@ func TestRingBufferConcurrentWritersRemainBounded(t *testing.T) {
 	}
 }
 
+func TestExecRunnerLargeOutputDoesNotBlockManagedProcess(t *testing.T) {
+	executable := writeExecutableFixture(
+		t,
+		"#!/bin/sh\n"+
+			"dd if=/dev/zero bs=4096 count=512 2>/dev/null\n"+
+			"dd if=/dev/zero bs=4096 count=512 2>/dev/null >&2\n"+
+			"exit 0\n",
+	)
+	stdout := NewRingBuffer(4096)
+	stderr := NewRingBuffer(4096)
+	runner, err := NewExecRunner(ExecConfig{
+		Executable: executable,
+		Stdout:     stdout,
+		Stderr:     stderr,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	process, err := runner.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- process.Wait()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = process.Kill()
+		t.Fatal("large stdout/stderr blocked managed process completion")
+	}
+	if len(stdout.Bytes()) != 4096 || len(stderr.Bytes()) != 4096 {
+		t.Fatalf("bounded log tails = stdout:%d stderr:%d, want 4096 each", len(stdout.Bytes()), len(stderr.Bytes()))
+	}
+}
+
 func TestExecRunnerKillsManagedChildWhenParentDies(t *testing.T) {
 	const (
 		parentHelperEnv = "KARING_TUI_EXEC_PARENT_HELPER"
