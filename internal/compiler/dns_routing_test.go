@@ -54,8 +54,8 @@ func TestBindProxyTargetDNSRoutingExpandsSelectedGlobalUserRuleAndFinal(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rebound.Rules) != 14 {
-		t.Fatalf("rules = %d, want entry/mode/private rules plus selected/global proxy resolves and group/final pairs", len(rebound.Rules))
+	if len(rebound.Rules) != 15 {
+		t.Fatalf("rules = %d, want entry/mode/private rules plus selected/global proxy resolves, group/final pairs, and mode marker", len(rebound.Rules))
 	}
 	if rebound.Rules[1].Action != "resolve" || rebound.Rules[1].Server != proxyTag ||
 		!reflect.DeepEqual(rebound.Rules[1].Inbound, []string{domain.InboundTagSelected}) {
