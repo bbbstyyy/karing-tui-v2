@@ -96,7 +96,17 @@ func (s *RefreshScheduler) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	for {
+		select {
+		case <-ctx.Done():
+			s.wait()
+			return nil
+		default:
+		}
 		if err := s.dispatchDue(ctx, time.Now().UTC()); err != nil {
+			if ctx.Err() != nil {
+				s.wait()
+				return nil
+			}
 			s.wait()
 			return err
 		}
