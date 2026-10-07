@@ -114,7 +114,6 @@ func TestCompileNativeConfigRejectsUnexpectedDNSDetour(t *testing.T) {
 	}
 }
 
-
 func TestCompileNativeConfigUsesExplicitFallbackAsDNSFinal(t *testing.T) {
 	input := nativeTestInput(t, "127.0.0.1")
 	dns, err := CompileRuntimeDNS(domain.DNSPlan{
