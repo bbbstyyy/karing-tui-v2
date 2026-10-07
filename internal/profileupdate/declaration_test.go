@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
@@ -208,10 +207,3 @@ func newDeclarationUpdateStore(t *testing.T, ctx context.Context) (*storage.Stor
 	return store, path
 }
 
-func TestDeclarationProfileSourceIsStorageSafe(t *testing.T) {
-	source := fmt.Sprintf("profile-snapshot/%d", int64(42))
-	if strings.ContainsAny(source, " 	
-") {
-		t.Fatalf("unexpected unsafe declaration source %q", source)
-	}
-}
