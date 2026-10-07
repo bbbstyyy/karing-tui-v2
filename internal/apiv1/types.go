@@ -22,6 +22,7 @@ type StatusResponse struct {
 	RecoveryRequired          bool   `json:"recovery_required"`
 	CoreDesiredState          string `json:"core_desired_state"`
 	RoutingMode               string `json:"routing_mode"`
+	PrivateDirect             bool   `json:"private_direct"`
 	CoreConfigured            bool   `json:"core_configured"`
 	CoreState                 string `json:"core_state"`
 	CorePID                   int    `json:"core_pid,omitempty"`
@@ -138,6 +139,7 @@ type RouteExplainStep struct {
 	Result            string              `json:"result"`
 	Source            string              `json:"source"`
 	ClashMode         string              `json:"clash_mode,omitempty"`
+	IPIsPrivate       bool                `json:"ip_is_private,omitempty"`
 	Layer             domain.RoutingLayer `json:"layer,omitempty"`
 	GroupID           string              `json:"group_id,omitempty"`
 	Final             bool                `json:"final,omitempty"`
@@ -157,10 +159,13 @@ type RouteExplainResponse struct {
 	GenerationID        int64               `json:"generation_id"`
 	DeclarationRevision uint64              `json:"declaration_revision"`
 	RoutingMode         string              `json:"routing_mode"`
+	PrivateDirect       bool                `json:"private_direct"`
 	Entry               string              `json:"entry"`
 	Input               RouteExplainRequest `json:"input"`
 	RuleIndex           *int                `json:"rule_index,omitempty"`
 	Source              string              `json:"source,omitempty"`
+	ClashMode           string              `json:"clash_mode,omitempty"`
+	IPIsPrivate         bool                `json:"ip_is_private,omitempty"`
 	Layer               domain.RoutingLayer `json:"layer,omitempty"`
 	GroupID             string              `json:"group_id,omitempty"`
 	Final               bool                `json:"final,omitempty"`
@@ -216,11 +221,14 @@ type ObservedConnectionResponse struct {
 }
 
 type RoutingModeRequest struct {
-	Mode string `json:"mode"`
+	Mode          string `json:"mode,omitempty"`
+	PrivateDirect *bool  `json:"private_direct,omitempty"`
 }
 
 type RoutingModeResponse struct {
-	Mode     string `json:"mode"`
-	Applied  bool   `json:"applied"`
-	LiveMode string `json:"live_mode,omitempty"`
+	Mode              string `json:"mode"`
+	PrivateDirect     bool   `json:"private_direct"`
+	Applied           bool   `json:"applied"`
+	LiveMode          string `json:"live_mode,omitempty"`
+	LivePrivateDirect *bool  `json:"live_private_direct,omitempty"`
 }

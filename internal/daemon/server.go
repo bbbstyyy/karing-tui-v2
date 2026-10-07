@@ -201,6 +201,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			RecoveryRequired:          snapshot.RecoveryRequired,
 			CoreDesiredState:          string(snapshot.CoreDesiredState),
 			RoutingMode:               string(snapshot.RoutingMode),
+			PrivateDirect:             snapshot.PrivateDirect,
 			CoreState:                 "not-configured",
 		}
 		if runtime != nil {
@@ -282,7 +283,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_mode_intent":         true,
 				"routing_mode_api":            true,
 				"routing_mode_live":           routingModeLive,
-				"private_direct_policy":       false,
+				"private_direct_policy":       true,
+				"private_direct_live":         routingModeLive,
 				"routing_rule_set_closure":    true,
 				"routing_rule_set_store":      s.ruleSets != nil,
 				"rule_set_upload_api":         s.ruleSets != nil,
@@ -349,7 +351,11 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
 		defer cancel()
-		state, err := routingMode.Set(ctx, storage.RoutingMode(request.Mode))
+		if request.Mode == "" && request.PrivateDirect == nil {
+			writeJSON(w, http.StatusUnprocessableEntity, apiv1.ErrorResponse{Error: "routing policy update is empty"})
+			return
+		}
+		state, err := routingMode.SetPolicy(ctx, storage.RoutingMode(request.Mode), request.PrivateDirect)
 		if err != nil {
 			writeRoutingModeError(w, err)
 			return
@@ -653,9 +659,11 @@ func writeObservedConnectionsError(w http.ResponseWriter, err error) {
 
 func routingModeResponse(value RoutingModeState) apiv1.RoutingModeResponse {
 	return apiv1.RoutingModeResponse{
-		Mode:     string(value.Mode),
-		Applied:  value.Applied,
-		LiveMode: string(value.LiveMode),
+		Mode:              string(value.Mode),
+		PrivateDirect:     value.PrivateDirect,
+		Applied:           value.Applied,
+		LiveMode:          string(value.LiveMode),
+		LivePrivateDirect: value.LivePrivateDirect,
 	}
 }
 

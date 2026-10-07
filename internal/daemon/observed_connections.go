@@ -100,20 +100,21 @@ func (c *ObservedConnectionsCoordinator) List(
 		!sameGenerationID(before.AppliedGenerationID, after.AppliedGenerationID) {
 		return apiv1.ObservedConnectionsResponse{}, ErrConnectionGenerationChanged
 	}
-	if before.RoutingMode != after.RoutingMode {
+	if before.RoutingMode != after.RoutingMode || before.PrivateDirect != after.PrivateDirect {
 		return apiv1.ObservedConnectionsResponse{}, ErrConnectionRoutingModeChanged
 	}
 
 	sourceModeAligned := true
 	sourceModeReason := ""
 	if modeReader, ok := c.runtime.(interface {
-		CurrentRoutingMode(context.Context) (storage.RoutingMode, error)
+		CurrentRoutingPolicy(context.Context) (storage.RoutingMode, bool, error)
 	}); ok {
-		liveMode, modeErr := modeReader.CurrentRoutingMode(ctx)
+		liveMode, livePrivate, modeErr := modeReader.CurrentRoutingPolicy(ctx)
 		if modeErr != nil {
 			sourceModeAligned = false
 			sourceModeReason = "routing_mode_readback"
-		} else if liveMode != before.RoutingMode {
+		} else if liveMode != before.RoutingMode ||
+			(before.RoutingMode != storage.RoutingModeDirect && livePrivate != before.PrivateDirect) {
 			sourceModeAligned = false
 			sourceModeReason = "routing_mode_mismatch"
 		}

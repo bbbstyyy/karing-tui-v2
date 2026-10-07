@@ -42,7 +42,7 @@ type routeExplainInput struct {
 	port        uint16
 	network     domain.NetworkType
 	processName string
-	mode        storage.RoutingMode
+	coreMode    string
 }
 
 type routeEvalState uint8
@@ -80,7 +80,10 @@ func (c *RouteExplainCoordinator) Explain(
 	if snapshot.AppliedGenerationID == nil {
 		return apiv1.RouteExplainResponse{}, ErrRouteExplainUnavailable
 	}
-	input.mode = snapshot.RoutingMode
+	input.coreMode, err = routingModeCoreName(snapshot.RoutingMode, snapshot.PrivateDirect)
+	if err != nil {
+		return apiv1.RouteExplainResponse{}, fmt.Errorf("resolve persisted routing policy: %w", err)
+	}
 	generationID := *snapshot.AppliedGenerationID
 	artifacts, err := c.store.GenerationArtifacts(ctx, generationID)
 	if err != nil {
@@ -104,6 +107,7 @@ func (c *RouteExplainCoordinator) Explain(
 		GenerationID:        generationID,
 		DeclarationRevision: manifest.DeclarationRevision,
 		RoutingMode:         string(snapshot.RoutingMode),
+		PrivateDirect:       snapshot.PrivateDirect,
 		Entry:               string(input.entry),
 		Input:               request,
 		Trace:               make([]apiv1.RouteExplainStep, 0, len(rules)),
@@ -357,10 +361,17 @@ func evaluateRouteRuleFields(rule compiler.RouteRule, input routeExplainInput) r
 		parts = append(parts, routeBool(stringSliceContains(rule.Inbound, input.inboundTag)))
 	}
 	if rule.ClashMode != "" {
-		if input.mode == "" {
+		if input.coreMode == "" {
 			parts = append(parts, routeUnknown("routing_mode"))
 		} else {
-			parts = append(parts, routeBool(strings.EqualFold(rule.ClashMode, string(input.mode))))
+			parts = append(parts, routeBool(strings.EqualFold(rule.ClashMode, input.coreMode)))
+		}
+	}
+	if rule.IPIsPrivate {
+		if !input.hasIP {
+			parts = append(parts, routeUnknown("ip_is_private"))
+		} else {
+			parts = append(parts, routeBool(routeAddressIsPrivate(input.ip)))
 		}
 	}
 	if len(rule.Domain) != 0 {
@@ -515,6 +526,7 @@ func routeExplainStep(
 		Result:            routeEvalString(evaluation.state),
 		Source:            "synthetic",
 		ClashMode:         rule.ClashMode,
+		IPIsPrivate:       rule.IPIsPrivate,
 		Action:            rule.Action,
 		Outbound:          rule.Outbound,
 		Server:            rule.Server,
@@ -543,6 +555,8 @@ func routeExplainStep(
 
 func copyRouteExplainSource(response *apiv1.RouteExplainResponse, step apiv1.RouteExplainStep) {
 	response.Source = step.Source
+	response.ClashMode = step.ClashMode
+	response.IPIsPrivate = step.IPIsPrivate
 	response.Layer = step.Layer
 	response.GroupID = step.GroupID
 	response.Final = step.Final
@@ -551,6 +565,16 @@ func copyRouteExplainSource(response *apiv1.RouteExplainResponse, step apiv1.Rou
 	response.Outbound = step.Outbound
 	response.Server = step.Server
 	response.DNSProfileID = step.DNSProfileID
+}
+
+func routeAddressIsPrivate(address netip.Addr) bool {
+	address = address.Unmap()
+	return address.IsPrivate() ||
+		address.IsLoopback() ||
+		address.IsMulticast() ||
+		address.IsLinkLocalUnicast() ||
+		address.IsInterfaceLocalMulticast() ||
+		address.IsUnspecified()
 }
 
 func routeAnd(values ...routeEvalResult) routeEvalResult {

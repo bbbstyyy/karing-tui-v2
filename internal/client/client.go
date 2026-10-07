@@ -101,7 +101,14 @@ func (c *Client) RoutingMode(ctx context.Context) (apiv1.RoutingModeResponse, er
 }
 
 func (c *Client) SetRoutingMode(ctx context.Context, mode string) (apiv1.RoutingModeResponse, error) {
-	body, err := json.Marshal(apiv1.RoutingModeRequest{Mode: mode})
+	return c.SetRoutingPolicy(ctx, apiv1.RoutingModeRequest{Mode: mode})
+}
+
+func (c *Client) SetRoutingPolicy(
+	ctx context.Context,
+	request apiv1.RoutingModeRequest,
+) (apiv1.RoutingModeResponse, error) {
+	body, err := json.Marshal(request)
 	if err != nil {
 		return apiv1.RoutingModeResponse{}, err
 	}
