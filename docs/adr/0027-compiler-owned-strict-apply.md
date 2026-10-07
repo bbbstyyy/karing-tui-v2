@@ -53,3 +53,12 @@ The candidate passed to the core is built from the same copied config bytes whos
 The real managed-core integration now applies successful compiler candidates through `serverRuntime.ApplyNativeArtifact`, not the legacy config-only path. The fixture asserts that manifest/source-map bytes and hashes are present in SQLite before explicitly starting the committed generation.
 
 That explicit start then passes through persisted-generation resource re-verification before the approved core is launched, so the integration exercises the strict handoff across compiler, SQLite transaction, generation staging, core `check`, activation, restart, and lifecycle control.
+
+The pinned-core integration also guards the KaringX core's misleading
+`PUT /configs` behavior. An authenticated structural request returns HTTP 204,
+but the fixture requires the core PID, live routing policy, applied revision,
+and applied generation to remain unchanged. A following compiler-owned
+declaration apply changes a real native outbound `server_port`, advances the
+generation/revision, and replaces the running core process. Therefore HTTP 204
+from `PUT /configs` is explicitly not an apply success signal and is not used
+as the structural configuration update path.
