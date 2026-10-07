@@ -69,8 +69,9 @@ func TestSchemaV9AddsProfileSnapshotsToV8Database(t *testing.T) {
 		SourceKind:   "sing-box",
 		SourceSHA256: strings.Repeat("e", 64),
 		Nodes: []profile.SourceNode{{
-			SourceKey:  "tag-a",
-			SourceName: "Alpha",
+			SourceKey:   "tag-a",
+			SourceName:  "Alpha",
+			PayloadJSON: []byte(`{"type":"http","tag":"tag-a","server":"127.0.0.1","server_port":8080}`),
 		}},
 	}, ProfileSnapshotCommitOptions{})
 	if err != nil {
