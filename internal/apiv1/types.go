@@ -215,7 +215,6 @@ type ObservedConnectionResponse struct {
 	SourceUnknownConditions []string            `json:"source_unknown_conditions,omitempty"`
 }
 
-
 type RoutingModeRequest struct {
 	Mode string `json:"mode"`
 }
