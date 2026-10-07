@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
@@ -72,7 +73,7 @@ func TestRouteExplainSimulatesMappedRuleAndFinal(t *testing.T) {
 		},
 	}
 	store := &fakeRouteExplainStore{
-		snapshot: storage.Snapshot{Revision: 4, AppliedGenerationID: &id},
+		snapshot:  storage.Snapshot{Revision: 4, AppliedGenerationID: &id},
 		artifacts: routeExplainTestArtifacts(t, rules, sourceMap),
 	}
 	coordinator, err := NewRouteExplainCoordinator(store)
@@ -210,8 +211,8 @@ func TestRouteExplainUsesNativeSyntheticDirectRule(t *testing.T) {
 func TestRouteExplainRejectsTamperedGenerationMetadata(t *testing.T) {
 	id := int64(12)
 	artifacts := routeExplainTestArtifacts(t, []compiler.RouteRule{{
-		Inbound: []string{domain.InboundTagRule},
-		Action:  "route",
+		Inbound:  []string{domain.InboundTagRule},
+		Action:   "route",
 		Outbound: compiler.DirectOutboundTag,
 	}}, []compiler.RouteSourceMapEntry{{
 		RuleIndex: 0,
