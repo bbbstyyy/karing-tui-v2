@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
@@ -22,6 +23,9 @@ var (
 )
 
 type currentSelectionStore interface {
+	Snapshot(context.Context) (storage.Snapshot, error)
+	GenerationArtifacts(context.Context, int64) (storage.GenerationArtifacts, error)
+	Declaration(context.Context, uint64) (storage.DeclarationRevision, error)
 	CurrentDeclaration(context.Context) (storage.DeclarationRevision, error)
 	CurrentSelectionIntent(context.Context) (storage.SelectionIntent, bool, error)
 	SetCurrentSelectionIntent(context.Context, []byte) (storage.SelectionIntent, error)
@@ -58,12 +62,9 @@ func NewCurrentSelectionCoordinator(
 }
 
 func (c *CurrentSelectionCoordinator) Get(ctx context.Context) (CurrentSelectionState, error) {
-	current, err := c.store.CurrentDeclaration(ctx)
+	current, err := c.selectionDeclaration(ctx)
 	if err != nil {
 		return CurrentSelectionState{}, err
-	}
-	if current.Revision == 0 || len(current.DocumentJSON) == 0 {
-		return CurrentSelectionState{}, ErrCurrentSelectionUnavailable
 	}
 
 	intent, persisted, err := c.store.CurrentSelectionIntent(ctx)
@@ -112,12 +113,9 @@ func (c *CurrentSelectionCoordinator) Set(
 	ctx context.Context,
 	target domain.TargetRef,
 ) (CurrentSelectionState, error) {
-	current, err := c.store.CurrentDeclaration(ctx)
+	current, err := c.selectionDeclaration(ctx)
 	if err != nil {
 		return CurrentSelectionState{}, err
-	}
-	if current.Revision == 0 || len(current.DocumentJSON) == 0 {
-		return CurrentSelectionState{}, ErrCurrentSelectionUnavailable
 	}
 	runtimeTag, err := declaration.CurrentSelectionRuntimeTag(current.DocumentJSON, target)
 	if err != nil {
@@ -153,6 +151,75 @@ func (c *CurrentSelectionCoordinator) Set(
 		return state, fmt.Errorf("%w: selector readback is %q, want %q", ErrLiveSelectionUpdate, live, runtimeTag)
 	}
 	return state, nil
+}
+
+func (c *CurrentSelectionCoordinator) selectionDeclaration(ctx context.Context) (storage.DeclarationRevision, error) {
+	snapshot, err := c.store.Snapshot(ctx)
+	if err != nil {
+		return storage.DeclarationRevision{}, fmt.Errorf("read applied generation for current selection: %w", err)
+	}
+	if snapshot.AppliedGenerationID == nil {
+		current, err := c.store.CurrentDeclaration(ctx)
+		if err != nil {
+			return storage.DeclarationRevision{}, err
+		}
+		if current.Revision == 0 || len(current.DocumentJSON) == 0 {
+			return storage.DeclarationRevision{}, ErrCurrentSelectionUnavailable
+		}
+		return current, nil
+	}
+
+	artifacts, err := c.store.GenerationArtifacts(ctx, *snapshot.AppliedGenerationID)
+	if err != nil {
+		return storage.DeclarationRevision{}, fmt.Errorf("read applied generation provenance for current selection: %w", err)
+	}
+	if len(artifacts.ManifestJSON) == 0 {
+		return storage.DeclarationRevision{}, fmt.Errorf(
+			"%w: applied generation %d has no declaration provenance",
+			ErrCurrentSelectionUnavailable,
+			*snapshot.AppliedGenerationID,
+		)
+	}
+	var manifest compiler.NativeManifest
+	if err := json.Unmarshal(artifacts.ManifestJSON, &manifest); err != nil {
+		return storage.DeclarationRevision{}, fmt.Errorf(
+			"%w: decode applied generation %d manifest: %v",
+			ErrCurrentSelectionUnavailable,
+			*snapshot.AppliedGenerationID,
+			err,
+		)
+	}
+	if manifest.DeclarationRevision == 0 || manifest.DeclarationSHA256 == "" {
+		return storage.DeclarationRevision{}, fmt.Errorf(
+			"%w: applied generation %d has no declaration binding",
+			ErrCurrentSelectionUnavailable,
+			*snapshot.AppliedGenerationID,
+		)
+	}
+	stored, err := c.store.Declaration(ctx, manifest.DeclarationRevision)
+	if err != nil {
+		return storage.DeclarationRevision{}, fmt.Errorf(
+			"%w: load applied declaration revision %d: %v",
+			ErrCurrentSelectionUnavailable,
+			manifest.DeclarationRevision,
+			err,
+		)
+	}
+	if stored.SHA256 != manifest.DeclarationSHA256 {
+		return storage.DeclarationRevision{}, fmt.Errorf(
+			"%w: applied declaration revision %d hash mismatch",
+			ErrCurrentSelectionUnavailable,
+			manifest.DeclarationRevision,
+		)
+	}
+	if len(stored.DocumentJSON) == 0 {
+		return storage.DeclarationRevision{}, fmt.Errorf(
+			"%w: applied declaration revision %d is empty",
+			ErrCurrentSelectionUnavailable,
+			stored.Revision,
+		)
+	}
+	return stored, nil
 }
 
 func decodeSelectionTarget(content []byte) (domain.TargetRef, error) {
