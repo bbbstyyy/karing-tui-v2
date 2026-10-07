@@ -4,7 +4,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -135,12 +134,16 @@ func linuxFDCount(t *testing.T) int {
 }
 
 func TestDaemonHTTPServerHasBoundedConnectionTimeouts(t *testing.T) {
-	server := &http.Server{
-		ReadHeaderTimeout: 2 * time.Second,
-		IdleTimeout:       30 * time.Second,
+	server := newDaemonHTTPServer(http.NewServeMux())
+	if server.ReadHeaderTimeout != 2*time.Second ||
+		server.ReadTimeout != 65*time.Second ||
+		server.WriteTimeout != 90*time.Second ||
+		server.IdleTimeout != 30*time.Second {
+		t.Fatalf("unexpected daemon connection timeouts: header=%s read=%s write=%s idle=%s",
+			server.ReadHeaderTimeout,
+			server.ReadTimeout,
+			server.WriteTimeout,
+			server.IdleTimeout,
+		)
 	}
-	if server.ReadHeaderTimeout <= 0 || server.IdleTimeout <= 0 {
-		t.Fatalf("connection timeouts are not bounded: %+v", server)
-	}
-	_ = fmt.Sprintf("%s", server.IdleTimeout)
 }
