@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/profile"
 )
@@ -46,6 +48,28 @@ func TestReadFileSourceRejectsFinalSymlink(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), link) {
 		t.Fatalf("file error leaked source path: %q", err.Error())
+	}
+}
+
+func TestReadFileSourceRejectsFIFOWithoutBlocking(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "subscription.pipe")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReadFileSource(context.Background(), testFileSource(path), 1024)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrUnsafeSourceFile) {
+			t.Fatalf("FIFO error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIFO source blocked before regular-file validation")
 	}
 }
 
