@@ -25,13 +25,10 @@ func TestRefreshProfileSourceHTTPCommitThenNotModified(t *testing.T) {
 	store, _ := newProfileUpdateStore(t, ctx)
 	defer store.Close()
 
-	var mu sync.Mutex
-	requests := 0
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		requests++
-		if requests == 1 {
+		request := requests.Add(1)
+		if request == 1 {
 			w.Header().Set("ETag", "\"v1\"")
 			w.Header().Set("Last-Modified", "Wed, 07 Oct 2026 16:00:00 GMT")
 			_, _ = w.Write([]byte(validHTTPProfile(8080)))
