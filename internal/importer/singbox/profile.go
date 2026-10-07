@@ -30,10 +30,10 @@ type Diagnostic struct {
 }
 
 type BasicNode struct {
-	Source profile.SourceNode
-	Kind   domain.NodeKind
-	Server string
-	Port   uint16
+	Source      profile.SourceNode
+	Kind        domain.NodeKind
+	Server      string
+	Port        uint16
 	SOCKS       *domain.SOCKSNodeOptions
 	HTTP        *domain.HTTPNodeOptions
 	Shadowsocks *domain.ShadowsocksNodeOptions
