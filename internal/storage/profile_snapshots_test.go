@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -20,8 +21,8 @@ func TestProfileSnapshotsPreserveIdentityAndBoundHistory(t *testing.T) {
 		SourceRevision: "etag-1",
 		SourceSHA256:   strings.Repeat("a", 64),
 		Nodes: []profile.SourceNode{
-			{SourceKey: "tag-a", SourceName: "Alpha"},
-			{SourceKey: "tag-b", SourceName: "Same Name"},
+			testProfileSourceNode("tag-a", "Alpha", 8080),
+			testProfileSourceNode("tag-b", "Same Name", 8081),
 		},
 	}, ProfileSnapshotCommitOptions{})
 	if err != nil {
@@ -38,8 +39,8 @@ func TestProfileSnapshotsPreserveIdentityAndBoundHistory(t *testing.T) {
 		SourceRevision: "etag-2",
 		SourceSHA256:   strings.Repeat("b", 64),
 		Nodes: []profile.SourceNode{
-			{SourceKey: "tag-a", SourceName: "Alpha Renamed"},
-			{SourceKey: "tag-c", SourceName: "Same Name"},
+			testProfileSourceNode("tag-a", "Alpha Renamed", 9080),
+			testProfileSourceNode("tag-c", "Same Name", 9081),
 		},
 	}, ProfileSnapshotCommitOptions{})
 	if err != nil {
@@ -72,6 +73,9 @@ func TestProfileSnapshotsPreserveIdentityAndBoundHistory(t *testing.T) {
 	if !ok || previous.ID != first.Snapshot.ID {
 		t.Fatalf("previous snapshot = %+v ok=%v, want first %d", previous, ok, first.Snapshot.ID)
 	}
+	if len(previous.Nodes) != 2 || !strings.Contains(string(previous.Nodes[0].PayloadJSON), `"server_port":8080`) {
+		t.Fatalf("previous snapshot payload changed: %+v", previous.Nodes)
+	}
 
 	third, err := store.CommitProfileSnapshot(ctx, ProfileSnapshotCandidate{
 		ProfileID:      "profile-a",
@@ -79,8 +83,8 @@ func TestProfileSnapshotsPreserveIdentityAndBoundHistory(t *testing.T) {
 		SourceRevision: "etag-3",
 		SourceSHA256:   strings.Repeat("c", 64),
 		Nodes: []profile.SourceNode{
-			{SourceKey: "tag-a", SourceName: "Alpha Renamed"},
-			{SourceKey: "tag-c", SourceName: "Same Name"},
+			testProfileSourceNode("tag-a", "Alpha Renamed", 10080),
+			testProfileSourceNode("tag-c", "Same Name", 10081),
 		},
 	}, ProfileSnapshotCommitOptions{})
 	if err != nil {
@@ -122,7 +126,7 @@ func TestProfileSnapshotRejectsEmptyWithoutReplacingCurrent(t *testing.T) {
 		ProfileID:    "profile-a",
 		SourceKind:   "sing-box",
 		SourceSHA256: strings.Repeat("a", 64),
-		Nodes:        []profile.SourceNode{{SourceKey: "tag-a", SourceName: "Alpha"}},
+		Nodes:        []profile.SourceNode{testProfileSourceNode("tag-a", "Alpha", 8080)},
 	}, ProfileSnapshotCommitOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +172,7 @@ func TestProfileSnapshotInvalidReconciliationIsAtomic(t *testing.T) {
 		ProfileID:    "profile-a",
 		SourceKind:   "sing-box",
 		SourceSHA256: strings.Repeat("a", 64),
-		Nodes:        []profile.SourceNode{{SourceKey: "tag-a", SourceName: "Alpha"}},
+		Nodes:        []profile.SourceNode{testProfileSourceNode("tag-a", "Alpha", 8080)},
 	}, ProfileSnapshotCommitOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -179,8 +183,8 @@ func TestProfileSnapshotInvalidReconciliationIsAtomic(t *testing.T) {
 		SourceKind:   "sing-box",
 		SourceSHA256: strings.Repeat("b", 64),
 		Nodes: []profile.SourceNode{
-			{SourceKey: "duplicate", SourceName: "One"},
-			{SourceKey: "duplicate", SourceName: "Two"},
+			testProfileSourceNode("duplicate", "One", 8081),
+			testProfileSourceNode("duplicate", "Two", 8082),
 		},
 	}, ProfileSnapshotCommitOptions{})
 	if !errors.Is(err, ErrInvalidProfileSnapshot) {
@@ -202,7 +206,7 @@ func TestProfileSnapshotInvalidReconciliationIsAtomic(t *testing.T) {
 	}
 }
 
-func TestProfileSnapshotSurvivesStoreReopen(t *testing.T) {
+func TestProfileSnapshotSurvivesStoreReopenAndVerifiesPayloadHash(t *testing.T) {
 	ctx := context.Background()
 	store, path := newTestStore(t, ctx)
 
@@ -211,11 +215,13 @@ func TestProfileSnapshotSurvivesStoreReopen(t *testing.T) {
 		SourceKind:     "sing-box",
 		SourceRevision: "v1",
 		SourceSHA256:   strings.Repeat("d", 64),
-		Nodes:          []profile.SourceNode{{SourceKey: "tag-a", SourceName: "Alpha"}},
+		Nodes:          []profile.SourceNode{testProfileSourceNode("tag-a", "Alpha", 8080)},
 	}, ProfileSnapshotCommitOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalHash := committed.Snapshot.Nodes[0].PayloadSHA256
+	committed.Snapshot.Nodes[0].PayloadJSON[0] = 'x'
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -233,12 +239,14 @@ func TestProfileSnapshotSurvivesStoreReopen(t *testing.T) {
 		current.SourceRevision != "v1" ||
 		current.SourceSHA256 != strings.Repeat("d", 64) ||
 		len(current.Nodes) != 1 ||
-		current.Nodes[0].SourceKey != "tag-a" {
+		current.Nodes[0].Identity.SourceKey != "tag-a" ||
+		current.Nodes[0].PayloadSHA256 != originalHash ||
+		!strings.Contains(string(current.Nodes[0].PayloadJSON), `"server_port":8080`) {
 		t.Fatalf("reopened profile snapshot = %+v ok=%v", current, ok)
 	}
 }
 
-func TestProfileSnapshotValidatesSourceMetadataBeforeTransaction(t *testing.T) {
+func TestProfileSnapshotValidatesSourceMetadataAndPayloadBeforeTransaction(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
 	defer store.Close()
@@ -247,7 +255,7 @@ func TestProfileSnapshotValidatesSourceMetadataBeforeTransaction(t *testing.T) {
 		ProfileID:    "profile-a",
 		SourceKind:   " sing-box ",
 		SourceSHA256: strings.Repeat("a", 64),
-		Nodes:        []profile.SourceNode{{SourceKey: "tag-a", SourceName: "Alpha"}},
+		Nodes:        []profile.SourceNode{testProfileSourceNode("tag-a", "Alpha", 8080)},
 	}, ProfileSnapshotCommitOptions{})
 	if !errors.Is(err, ErrInvalidProfileSnapshot) {
 		t.Fatalf("source-kind validation error = %v", err)
@@ -256,17 +264,39 @@ func TestProfileSnapshotValidatesSourceMetadataBeforeTransaction(t *testing.T) {
 		ProfileID:    "profile-a",
 		SourceKind:   "sing-box",
 		SourceSHA256: "not-a-hash",
-		Nodes:        []profile.SourceNode{{SourceKey: "tag-a", SourceName: "Alpha"}},
+		Nodes:        []profile.SourceNode{testProfileSourceNode("tag-a", "Alpha", 8080)},
 	}, ProfileSnapshotCommitOptions{})
 	if !errors.Is(err, ErrInvalidProfileSnapshot) {
 		t.Fatalf("source hash validation error = %v", err)
 	}
+	_, err = store.CommitProfileSnapshot(ctx, ProfileSnapshotCandidate{
+		ProfileID:    "profile-a",
+		SourceKind:   "sing-box",
+		SourceSHA256: strings.Repeat("a", 64),
+		Nodes: []profile.SourceNode{{
+			SourceKey: "tag-a", SourceName: "Alpha", PayloadJSON: []byte("{"),
+		}},
+	}, ProfileSnapshotCommitOptions{})
+	if !errors.Is(err, ErrInvalidProfileSnapshot) {
+		t.Fatalf("invalid payload error = %v", err)
+	}
 }
 
-func identitiesBySourceKey(nodes []profile.NodeIdentity) map[string]profile.NodeIdentity {
+func identitiesBySourceKey(nodes []ProfileSnapshotNode) map[string]profile.NodeIdentity {
 	result := make(map[string]profile.NodeIdentity, len(nodes))
 	for _, node := range nodes {
-		result[node.SourceKey] = node
+		result[node.Identity.SourceKey] = node.Identity
 	}
 	return result
+}
+
+func testProfileSourceNode(key, name string, port int) profile.SourceNode {
+	return profile.SourceNode{
+		SourceKey:  key,
+		SourceName: name,
+		PayloadJSON: []byte(
+			`{"type":"http","tag":"` + key + `","server":"127.0.0.1","server_port":` +
+				fmt.Sprint(port) + `}`,
+		),
+	}
 }
