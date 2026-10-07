@@ -159,6 +159,10 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	}
 	selection, _ := NewCurrentSelectionCoordinator(store, selectionCore)
 	routeExplain, _ := NewRouteExplainCoordinator(store)
+	var observedConnections *ObservedConnectionsCoordinator
+	if runtime != nil && runtime.ConnectionsReady() {
+		observedConnections, _ = NewObservedConnectionsCoordinator(store, runtime, routeExplain)
+	}
 	mux.HandleFunc("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := store.Snapshot(r.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "state database unavailable"})
@@ -307,6 +311,20 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"tui":                         false,
 			},
 		})
+	})
+	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
+		if observedConnections == nil {
+			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "connection observation is not configured"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		response, err := observedConnections.List(ctx)
+		if err != nil {
+			writeObservedConnectionsError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
 	})
 	mux.HandleFunc("POST /v1/route/explain", func(w http.ResponseWriter, r *http.Request) {
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
@@ -573,6 +591,20 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		runCoreOperation(w, r, runtime, "stop")
 	})
 	return mux
+}
+
+func writeObservedConnectionsError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, ErrConnectionObservationUnavailable):
+		status = http.StatusConflict
+	case errors.Is(err, ErrConnectionObservationBusy),
+		errors.Is(err, ErrConnectionGenerationChanged):
+		status = http.StatusConflict
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusGatewayTimeout
+	}
+	writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
 }
 
 func writeRouteExplainError(w http.ResponseWriter, err error) {

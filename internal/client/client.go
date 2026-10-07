@@ -56,6 +56,14 @@ func (c *Client) CoreStop(ctx context.Context) error {
 	return c.post(ctx, "/v1/core/stop")
 }
 
+func (c *Client) ObservedConnections(ctx context.Context) (apiv1.ObservedConnectionsResponse, error) {
+	var response apiv1.ObservedConnectionsResponse
+	if err := c.get(ctx, "/v1/connections", &response); err != nil {
+		return apiv1.ObservedConnectionsResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) RouteExplain(
 	ctx context.Context,
 	request apiv1.RouteExplainRequest,

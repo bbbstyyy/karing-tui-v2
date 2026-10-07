@@ -13,6 +13,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/core"
+	"github.com/bbbstyyy/karing-tui-v2/internal/coreapi"
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
@@ -182,6 +183,26 @@ func (r *serverRuntime) Snapshot() core.Snapshot {
 		return core.Snapshot{}
 	}
 	return r.core.Snapshot()
+}
+
+func (r *serverRuntime) ConnectionsReady() bool {
+	if r == nil || r.core == nil {
+		return false
+	}
+	_, ok := r.core.(interface {
+		Connections(context.Context) (coreapi.ConnectionsSnapshot, error)
+	})
+	return ok
+}
+
+func (r *serverRuntime) Connections(ctx context.Context) (coreapi.ConnectionsSnapshot, error) {
+	if !r.ConnectionsReady() {
+		return coreapi.ConnectionsSnapshot{}, errors.New("core connections control is not configured")
+	}
+	controller := r.core.(interface {
+		Connections(context.Context) (coreapi.ConnectionsSnapshot, error)
+	})
+	return controller.Connections(ctx)
 }
 
 func (r *serverRuntime) CurrentSelectionReady() bool {

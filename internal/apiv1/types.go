@@ -169,3 +169,46 @@ type RouteExplainResponse struct {
 	UnknownConditions   []string            `json:"unknown_conditions,omitempty"`
 	Trace               []RouteExplainStep  `json:"trace"`
 }
+
+
+type ObservedConnectionsResponse struct {
+	APIVersion     string                       `json:"api_version"`
+	Evidence       string                       `json:"evidence"`
+	ConfigRevision uint64                       `json:"config_revision"`
+	GenerationID   int64                        `json:"generation_id"`
+	DownloadTotal  int64                        `json:"download_total"`
+	UploadTotal    int64                        `json:"upload_total"`
+	Connections    []ObservedConnectionResponse `json:"connections"`
+}
+
+type ObservedConnectionResponse struct {
+	ID                      string              `json:"id"`
+	Evidence                string              `json:"evidence"`
+	Start                   string              `json:"start"`
+	Network                 string              `json:"network"`
+	Inbound                 string              `json:"inbound"`
+	SourceIP                string              `json:"source_ip,omitempty"`
+	SourcePort              string              `json:"source_port,omitempty"`
+	DestinationIP           string              `json:"destination_ip,omitempty"`
+	DestinationPort         string              `json:"destination_port,omitempty"`
+	Host                    string              `json:"host,omitempty"`
+	ProcessPath             string              `json:"process_path,omitempty"`
+	PackageName             string              `json:"package_name,omitempty"`
+	User                    string              `json:"user,omitempty"`
+	Protocol                string              `json:"protocol,omitempty"`
+	Upload                  int64               `json:"upload"`
+	Download                int64               `json:"download"`
+	Chains                  []string            `json:"chains,omitempty"`
+	Rule                    string              `json:"rule,omitempty"`
+	RulePayload             string              `json:"rule_payload,omitempty"`
+	SourceEvidence          string              `json:"source_evidence"`
+	SourceDecision          string              `json:"source_decision,omitempty"`
+	SourceRuleIndex         *int                `json:"source_rule_index,omitempty"`
+	Source                  string              `json:"source,omitempty"`
+	SourceLayer             domain.RoutingLayer `json:"source_layer,omitempty"`
+	SourceGroupID           string              `json:"source_group_id,omitempty"`
+	SourceFinal             bool                `json:"source_final,omitempty"`
+	SourceTarget            *domain.TargetRef   `json:"source_target,omitempty"`
+	SourceDNSProfileID      string              `json:"source_dns_profile_id,omitempty"`
+	SourceUnknownConditions []string            `json:"source_unknown_conditions,omitempty"`
+}
