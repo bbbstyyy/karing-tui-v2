@@ -384,8 +384,7 @@ func evaluateRouteRuleFields(rule compiler.RouteRule, input routeExplainInput) r
 			matched := false
 			for _, candidate := range rule.DomainSuffix {
 				suffix := strings.ToLower(strings.TrimSuffix(candidate, "."))
-				if input.domain == suffix || strings.HasSuffix(input.domain, "."+strings.TrimPrefix(suffix, ".")) ||
-					strings.HasSuffix(input.domain, suffix) {
+				if input.domain == suffix || strings.HasSuffix(input.domain, "."+strings.TrimPrefix(suffix, ".")) {
 					matched = true
 					break
 				}
