@@ -58,14 +58,14 @@ func parseRuleSetResources(items []ruleSetResourceV1) ([]RuleSetResource, error)
 }
 
 type nodeV1 struct {
-	ProfileID string          `json:"profile_id"`
-	NodeID    string          `json:"node_id"`
-	Type      domain.NodeKind `json:"type"`
-	Server    string          `json:"server"`
-	Port      uint16          `json:"port"`
-	SOCKS       *socksV1       `json:"socks,omitempty"`
-	HTTP        *httpV1        `json:"http,omitempty"`
-	Shadowsocks *shadowsocksV1 `json:"shadowsocks,omitempty"`
+	ProfileID   string          `json:"profile_id"`
+	NodeID      string          `json:"node_id"`
+	Type        domain.NodeKind `json:"type"`
+	Server      string          `json:"server"`
+	Port        uint16          `json:"port"`
+	SOCKS       *socksV1        `json:"socks,omitempty"`
+	HTTP        *httpV1         `json:"http,omitempty"`
+	Shadowsocks *shadowsocksV1  `json:"shadowsocks,omitempty"`
 }
 
 type socksV1 struct {
