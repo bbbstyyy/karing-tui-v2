@@ -125,8 +125,13 @@ func (c *ModeClient) Current(ctx context.Context) (ModeSnapshot, error) {
 }
 
 func (c *ModeClient) Set(ctx context.Context, mode string) error {
-	if mode != "Rule" && mode != "Global" && mode != "Direct" {
-		return fmt.Errorf("unsupported core mode %q", mode)
+	if mode == "" || len(mode) > 64 || strings.TrimSpace(mode) != mode {
+		return fmt.Errorf("invalid core mode %q", mode)
+	}
+	for _, r := range mode {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid core mode %q", mode)
+		}
 	}
 	current, err := c.Current(ctx)
 	if err != nil {

@@ -62,6 +62,7 @@ type Snapshot struct {
 	RecoveryRequired          bool
 	CoreDesiredState          CoreDesiredState
 	RoutingMode               RoutingMode
+	PrivateDirect             bool
 	ActiveAttemptID           *int64
 }
 
@@ -151,12 +152,13 @@ func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 		recoveryRequired int
 		coreDesired      string
 		routingMode      string
+		privateDirect    int
 	)
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT config_revision, applied_generation_id, last_known_good_generation_id, recovery_required, core_desired_state, routing_mode
+		SELECT config_revision, applied_generation_id, last_known_good_generation_id, recovery_required, core_desired_state, routing_mode, private_direct
 		FROM daemon_state
 		WHERE singleton = 1
-	`).Scan(&revision, &applied, &lastKnownGood, &recoveryRequired, &coreDesired, &routingMode); err != nil {
+	`).Scan(&revision, &applied, &lastKnownGood, &recoveryRequired, &coreDesired, &routingMode, &privateDirect); err != nil {
 		return Snapshot{}, fmt.Errorf("read daemon state: %w", err)
 	}
 
@@ -181,6 +183,7 @@ func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 		RecoveryRequired:          recoveryRequired != 0,
 		CoreDesiredState:          CoreDesiredState(coreDesired),
 		RoutingMode:               mode,
+		PrivateDirect:             privateDirect != 0,
 		ActiveAttemptID:           nullInt64Ptr(active),
 	}, nil
 }
@@ -796,7 +799,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -979,6 +982,19 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(7, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 7: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 8 {
+		if _, err := tx.ExecContext(ctx, `
+			ALTER TABLE daemon_state
+			ADD COLUMN private_direct INTEGER NOT NULL DEFAULT 0
+			CHECK(private_direct IN (0, 1))
+		`); err != nil {
+			return fmt.Errorf("apply sqlite migration 8: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(8, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 8: %w", err)
 		}
 	}
 

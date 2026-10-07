@@ -37,6 +37,7 @@ type RouteRule struct {
 	DomainKeyword []string    `json:"domain_keyword,omitempty"`
 	DomainRegex   []string    `json:"domain_regex,omitempty"`
 	IPCIDR        []string    `json:"ip_cidr,omitempty"`
+	IPIsPrivate   bool        `json:"ip_is_private,omitempty"`
 	RuleSet       []string    `json:"rule_set,omitempty"`
 	Port          []uint16    `json:"port,omitempty"`
 	PortRange     []string    `json:"port_range,omitempty"`
@@ -115,11 +116,25 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 	if err != nil {
 		return CompiledRouting{}, err
 	}
+	privateAction, privateOutbound, err := lowerTarget(domain.TargetRef{Kind: domain.TargetDirect}, resolver)
+	if err != nil {
+		return CompiledRouting{}, fmt.Errorf("resolve private-direct target: %w", err)
+	}
+	result.Rules = append(result.Rules, RouteRule{
+		Inbound:     []string{ruleInbound},
+		ClashMode:   "Global",
+		IPIsPrivate: true,
+		Action:      privateAction,
+		Outbound:    privateOutbound,
+	})
+	recordOutbound(&result, outboundSeen, privateOutbound)
+
 	for _, mode := range []struct {
 		name   string
 		target domain.TargetRef
 	}{
 		{name: "Global", target: domain.TargetRef{Kind: domain.TargetCurrentSelected}},
+		{name: "GlobalNoPrivate", target: domain.TargetRef{Kind: domain.TargetCurrentSelected}},
 		{name: "Direct", target: domain.TargetRef{Kind: domain.TargetDirect}},
 	} {
 		action, outbound, err := lowerTarget(mode.target, resolver)
@@ -147,6 +162,13 @@ func CompileRouting(plan domain.RoutingPlan, resolver TargetResolver) (CompiledR
 			}
 			rule = scopeToInbound(rule, ruleInbound)
 		} else {
+			result.Rules = append(result.Rules, RouteRule{
+				Inbound:     []string{ruleInbound},
+				ClashMode:   "Rule",
+				IPIsPrivate: true,
+				Action:      privateAction,
+				Outbound:    privateOutbound,
+			})
 			rule.Inbound = []string{ruleInbound}
 		}
 
