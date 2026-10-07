@@ -33,6 +33,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runStatus(args[1:], stdout, stderr)
 	case "capabilities":
 		return runCapabilities(args[1:], stdout, stderr)
+	case "storage":
+		return runStorage(args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "karing-tui-v2 %s (%s, %s)\n", version.Version, version.Commit, version.Date)
 		return 0
@@ -160,6 +162,34 @@ func runCapabilities(args []string, stdout, stderr io.Writer) int {
 	return printJSON(stdout, stderr, caps)
 }
 
+func runStorage(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 || (args[0] != "retention" && args[0] != "prune") {
+		fmt.Fprintln(stderr, "usage: karing-tui storage <retention|prune>")
+		return 2
+	}
+	paths, err := runtimepath.Resolve()
+	if err != nil {
+		fmt.Fprintf(stderr, "runtime paths: %v\n", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	api := client.New(paths.Socket)
+	var report any
+	switch args[0] {
+	case "retention":
+		report, err = api.StorageRetention(ctx)
+	case "prune":
+		report, err = api.StoragePrune(ctx)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "storage %s failed: %v\n", args[0], err)
+		return 1
+	}
+	return printJSON(stdout, stderr, report)
+}
+
 func printJSON(stdout, stderr io.Writer, value any) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
@@ -185,8 +215,10 @@ Usage:
   karing-tui core start       start the confirmed applied core generation
   karing-tui core stop        stop the managed core and persist stop intent
   karing-tui status [--json]  query daemon status over the Unix socket
-  karing-tui capabilities     show implemented capability flags
-  karing-tui version          show build version
+  karing-tui capabilities      show implemented capability flags
+  karing-tui storage retention show generation retention policy and usage
+  karing-tui storage prune     compact audit and prune old generations
+  karing-tui version           show build version
 
 The daemon intentionally requires XDG_RUNTIME_DIR (or the explicit
 KARING_TUI_RUNTIME_DIR override) and never creates a shared /tmp socket.`)

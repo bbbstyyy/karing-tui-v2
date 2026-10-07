@@ -54,6 +54,34 @@ func (c *Client) CoreStop(ctx context.Context) error {
 	return c.post(ctx, "/v1/core/stop")
 }
 
+func (c *Client) StorageRetention(ctx context.Context) (apiv1.StorageRetentionResponse, error) {
+	var response apiv1.StorageRetentionResponse
+	if err := c.get(ctx, "/v1/storage/retention", &response); err != nil {
+		return apiv1.StorageRetentionResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) StoragePrune(ctx context.Context) (apiv1.StorageRetentionResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/storage/prune", nil)
+	if err != nil {
+		return apiv1.StorageRetentionResponse{}, err
+	}
+	resp, err := c.controlClient.Do(req)
+	if err != nil {
+		return apiv1.StorageRetentionResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return apiv1.StorageRetentionResponse{}, responseError(resp)
+	}
+	var response apiv1.StorageRetentionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return apiv1.StorageRetentionResponse{}, fmt.Errorf("decode daemon response: %w", err)
+	}
+	return response, nil
+}
+
 func (c *Client) get(ctx context.Context, path string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
 	if err != nil {
