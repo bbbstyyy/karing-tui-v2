@@ -103,7 +103,10 @@ Implemented profile foundation:
 - immutable current/previous source snapshots;
 - exact accepted node payload SHA-256;
 - default refusal of empty source updates;
-- failed/unsupported imports do not advance current snapshot.
+- failed/unsupported imports do not advance current snapshot;
+- exact retained snapshot ID can be materialized into a declaration-v1 candidate;
+- profile node replacement reports added/removed/retained NodeIDs and fails closed when a removed node is still referenced;
+- successful snapshot-to-declaration updates use declaration revision CAS and record `profile-snapshot/<id>` provenance.
 
 Not yet implemented:
 
@@ -112,5 +115,5 @@ Not yet implemented:
 - traffic quota/expiry metadata;
 - source enable/disable/filter overlays;
 - provider materialization;
-- automatic declaration revision generation from an accepted profile snapshot;
+- automatic scheduled declaration/apply policy after a profile refresh;
 - timed update/backoff/debounce.
