@@ -21,6 +21,7 @@ type StatusResponse struct {
 	LastKnownGoodGenerationID *int64 `json:"last_known_good_generation_id,omitempty"`
 	RecoveryRequired          bool   `json:"recovery_required"`
 	CoreDesiredState          string `json:"core_desired_state"`
+	RoutingMode               string `json:"routing_mode"`
 	CoreConfigured            bool   `json:"core_configured"`
 	CoreState                 string `json:"core_state"`
 	CorePID                   int    `json:"core_pid,omitempty"`
