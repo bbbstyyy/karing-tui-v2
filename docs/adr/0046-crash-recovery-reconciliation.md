@@ -71,3 +71,13 @@ The exec-runner test also creates a real managed child through an intermediate
 parent process, kills the parent, and verifies the child no longer remains
 running. Managed-core unit tests cover both persisted running and stopped
 recovery intents and refuse a running reconcile without an applied generation.
+
+A combined recovery fixture now verifies that a running reconcile restores one
+coherent confirmed state: the exact applied generation/config hash is staged
+and bound, the content-addressed rule-set resource from that generation's
+manifest is re-verified, CurrentSelected is resolved through that generation's
+declaration provenance, and the persisted routing mode/privateDirect policy is
+restored before readiness succeeds. This complements the real SIGKILL journal
+fixtures: phase classification is exercised by abrupt process death, while the
+managed-core fixture proves the post-crash reconciliation does not mix config,
+rule resources, selection provenance, or routing policy from different states.
