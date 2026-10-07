@@ -46,7 +46,7 @@ func TestSelectorClientUpdatesAndReadsBack(t *testing.T) {
 			mu.Lock()
 			now := current
 			mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"name": "out-current",
 				"now":  now,

@@ -94,8 +94,9 @@ func (c *SelectorClient) Current(ctx context.Context, selectorTag string) (Selec
 	if response.StatusCode != http.StatusOK {
 		return SelectorSnapshot{}, fmt.Errorf("selector %q returned HTTP %d", selectorTag, response.StatusCode)
 	}
-	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(strings.ToLower(contentType), "application/json") {
-		return SelectorSnapshot{}, fmt.Errorf("selector %q returned unexpected content type %q", selectorTag, contentType)
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(response.Header.Get("Content-Type"), ";")[0]))
+	if contentType != "application/json" && contentType != "text/plain" {
+		return SelectorSnapshot{}, fmt.Errorf("selector %q returned unexpected content type %q", selectorTag, response.Header.Get("Content-Type"))
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxSelectorResponseBytes+1))
 	if err != nil {
