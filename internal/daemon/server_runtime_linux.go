@@ -16,6 +16,7 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreapi"
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
+	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
@@ -39,6 +40,7 @@ type managedCoreRuntime interface {
 
 type serverRuntime struct {
 	core         daemonCoreRuntime
+	inbounds     domain.InboundSet
 	lifecycle    *LifecycleCoordinator
 	recovery     *RecoveryCoordinator
 	apply        *ApplyCoordinator
@@ -82,7 +84,12 @@ func buildServerRuntime(ctx context.Context, store *storage.Store, paths runtime
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("compose declaration compile coordinator: %w", err)
 	}
-	return startServerRuntimeWithDeclarations(ctx, store, managed, declarations)
+	runtime, errCh, cancel, err := startServerRuntimeWithDeclarations(ctx, store, managed, declarations)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	runtime.inbounds = options.Inbounds
+	return runtime, errCh, cancel, nil
 }
 
 func startServerRuntime(ctx context.Context, store *storage.Store, managed managedCoreRuntime) (*serverRuntime, <-chan error, context.CancelFunc, error) {
@@ -183,6 +190,17 @@ func (r *serverRuntime) Snapshot() core.Snapshot {
 		return core.Snapshot{}
 	}
 	return r.core.Snapshot()
+}
+
+func (r *serverRuntime) SelectedInbound() (netip.AddrPort, bool) {
+	if r == nil {
+		return netip.AddrPort{}, false
+	}
+	address, err := r.inbounds.Address(domain.InboundSelected)
+	if err != nil {
+		return netip.AddrPort{}, false
+	}
+	return address, true
 }
 
 func (r *serverRuntime) ConnectionsReady() bool {
