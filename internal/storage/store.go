@@ -799,7 +799,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 10
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1036,6 +1036,45 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(9, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 9: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 10 {
+		statements := []string{
+			`CREATE TABLE profile_sources (
+				profile_id TEXT PRIMARY KEY,
+				revision INTEGER NOT NULL CHECK(revision > 0),
+				source_format TEXT NOT NULL,
+				location_kind TEXT NOT NULL,
+				location TEXT NOT NULL,
+				user_agent TEXT NOT NULL DEFAULT '',
+				fetch_mode TEXT NOT NULL,
+				fetch_profile_id TEXT NOT NULL DEFAULT '',
+				fetch_node_id TEXT NOT NULL DEFAULT '',
+				enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				last_attempt_at TEXT,
+				last_success_at TEXT,
+				last_error TEXT NOT NULL DEFAULT '',
+				last_source_revision TEXT NOT NULL DEFAULT '',
+				consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),
+				retry_after_at TEXT,
+				active_update_id TEXT,
+				active_update_started_at TEXT,
+				CHECK((active_update_id IS NULL) = (active_update_started_at IS NULL))
+			)`,
+			`CREATE UNIQUE INDEX profile_sources_active_update
+				ON profile_sources(active_update_id)
+				WHERE active_update_id IS NOT NULL`,
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply sqlite migration 10: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(10, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 10: %w", err)
 		}
 	}
 
