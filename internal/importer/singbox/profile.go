@@ -276,13 +276,13 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 		return BasicNode{}, fmt.Errorf("unsupported SOCKS fields: %s", strings.Join(extras, ", "))
 	}
 	var wire struct {
-		Type     string `json:"type"`
-		Tag      string `json:"tag"`
-		Server   string `json:"server"`
-		Port     uint16 `json:"server_port"`
-		Version  string `json:"version"`
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Type     string          `json:"type"`
+		Tag      string          `json:"tag"`
+		Server   string          `json:"server"`
+		Port     uint16          `json:"server_port"`
+		Version  string          `json:"version"`
+		Username string          `json:"username"`
+		Password string          `json:"password"`
 		Network  networkListJSON `json:"network"`
 	}
 	if err := decodeStrictObject(raw, &wire); err != nil {
