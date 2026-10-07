@@ -20,8 +20,9 @@ var (
 )
 
 type SourceNode struct {
-	SourceKey  string
-	SourceName string
+	SourceKey   string
+	SourceName  string
+	PayloadJSON []byte
 }
 
 type NodeIdentity struct {
