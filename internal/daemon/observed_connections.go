@@ -19,6 +19,7 @@ var (
 	ErrConnectionObservationUnavailable = errors.New("connection observation is unavailable")
 	ErrConnectionObservationBusy        = errors.New("connection observation is unavailable during a core transition")
 	ErrConnectionGenerationChanged      = errors.New("applied generation changed during connection observation")
+	ErrConnectionRoutingModeChanged     = errors.New("routing mode changed during connection observation")
 )
 
 type observedConnectionsStore interface {
@@ -99,6 +100,24 @@ func (c *ObservedConnectionsCoordinator) List(
 		!sameGenerationID(before.AppliedGenerationID, after.AppliedGenerationID) {
 		return apiv1.ObservedConnectionsResponse{}, ErrConnectionGenerationChanged
 	}
+	if before.RoutingMode != after.RoutingMode {
+		return apiv1.ObservedConnectionsResponse{}, ErrConnectionRoutingModeChanged
+	}
+
+	sourceModeAligned := true
+	sourceModeReason := ""
+	if modeReader, ok := c.runtime.(interface {
+		CurrentRoutingMode(context.Context) (storage.RoutingMode, error)
+	}); ok {
+		liveMode, modeErr := modeReader.CurrentRoutingMode(ctx)
+		if modeErr != nil {
+			sourceModeAligned = false
+			sourceModeReason = "routing_mode_readback"
+		} else if liveMode != before.RoutingMode {
+			sourceModeAligned = false
+			sourceModeReason = "routing_mode_mismatch"
+		}
+	}
 
 	response := apiv1.ObservedConnectionsResponse{
 		APIVersion:     apiv1.Version,
@@ -132,7 +151,11 @@ func (c *ObservedConnectionsCoordinator) List(
 			RulePayload:     connection.RulePayload,
 			SourceEvidence:  "unknown",
 		}
-		c.attachSimulatedSource(ctx, before, connection, &item)
+		if sourceModeAligned {
+			c.attachSimulatedSource(ctx, before, connection, &item)
+		} else {
+			item.SourceUnknownConditions = []string{sourceModeReason}
+		}
 		response.Connections = append(response.Connections, item)
 	}
 	return response, nil
