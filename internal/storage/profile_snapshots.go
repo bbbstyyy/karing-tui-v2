@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +13,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/profile"
+)
+
+const (
+	MaxProfileNodePayloadBytes     = 1 << 20
+	MaxProfileSnapshotPayloadBytes = 64 << 20
 )
 
 var (
@@ -31,6 +38,12 @@ type ProfileSnapshotCommitOptions struct {
 	AllowEmpty bool
 }
 
+type ProfileSnapshotNode struct {
+	Identity      profile.NodeIdentity
+	PayloadJSON   []byte
+	PayloadSHA256 string
+}
+
 type ProfileSnapshot struct {
 	ID             int64
 	ProfileID      string
@@ -38,7 +51,7 @@ type ProfileSnapshot struct {
 	SourceRevision string
 	SourceSHA256   string
 	CreatedAt      time.Time
-	Nodes          []profile.NodeIdentity
+	Nodes          []ProfileSnapshotNode
 }
 
 type ProfileSnapshotCommit struct {
@@ -88,6 +101,11 @@ func (s *Store) CommitProfileSnapshot(
 		return ProfileSnapshotCommit{}, fmt.Errorf("%w: reconcile profile nodes: %v", ErrInvalidProfileSnapshot, err)
 	}
 
+	payloadByKey := make(map[string][]byte, len(candidate.Nodes))
+	for _, node := range candidate.Nodes {
+		payloadByKey[node.SourceKey] = node.PayloadJSON
+	}
+
 	now := time.Now().UTC()
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO profile_snapshots(
@@ -113,19 +131,33 @@ func (s *Store) CommitProfileSnapshot(
 		return ProfileSnapshotCommit{}, fmt.Errorf("read profile snapshot id: %w", err)
 	}
 
+	snapshotNodes := make([]ProfileSnapshotNode, 0, len(reconciled.Current))
 	for ordinal, node := range reconciled.Current {
+		payload, exists := payloadByKey[node.SourceKey]
+		if !exists {
+			return ProfileSnapshotCommit{}, fmt.Errorf("%w: reconciled node %q has no payload", ErrInvalidProfileSnapshot, node.SourceKey)
+		}
+		sum := sha256.Sum256(payload)
+		payloadHash := hex.EncodeToString(sum[:])
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO profile_snapshot_nodes(
 				snapshot_id,
 				ordinal,
 				node_id,
 				source_key,
-				source_name
+				source_name,
+				payload_json,
+				payload_sha256
 			)
-			VALUES(?, ?, ?, ?, ?)
-		`, snapshotID, ordinal, node.NodeID, node.SourceKey, node.SourceName); err != nil {
+			VALUES(?, ?, ?, ?, ?, ?, ?)
+		`, snapshotID, ordinal, node.NodeID, node.SourceKey, node.SourceName, payload, payloadHash); err != nil {
 			return ProfileSnapshotCommit{}, fmt.Errorf("insert profile snapshot node %d: %w", ordinal, err)
 		}
+		snapshotNodes = append(snapshotNodes, ProfileSnapshotNode{
+			Identity:      node,
+			PayloadJSON:   append([]byte(nil), payload...),
+			PayloadSHA256: payloadHash,
+		})
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -164,7 +196,7 @@ func (s *Store) CommitProfileSnapshot(
 			SourceRevision: candidate.SourceRevision,
 			SourceSHA256:   strings.ToLower(candidate.SourceSHA256),
 			CreatedAt:      now,
-			Nodes:          append([]profile.NodeIdentity(nil), reconciled.Current...),
+			Nodes:          snapshotNodes,
 		},
 		Added:   append([]profile.NodeIdentity(nil), reconciled.Added...),
 		Removed: append([]profile.NodeIdentity(nil), reconciled.Removed...),
@@ -254,7 +286,7 @@ func readProfileSnapshot(ctx context.Context, db queryRower, snapshotID int64, p
 	snapshot.CreatedAt = parsed
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT node_id, source_key, source_name
+		SELECT node_id, source_key, source_name, payload_json, payload_sha256
 		FROM profile_snapshot_nodes
 		WHERE snapshot_id = ?
 		ORDER BY ordinal
@@ -264,10 +296,23 @@ func readProfileSnapshot(ctx context.Context, db queryRower, snapshotID int64, p
 	}
 	defer rows.Close()
 	for rows.Next() {
-		node := profile.NodeIdentity{ProfileID: profileID}
-		if err := rows.Scan(&node.NodeID, &node.SourceKey, &node.SourceName); err != nil {
+		node := ProfileSnapshotNode{
+			Identity: profile.NodeIdentity{ProfileID: profileID},
+		}
+		if err := rows.Scan(
+			&node.Identity.NodeID,
+			&node.Identity.SourceKey,
+			&node.Identity.SourceName,
+			&node.PayloadJSON,
+			&node.PayloadSHA256,
+		); err != nil {
 			return ProfileSnapshot{}, fmt.Errorf("scan profile snapshot node: %w", err)
 		}
+		sum := sha256.Sum256(node.PayloadJSON)
+		if hex.EncodeToString(sum[:]) != node.PayloadSHA256 {
+			return ProfileSnapshot{}, fmt.Errorf("%w: node %q payload SHA-256 mismatch", ErrInvalidProfileSnapshot, node.Identity.SourceKey)
+		}
+		node.PayloadJSON = append([]byte(nil), node.PayloadJSON...)
 		snapshot.Nodes = append(snapshot.Nodes, node)
 	}
 	if err := rows.Err(); err != nil {
@@ -281,7 +326,11 @@ func readProfileSnapshotNodesTx(ctx context.Context, tx *sql.Tx, snapshotID int6
 	if err != nil {
 		return nil, err
 	}
-	return snapshot.Nodes, nil
+	result := make([]profile.NodeIdentity, 0, len(snapshot.Nodes))
+	for _, node := range snapshot.Nodes {
+		result = append(result, node.Identity)
+	}
+	return result, nil
 }
 
 func validateProfileSnapshotCandidate(candidate ProfileSnapshotCandidate) error {
@@ -297,6 +346,29 @@ func validateProfileSnapshotCandidate(candidate ProfileSnapshotCandidate) error 
 	decoded, err := hex.DecodeString(candidate.SourceSHA256)
 	if err != nil || len(decoded) != 32 {
 		return fmt.Errorf("%w: source SHA-256 must be 64 hexadecimal characters", ErrInvalidProfileSnapshot)
+	}
+	totalPayload := 0
+	for i, node := range candidate.Nodes {
+		if len(node.PayloadJSON) == 0 || !json.Valid(node.PayloadJSON) {
+			return fmt.Errorf("%w: node %d payload must be non-empty valid JSON", ErrInvalidProfileSnapshot, i)
+		}
+		if len(node.PayloadJSON) > MaxProfileNodePayloadBytes {
+			return fmt.Errorf(
+				"%w: node %d payload %d bytes exceeds %d bytes",
+				ErrInvalidProfileSnapshot,
+				i,
+				len(node.PayloadJSON),
+				MaxProfileNodePayloadBytes,
+			)
+		}
+		totalPayload += len(node.PayloadJSON)
+		if totalPayload > MaxProfileSnapshotPayloadBytes {
+			return fmt.Errorf(
+				"%w: profile node payload total exceeds %d bytes",
+				ErrInvalidProfileSnapshot,
+				MaxProfileSnapshotPayloadBytes,
+			)
+		}
 	}
 	return nil
 }
