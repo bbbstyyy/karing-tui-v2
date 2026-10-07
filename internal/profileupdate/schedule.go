@@ -53,6 +53,9 @@ func NextRefreshAt(
 	if schedulerStartedAt.IsZero() {
 		return time.Time{}, false, errors.New("profile scheduler start time is required")
 	}
+	if err := state.Spec.Validate(); err != nil {
+		return time.Time{}, false, err
+	}
 	if !state.Spec.Enabled || state.Spec.UpdateInterval == 0 || state.ActiveUpdateID != "" {
 		return time.Time{}, false, nil
 	}
