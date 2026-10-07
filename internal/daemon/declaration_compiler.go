@@ -1,13 +1,17 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"encoding/json"
 	"fmt"
+	"io"
 
 	corecompiler "github.com/bbbstyyy/karing-tui-v2/internal/compiler"
+	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
@@ -15,10 +19,12 @@ var ErrDeclarationIntegrity = errors.New("declaration revision integrity check f
 
 type declarationRevisionStore interface {
 	Declaration(context.Context, uint64) (storage.DeclarationRevision, error)
+	CurrentSelectionIntent(context.Context) (storage.SelectionIntent, bool, error)
 }
 
 type declarationCompilerEngine interface {
 	CompileDeclaration(context.Context, []byte) (corecompiler.NativeConfigArtifact, error)
+	CompileDeclarationWithCurrentSelection(context.Context, []byte, domain.TargetRef) (corecompiler.NativeConfigArtifact, error)
 }
 
 type DeclarationCompileCoordinator struct {
@@ -74,7 +80,25 @@ func (c *DeclarationCompileCoordinator) CompileRevision(
 	}
 
 	document := append([]byte(nil), stored.DocumentJSON...)
-	artifact, err := c.compiler.CompileDeclaration(ctx, document)
+	intent, hasIntent, err := c.store.CurrentSelectionIntent(ctx)
+	if err != nil {
+		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("read current selection intent: %w", err)
+	}
+	var artifact corecompiler.NativeConfigArtifact
+	if hasIntent {
+		var target domain.TargetRef
+		decoder := json.NewDecoder(bytes.NewReader(intent.TargetJSON))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&target); err != nil {
+			return corecompiler.NativeConfigArtifact{}, fmt.Errorf("decode current selection intent: %w", err)
+		}
+		if err := requireJSONEOF(decoder); err != nil {
+			return corecompiler.NativeConfigArtifact{}, fmt.Errorf("decode current selection intent: %w", err)
+		}
+		artifact, err = c.compiler.CompileDeclarationWithCurrentSelection(ctx, document, target)
+	} else {
+		artifact, err = c.compiler.CompileDeclaration(ctx, document)
+	}
 	if err != nil {
 		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("compile declaration revision %d: %w", revision, err)
 	}
@@ -83,4 +107,16 @@ func (c *DeclarationCompileCoordinator) CompileRevision(
 		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("bind declaration revision %d: %w", revision, err)
 	}
 	return bound, nil
+}
+
+
+func requireJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values are not allowed")
+		}
+		return err
+	}
+	return nil
 }

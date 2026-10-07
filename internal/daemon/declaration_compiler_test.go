@@ -8,13 +8,24 @@ import (
 	"testing"
 
 	corecompiler "github.com/bbbstyyy/karing-tui-v2/internal/compiler"
+	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
 type fakeDeclarationRevisionStore struct {
-	revision storage.DeclarationRevision
-	err      error
-	calls    int
+	revision       storage.DeclarationRevision
+	err            error
+	calls          int
+	selection      storage.SelectionIntent
+	hasSelection   bool
+	selectionError error
+}
+
+func (s *fakeDeclarationRevisionStore) CurrentSelectionIntent(context.Context) (storage.SelectionIntent, bool, error) {
+	if s.selectionError != nil {
+		return storage.SelectionIntent{}, false, s.selectionError
+	}
+	return s.selection, s.hasSelection, nil
 }
 
 func (s *fakeDeclarationRevisionStore) Declaration(_ context.Context, revision uint64) (storage.DeclarationRevision, error) {
@@ -28,10 +39,12 @@ func (s *fakeDeclarationRevisionStore) Declaration(_ context.Context, revision u
 }
 
 type fakeDeclarationCompilerEngine struct {
-	artifact corecompiler.NativeConfigArtifact
-	err      error
-	calls    int
-	document []byte
+	artifact      corecompiler.NativeConfigArtifact
+	err           error
+	calls         int
+	overrideCalls int
+	document      []byte
+	target        domain.TargetRef
 }
 
 func (e *fakeDeclarationCompilerEngine) CompileDeclaration(_ context.Context, document []byte) (corecompiler.NativeConfigArtifact, error) {
@@ -40,6 +53,20 @@ func (e *fakeDeclarationCompilerEngine) CompileDeclaration(_ context.Context, do
 	if len(document) != 0 {
 		document[0] ^= 1
 	}
+	if e.err != nil {
+		return corecompiler.NativeConfigArtifact{}, e.err
+	}
+	return e.artifact, nil
+}
+
+func (e *fakeDeclarationCompilerEngine) CompileDeclarationWithCurrentSelection(
+	_ context.Context,
+	document []byte,
+	target domain.TargetRef,
+) (corecompiler.NativeConfigArtifact, error) {
+	e.overrideCalls++
+	e.document = append([]byte(nil), document...)
+	e.target = target
 	if e.err != nil {
 		return corecompiler.NativeConfigArtifact{}, e.err
 	}
@@ -158,5 +185,36 @@ func declarationCompilerTestArtifact() corecompiler.NativeConfigArtifact {
 			ConfigSHA256: hash,
 		},
 		SourceMap: []corecompiler.RouteSourceMapEntry{},
+	}
+}
+
+
+func TestDeclarationCompileCoordinatorAppliesPersistedCurrentSelection(t *testing.T) {
+	document := []byte(`{"schema_version":1}`)
+	sum := sha256.Sum256(document)
+	target := domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-a", NodeID: "node-a"}
+	targetJSON := []byte(`{"kind":"specific_node","profile_id":"profile-a","node_id":"node-a"}`)
+	store := &fakeDeclarationRevisionStore{
+		revision: storage.DeclarationRevision{
+			Revision:     4,
+			DocumentJSON: append([]byte(nil), document...),
+			SHA256:       hex.EncodeToString(sum[:]),
+		},
+		selection:    storage.SelectionIntent{TargetJSON: targetJSON},
+		hasSelection: true,
+	}
+	engine := &fakeDeclarationCompilerEngine{artifact: declarationCompilerTestArtifact()}
+	coordinator, err := NewDeclarationCompileCoordinator(store, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.CompileRevision(context.Background(), 4); err != nil {
+		t.Fatal(err)
+	}
+	if engine.calls != 0 || engine.overrideCalls != 1 {
+		t.Fatalf("compiler calls = normal:%d override:%d", engine.calls, engine.overrideCalls)
+	}
+	if engine.target != target {
+		t.Fatalf("selection target = %+v, want %+v", engine.target, target)
 	}
 }

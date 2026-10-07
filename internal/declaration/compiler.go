@@ -82,11 +82,84 @@ func (c *NativeCompiler) CompileDeclaration(ctx context.Context, document []byte
 	if c == nil {
 		return compiler.NativeConfigArtifact{}, errors.New("declaration compiler is nil")
 	}
-	if err := ctx.Err(); err != nil {
+	model, err := ParseV1(document)
+	if err != nil {
 		return compiler.NativeConfigArtifact{}, err
+	}
+	return c.compileModel(ctx, model)
+}
+
+func (c *NativeCompiler) CompileDeclarationWithCurrentSelection(
+	ctx context.Context,
+	document []byte,
+	target domain.TargetRef,
+) (compiler.NativeConfigArtifact, error) {
+	if c == nil {
+		return compiler.NativeConfigArtifact{}, errors.New("declaration compiler is nil")
 	}
 	model, err := ParseV1(document)
 	if err != nil {
+		return compiler.NativeConfigArtifact{}, err
+	}
+	if err := applyCurrentSelectionIntent(&model.Selection, target); err != nil {
+		return compiler.NativeConfigArtifact{}, err
+	}
+	return c.compileModel(ctx, model)
+}
+
+func CurrentSelectionRuntimeTag(document []byte, target domain.TargetRef) (string, error) {
+	model, err := ParseV1(document)
+	if err != nil {
+		return "", err
+	}
+	if err := applyCurrentSelectionIntent(&model.Selection, target); err != nil {
+		return "", err
+	}
+	customIDs := make([]string, 0, len(model.Selection.Custom))
+	for _, group := range model.Selection.Custom {
+		customIDs = append(customIDs, group.GroupID)
+	}
+	nodeKeys := make([]compiler.NodeTargetKey, 0, len(model.Nodes))
+	for _, node := range model.Nodes {
+		nodeKeys = append(nodeKeys, compiler.NodeTargetKey{ProfileID: node.ProfileID, NodeID: node.NodeID})
+	}
+	targets, err := compiler.NewTargetCatalog(customIDs, nodeKeys)
+	if err != nil {
+		return "", fmt.Errorf("%w: target catalog: %v", ErrInvalidDocument, err)
+	}
+	tag, err := targets.ResolveTarget(target)
+	if err != nil {
+		return "", fmt.Errorf("%w: current selection target: %v", ErrInvalidDocument, err)
+	}
+	return tag, nil
+}
+
+func applyCurrentSelectionIntent(selection *domain.SelectionPlan, target domain.TargetRef) error {
+	if selection == nil {
+		return fmt.Errorf("%w: current selection plan is nil", ErrInvalidDocument)
+	}
+	if err := target.Validate(); err != nil {
+		return fmt.Errorf("%w: current selection target: %v", ErrInvalidDocument, err)
+	}
+	found := false
+	for _, member := range selection.Current.Members {
+		if member == target {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("%w: current selection target %+v is not a member", ErrInvalidDocument, target)
+	}
+	selection.Current.Default = target
+	if err := selection.Validate(); err != nil {
+		return fmt.Errorf("%w: current selection override: %v", ErrInvalidDocument, err)
+	}
+	return nil
+}
+
+func (c *NativeCompiler) compileModel(ctx context.Context, model Model) (compiler.NativeConfigArtifact, error) {
+	if err := ctx.Err(); err != nil {
 		return compiler.NativeConfigArtifact{}, err
 	}
 	compiled, err := compileSemantic(ctx, model, c.options.RuleSets, true)
