@@ -42,6 +42,7 @@ type CompiledDNS struct {
 	OutboundResolverTag string
 	DirectResolverTag   string
 	ProxyResolverTag    string
+	FallbackResolverTag string
 }
 
 func CompileOutboundDNS(plan domain.DNSPlan, targets TargetCatalog) (CompiledDNS, error) {
@@ -116,10 +117,6 @@ func CompileRuntimeDNS(plan domain.DNSPlan, targets TargetCatalog) (CompiledDNS,
 	if plan.OutboundProfileID == "" {
 		return CompiledDNS{}, fmt.Errorf("%w: outbound DNS profile is not configured", ErrDNSClosure)
 	}
-	if plan.FallbackProfileID != "" {
-		return CompiledDNS{}, fmt.Errorf("%w: fallback DNS profile %q", ErrDNSRoleUnsupported, plan.FallbackProfileID)
-	}
-
 	byID := make(map[string]domain.DNSProfile, len(plan.Profiles))
 	for _, profile := range plan.Profiles {
 		byID[profile.ID] = profile
@@ -153,7 +150,7 @@ func CompileRuntimeDNS(plan domain.DNSPlan, targets TargetCatalog) (CompiledDNS,
 			ServerPort: profile.Port,
 		}
 		switch profile.Role {
-		case domain.DNSRoleBootstrap, domain.DNSRoleOutbound, domain.DNSRoleDirect:
+		case domain.DNSRoleBootstrap, domain.DNSRoleOutbound, domain.DNSRoleDirect, domain.DNSRoleFallback:
 		case domain.DNSRoleProxy:
 			server.Detour = targets.CurrentSelectedTag
 		default:
@@ -187,6 +184,12 @@ func CompileRuntimeDNS(plan domain.DNSPlan, targets TargetCatalog) (CompiledDNS,
 			return CompiledDNS{}, err
 		}
 		result.ProxyResolverTag = stableDNSTag(plan.ProxyProfileID)
+	}
+	if plan.FallbackProfileID != "" {
+		if err := emit(plan.FallbackProfileID); err != nil {
+			return CompiledDNS{}, err
+		}
+		result.FallbackResolverTag = stableDNSTag(plan.FallbackProfileID)
 	}
 	return result, nil
 }

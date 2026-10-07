@@ -1,7 +1,6 @@
 package compiler
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 
@@ -155,7 +154,7 @@ func TestCompileRuntimeDNSDeduplicatesSharedBootstrap(t *testing.T) {
 	}
 }
 
-func TestCompileRuntimeDNSRefusesFallbackUntilSemanticsAreCompiled(t *testing.T) {
+func TestCompileRuntimeDNSClosesFallbackRole(t *testing.T) {
 	targets, err := NewTargetCatalog(nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -170,18 +169,39 @@ func TestCompileRuntimeDNSRefusesFallbackUntilSemanticsAreCompiled(t *testing.T)
 				Port:      53,
 			},
 			{
-				ID:        "fallback",
-				Role:      domain.DNSRoleFallback,
+				ID:        "bootstrap",
+				Role:      domain.DNSRoleBootstrap,
 				Transport: domain.DNSTransportUDP,
 				Server:    "198.51.100.53",
 				Port:      53,
+			},
+			{
+				ID:                 "fallback",
+				Role:               domain.DNSRoleFallback,
+				Transport:          domain.DNSTransportTCP,
+				Server:             "fallback.example.com",
+				Port:               53,
+				BootstrapProfileID: "bootstrap",
 			},
 		},
 		OutboundProfileID: "outbound",
 		FallbackProfileID: "fallback",
 	}
-	if _, err := CompileRuntimeDNS(plan, targets); !errors.Is(err, ErrDNSRoleUnsupported) {
-		t.Fatalf("fallback DNS error = %v", err)
+	compiled, err := CompileRuntimeDNS(plan, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.FallbackResolverTag != stableDNSTag("fallback") {
+		t.Fatalf("fallback resolver tag = %q, want %q", compiled.FallbackResolverTag, stableDNSTag("fallback"))
+	}
+	if len(compiled.Servers) != 3 {
+		t.Fatalf("servers = %d, want outbound + bootstrap + fallback", len(compiled.Servers))
+	}
+	fallback := compiled.Servers[2]
+	if fallback.Tag != compiled.FallbackResolverTag ||
+		fallback.Detour != "" ||
+		fallback.DomainResolver != stableDNSTag("bootstrap") {
+		t.Fatalf("unexpected fallback DNS server: %+v", fallback)
 	}
 }
 
