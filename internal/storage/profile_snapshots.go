@@ -79,12 +79,82 @@ func (s *Store) CommitProfileSnapshot(
 	}
 	defer tx.Rollback()
 
-	var currentID, previousID sql.NullInt64
-	err = tx.QueryRowContext(ctx, `
-		SELECT current_snapshot_id, previous_snapshot_id
+	commit, err := commitProfileSnapshotTx(ctx, tx, candidate)
+	if err != nil {
+		return ProfileSnapshotCommit{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProfileSnapshotCommit{}, fmt.Errorf("commit profile snapshot: %w", err)
+	}
+	return commit, nil
+}
+
+func (s *Store) CommitProfileUpdateSnapshot(
+	ctx context.Context,
+	lease ProfileUpdateLease,
+	candidate ProfileSnapshotCandidate,
+	options ProfileSnapshotCommitOptions,
+	success ProfileUpdateSuccess,
+) (ProfileSnapshotCommit, error) {
+	if err := validateProfileUpdateLease(lease); err != nil {
+		return ProfileSnapshotCommit{}, err
+	}
+	if err := validateProfileUpdateSuccess(success); err != nil {
+		return ProfileSnapshotCommit{}, err
+	}
+	if err := validateProfileSnapshotCandidate(candidate); err != nil {
+		return ProfileSnapshotCommit{}, err
+	}
+	if candidate.ProfileID != lease.ProfileID {
+		return ProfileSnapshotCommit{}, fmt.Errorf(
+			"%w: snapshot profile %q does not match update lease profile %q",
+			ErrInvalidProfileSnapshot,
+			candidate.ProfileID,
+			lease.ProfileID,
+		)
+	}
+	if candidate.SourceRevision != success.SourceRevision {
+		return ProfileSnapshotCommit{}, fmt.Errorf(
+			"%w: snapshot source revision %q does not match update success revision %q",
+			ErrInvalidProfileSnapshot,
+			candidate.SourceRevision,
+			success.SourceRevision,
+		)
+	}
+	if len(candidate.Nodes) == 0 && !options.AllowEmpty {
+		return ProfileSnapshotCommit{}, ErrEmptyProfileSnapshot
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ProfileSnapshotCommit{}, fmt.Errorf("begin profile update snapshot transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	commit, err := commitProfileSnapshotTx(ctx, tx, candidate)
+	if err != nil {
+		return ProfileSnapshotCommit{}, err
+	}
+	if err := finishProfileUpdateSuccessWith(ctx, tx, lease, success); err != nil {
+		return ProfileSnapshotCommit{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProfileSnapshotCommit{}, fmt.Errorf("commit profile update snapshot: %w", err)
+	}
+	return commit, nil
+}
+
+func commitProfileSnapshotTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	candidate ProfileSnapshotCandidate,
+) (ProfileSnapshotCommit, error) {
+	var currentID sql.NullInt64
+	err := tx.QueryRowContext(ctx, `
+		SELECT current_snapshot_id
 		FROM profile_state
 		WHERE profile_id = ?
-	`, candidate.ProfileID).Scan(&currentID, &previousID)
+	`, candidate.ProfileID).Scan(&currentID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return ProfileSnapshotCommit{}, fmt.Errorf("read profile state: %w", err)
 	}
@@ -135,7 +205,11 @@ func (s *Store) CommitProfileSnapshot(
 	for ordinal, node := range reconciled.Current {
 		payload, exists := payloadByKey[node.SourceKey]
 		if !exists {
-			return ProfileSnapshotCommit{}, fmt.Errorf("%w: reconciled node %q has no payload", ErrInvalidProfileSnapshot, node.SourceKey)
+			return ProfileSnapshotCommit{}, fmt.Errorf(
+				"%w: reconciled node %q has no payload",
+				ErrInvalidProfileSnapshot,
+				node.SourceKey,
+			)
 		}
 		sum := sha256.Sum256(payload)
 		payloadHash := hex.EncodeToString(sum[:])
@@ -182,10 +256,6 @@ func (s *Store) CommitProfileSnapshot(
 		  AND (? IS NULL OR id <> ?)
 	`, candidate.ProfileID, snapshotID, keepPrevious, keepPrevious); err != nil {
 		return ProfileSnapshotCommit{}, fmt.Errorf("prune old profile snapshots: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return ProfileSnapshotCommit{}, fmt.Errorf("commit profile snapshot: %w", err)
 	}
 
 	return ProfileSnapshotCommit{
