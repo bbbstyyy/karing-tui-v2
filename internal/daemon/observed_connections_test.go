@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -34,6 +35,8 @@ type fakeObservedConnectionsRuntime struct {
 	active   OperationSnapshot
 	raw      coreapi.ConnectionsSnapshot
 	err      error
+	mode     storage.RoutingMode
+	modeErr  error
 }
 
 func (r *fakeObservedConnectionsRuntime) Snapshot() core.Snapshot {
@@ -46,6 +49,10 @@ func (r *fakeObservedConnectionsRuntime) Connections(context.Context) (coreapi.C
 
 func (r *fakeObservedConnectionsRuntime) ActiveOperation() OperationSnapshot {
 	return r.active
+}
+
+func (r *fakeObservedConnectionsRuntime) CurrentRoutingMode(context.Context) (storage.RoutingMode, error) {
+	return r.mode, r.modeErr
 }
 
 type fakeObservedRouteExplainer struct {
@@ -163,5 +170,80 @@ func TestObservedConnectionsRejectsActiveOperation(t *testing.T) {
 	}
 	if _, err := coordinator.List(context.Background()); err == nil {
 		t.Fatal("active core transition unexpectedly allowed connection observation")
+	}
+}
+
+
+func TestObservedConnectionsDowngradesSourceWhenLiveModeDiffers(t *testing.T) {
+	generationID := int64(12)
+	store := &fakeObservedConnectionsStore{snapshots: []storage.Snapshot{{
+		Revision:            6,
+		AppliedGenerationID: &generationID,
+		RoutingMode:         storage.RoutingModeGlobal,
+	}}}
+	runtime := &fakeObservedConnectionsRuntime{
+		snapshot: core.Snapshot{State: core.StateRunning, PID: 123},
+		mode:     storage.RoutingModeRule,
+		raw: coreapi.ConnectionsSnapshot{Connections: []coreapi.ConnectionInfo{{
+			ID: "connection-mode-mismatch",
+			Metadata: coreapi.ConnectionMetadata{
+				Network:         "tcp",
+				Type:            "mixed/in-rule",
+				DestinationIP:   "127.0.0.1",
+				DestinationPort: "443",
+			},
+		}}},
+	}
+	explainer := &fakeObservedRouteExplainer{response: apiv1.RouteExplainResponse{
+		Evidence: "simulated",
+		Decision: "route",
+	}}
+	coordinator, err := NewObservedConnectionsCoordinator(store, runtime, explainer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := coordinator.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Connections) != 1 {
+		t.Fatalf("connections = %d", len(response.Connections))
+	}
+	connection := response.Connections[0]
+	if connection.SourceEvidence != "unknown" ||
+		len(connection.SourceUnknownConditions) != 1 ||
+		connection.SourceUnknownConditions[0] != "routing_mode_mismatch" {
+		t.Fatalf("mode-mismatch source attribution = %+v", connection)
+	}
+	if explainer.request != (apiv1.RouteExplainRequest{}) {
+		t.Fatalf("mode-mismatch connection unexpectedly invoked simulator: %+v", explainer.request)
+	}
+}
+
+func TestObservedConnectionsRejectsRoutingModeChange(t *testing.T) {
+	generationID := int64(13)
+	store := &fakeObservedConnectionsStore{snapshots: []storage.Snapshot{
+		{
+			Revision:            7,
+			AppliedGenerationID: &generationID,
+			RoutingMode:         storage.RoutingModeRule,
+		},
+		{
+			Revision:            7,
+			AppliedGenerationID: &generationID,
+			RoutingMode:         storage.RoutingModeGlobal,
+		},
+	}}
+	runtime := &fakeObservedConnectionsRuntime{
+		snapshot: core.Snapshot{State: core.StateRunning, PID: 123},
+		mode:     storage.RoutingModeRule,
+		raw:      coreapi.ConnectionsSnapshot{},
+	}
+	coordinator, err := NewObservedConnectionsCoordinator(store, runtime, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.List(context.Background()); !errors.Is(err, ErrConnectionRoutingModeChanged) {
+		t.Fatalf("routing mode change error = %v", err)
 	}
 }
