@@ -34,8 +34,9 @@ type BasicNode struct {
 	Kind   domain.NodeKind
 	Server string
 	Port   uint16
-	SOCKS  *domain.SOCKSNodeOptions
-	HTTP   *domain.HTTPNodeOptions
+	SOCKS       *domain.SOCKSNodeOptions
+	HTTP        *domain.HTTPNodeOptions
+	Shadowsocks *domain.ShadowsocksNodeOptions
 }
 
 func (n BasicNode) Materialize(identity profile.NodeIdentity) (domain.Node, error) {
@@ -59,6 +60,10 @@ func (n BasicNode) Materialize(identity profile.NodeIdentity) (domain.Node, erro
 	if n.HTTP != nil {
 		value := *n.HTTP
 		node.HTTP = &value
+	}
+	if n.Shadowsocks != nil {
+		value := *n.Shadowsocks
+		node.Shadowsocks = &value
 	}
 	if err := node.Validate(); err != nil {
 		return domain.Node{}, err
@@ -205,6 +210,8 @@ func AnalyzeBasicProfile(data []byte, profileID string) (ProfileAnalysis, error)
 			node, err = parseBasicSOCKSOutbound(raw, base.Tag)
 		case "http":
 			node, err = parseBasicHTTPOutbound(raw, base.Tag)
+		case "shadowsocks":
+			node, err = parseBasicShadowsocksOutbound(raw, base.Tag)
 		default:
 			analysis.Diagnostics = append(analysis.Diagnostics, Diagnostic{
 				Level: DiagnosticError, Path: path + ".type", Code: "unsupported_proxy_protocol",
@@ -247,6 +254,8 @@ func DecodeBasicNode(payload []byte, identity profile.NodeIdentity) (domain.Node
 		node, err = parseBasicSOCKSOutbound(payload, base.Tag)
 	case "http":
 		node, err = parseBasicHTTPOutbound(payload, base.Tag)
+	case "shadowsocks":
+		node, err = parseBasicShadowsocksOutbound(payload, base.Tag)
 	default:
 		return domain.Node{}, fmt.Errorf("basic node payload type %q is unsupported", base.Type)
 	}
@@ -274,7 +283,7 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 		Version  string `json:"version"`
 		Username string `json:"username"`
 		Password string `json:"password"`
-		Network  string `json:"network"`
+		Network  networkListJSON `json:"network"`
 	}
 	if err := decodeStrictObject(raw, &wire); err != nil {
 		return BasicNode{}, err
@@ -283,9 +292,9 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 	if version == "" {
 		version = domain.SOCKS5
 	}
-	network := domain.ProxyNetwork(wire.Network)
-	if network == "" {
-		network = domain.ProxyNetworkBoth
+	network, err := wire.Network.ProxyNetwork()
+	if err != nil {
+		return BasicNode{}, err
 	}
 	node := BasicNode{
 		Source: profile.SourceNode{SourceKey: tag, SourceName: tag, PayloadJSON: append([]byte(nil), raw...)},
@@ -345,6 +354,112 @@ func parseBasicHTTPOutbound(raw []byte, tag string) (BasicNode, error) {
 		return BasicNode{}, err
 	}
 	return node, nil
+}
+
+func parseBasicShadowsocksOutbound(raw []byte, tag string) (BasicNode, error) {
+	allowed := map[string]struct{}{
+		"type": {}, "tag": {}, "server": {}, "server_port": {},
+		"method": {}, "password": {}, "plugin": {}, "plugin_opts": {}, "network": {},
+	}
+	if extras, err := unsupportedObjectFields(raw, allowed); err != nil {
+		return BasicNode{}, err
+	} else if len(extras) != 0 {
+		return BasicNode{}, fmt.Errorf(
+			"unsupported Shadowsocks fields: %s",
+			strings.Join(extras, ", "),
+		)
+	}
+	var wire struct {
+		Type          string          `json:"type"`
+		Tag           string          `json:"tag"`
+		Server        string          `json:"server"`
+		Port          uint16          `json:"server_port"`
+		Method        string          `json:"method"`
+		Password      string          `json:"password"`
+		Plugin        string          `json:"plugin"`
+		PluginOptions string          `json:"plugin_opts"`
+		Network       networkListJSON `json:"network"`
+	}
+	if err := decodeStrictObject(raw, &wire); err != nil {
+		return BasicNode{}, err
+	}
+	network, err := wire.Network.ProxyNetwork()
+	if err != nil {
+		return BasicNode{}, err
+	}
+	node := BasicNode{
+		Source: profile.SourceNode{
+			SourceKey:   tag,
+			SourceName:  tag,
+			PayloadJSON: append([]byte(nil), raw...),
+		},
+		Kind:   domain.NodeShadowsocks,
+		Server: wire.Server,
+		Port:   wire.Port,
+		Shadowsocks: &domain.ShadowsocksNodeOptions{
+			Method:        wire.Method,
+			Password:      wire.Password,
+			Plugin:        wire.Plugin,
+			PluginOptions: wire.PluginOptions,
+			Network:       network,
+		},
+	}
+	identity, err := profile.StableNodeID("validation-profile", tag)
+	if err != nil {
+		return BasicNode{}, err
+	}
+	if _, err := node.Materialize(profile.NodeIdentity{
+		ProfileID: "validation-profile",
+		NodeID:    identity,
+		SourceKey: tag,
+		SourceName: tag,
+	}); err != nil {
+		return BasicNode{}, err
+	}
+	return node, nil
+}
+
+type networkListJSON []string
+
+func (n *networkListJSON) UnmarshalJSON(data []byte) error {
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		*n = networkListJSON{single}
+		return nil
+	}
+	var multiple []string
+	if err := json.Unmarshal(data, &multiple); err != nil {
+		return errors.New("network must be a string or array of strings")
+	}
+	*n = append((*n)[:0], multiple...)
+	return nil
+}
+
+func (n networkListJSON) ProxyNetwork() (domain.ProxyNetwork, error) {
+	if len(n) == 0 {
+		return domain.ProxyNetworkBoth, nil
+	}
+	var tcp, udp bool
+	for _, item := range n {
+		switch item {
+		case "tcp":
+			tcp = true
+		case "udp":
+			udp = true
+		default:
+			return "", fmt.Errorf("unsupported network %q", item)
+		}
+	}
+	switch {
+	case tcp && udp:
+		return domain.ProxyNetworkBoth, nil
+	case tcp:
+		return domain.ProxyNetworkTCP, nil
+	case udp:
+		return domain.ProxyNetworkUDP, nil
+	default:
+		return domain.ProxyNetworkBoth, nil
+	}
 }
 
 func unsupportedObjectFields(raw []byte, allowed map[string]struct{}) ([]string, error) {
