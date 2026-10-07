@@ -32,6 +32,7 @@ var (
 	ErrInvalidTransition          = errors.New("invalid apply journal transition")
 	ErrInvalidGenerationMetadata  = errors.New("invalid generation metadata")
 	ErrGenerationMetadataTooLarge = errors.New("generation metadata exceeds size limit")
+	ErrGenerationStorageBudget      = errors.New("generation storage budget exceeded")
 )
 
 var ErrInvalidCoreDesiredState = errors.New("invalid core desired state")
@@ -92,11 +93,19 @@ type GenerationArtifacts struct {
 }
 
 type Store struct {
-	db   *sql.DB
-	path string
+	db        *sql.DB
+	path      string
+	retention RetentionPolicy
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
+	return OpenWithRetention(ctx, path, DefaultRetentionPolicy())
+}
+
+func OpenWithRetention(ctx context.Context, path string, retention RetentionPolicy) (*Store, error) {
+	if err := retention.Validate(); err != nil {
+		return nil, err
+	}
 	if err := prepareDatabaseFile(path); err != nil {
 		return nil, err
 	}
@@ -109,7 +118,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 
-	store := &Store{db: db, path: path}
+	store := &Store{db: db, path: path, retention: retention}
 	if err := store.configure(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -229,6 +238,9 @@ func (s *Store) prepareApply(
 	}
 	if len(config) > MaxGenerationConfigBytes {
 		return Attempt{}, fmt.Errorf("%w: %d bytes > %d bytes", ErrConfigTooLarge, len(config), MaxGenerationConfigBytes)
+	}
+	if err := s.ensureGenerationBudget(ctx, int64(len(config)+len(manifest)+len(sourceMap))); err != nil {
+		return Attempt{}, err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -626,7 +638,12 @@ func (s *Store) GenerationArtifacts(ctx context.Context, generationID int64) (Ge
 
 func (s *Store) Attempt(ctx context.Context, attemptID int64) (Attempt, error) {
 	row := s.db.QueryRowContext(ctx, attemptSelect+` WHERE j.id = ?`, attemptID)
-	return scanAttempt(row)
+	attempt, err := scanAttempt(row)
+	if err == nil || !errors.Is(err, ErrAttemptNotFound) {
+		return attempt, err
+	}
+	archived := s.db.QueryRowContext(ctx, archivedAttemptSelect+` WHERE h.id = ?`, attemptID)
+	return scanAttempt(archived)
 }
 
 func (s *Store) advance(ctx context.Context, attemptID int64, from, to Phase, cause string) error {
@@ -682,6 +699,21 @@ const attemptSelect = `
 		j.updated_at
 	FROM apply_journal j
 	JOIN generations g ON g.id = j.generation_id
+`
+
+const archivedAttemptSelect = `
+	SELECT
+		h.id,
+		h.generation_id,
+		h.previous_generation_id,
+		h.base_revision,
+		h.target_revision,
+		h.phase,
+		h.config_sha256,
+		h.error,
+		h.started_at,
+		h.updated_at
+	FROM apply_history h
 `
 
 type scanner interface {
@@ -757,7 +789,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -877,6 +909,37 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(4, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 4: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 5 {
+		statements := []string{
+			`CREATE TABLE apply_history (
+				id INTEGER PRIMARY KEY,
+				generation_id INTEGER NOT NULL,
+				previous_generation_id INTEGER,
+				base_revision INTEGER NOT NULL CHECK(base_revision >= 0),
+				target_revision INTEGER NOT NULL CHECK(target_revision = base_revision + 1),
+				phase TEXT NOT NULL CHECK(phase IN ('committed', 'rolled_back', 'failed', 'interrupted')),
+				config_sha256 TEXT NOT NULL CHECK(length(config_sha256) = 64),
+				manifest_sha256 TEXT CHECK(manifest_sha256 IS NULL OR length(manifest_sha256) = 64),
+				source_map_sha256 TEXT CHECK(source_map_sha256 IS NULL OR length(source_map_sha256) = 64),
+				error TEXT NOT NULL DEFAULT '',
+				started_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				generation_created_at TEXT NOT NULL,
+				archived_at TEXT NOT NULL
+			)`,
+			`CREATE INDEX apply_history_generation ON apply_history(generation_id)`,
+			`CREATE INDEX apply_history_phase_revision ON apply_history(phase, target_revision DESC, id DESC)`,
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply sqlite migration 5: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(5, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 5: %w", err)
 		}
 	}
 
