@@ -122,3 +122,51 @@ type CurrentSelectionResponse struct {
 	Applied        bool             `json:"applied"`
 	LiveRuntimeTag string           `json:"live_runtime_tag,omitempty"`
 }
+
+
+type RouteExplainRequest struct {
+	Entry       string `json:"entry,omitempty"`
+	Domain      string `json:"domain,omitempty"`
+	IP          string `json:"ip,omitempty"`
+	Port        uint16 `json:"port,omitempty"`
+	Network     string `json:"network,omitempty"`
+	ProcessName string `json:"process_name,omitempty"`
+}
+
+type RouteExplainStep struct {
+	RuleIndex         int                 `json:"rule_index"`
+	Result            string              `json:"result"`
+	Source            string              `json:"source"`
+	Layer             domain.RoutingLayer `json:"layer,omitempty"`
+	GroupID           string              `json:"group_id,omitempty"`
+	Final             bool                `json:"final,omitempty"`
+	Target            *domain.TargetRef   `json:"target,omitempty"`
+	Action            string              `json:"action,omitempty"`
+	Outbound          string              `json:"outbound,omitempty"`
+	Server            string              `json:"server,omitempty"`
+	DNSProfileID      string              `json:"dns_profile_id,omitempty"`
+	UnknownConditions []string            `json:"unknown_conditions,omitempty"`
+}
+
+type RouteExplainResponse struct {
+	APIVersion          string              `json:"api_version"`
+	Evidence            string              `json:"evidence"`
+	Decision            string              `json:"decision"`
+	ConfigRevision      uint64              `json:"config_revision"`
+	GenerationID        int64               `json:"generation_id"`
+	DeclarationRevision uint64              `json:"declaration_revision"`
+	Entry               string              `json:"entry"`
+	Input               RouteExplainRequest `json:"input"`
+	RuleIndex           *int                `json:"rule_index,omitempty"`
+	Source              string              `json:"source,omitempty"`
+	Layer               domain.RoutingLayer `json:"layer,omitempty"`
+	GroupID             string              `json:"group_id,omitempty"`
+	Final               bool                `json:"final,omitempty"`
+	Target              *domain.TargetRef   `json:"target,omitempty"`
+	Action              string              `json:"action,omitempty"`
+	Outbound            string              `json:"outbound,omitempty"`
+	Server              string              `json:"server,omitempty"`
+	DNSProfileID        string              `json:"dns_profile_id,omitempty"`
+	UnknownConditions   []string            `json:"unknown_conditions,omitempty"`
+	Trace               []RouteExplainStep  `json:"trace"`
+}

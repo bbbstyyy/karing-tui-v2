@@ -158,6 +158,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		selectionCore = runtime
 	}
 	selection, _ := NewCurrentSelectionCoordinator(store, selectionCore)
+	routeExplain, _ := NewRouteExplainCoordinator(store)
 	mux.HandleFunc("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := store.Snapshot(r.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, apiv1.ErrorResponse{Error: "state database unavailable"})
@@ -263,6 +264,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_entry_scoping":       true,
 				"routing_layer_switches":      true,
 				"routing_target_registry":     true,
+				"route_explain_simulated":      true,
+				"route_explain_observed":       false,
 				"routing_rule_set_closure":    true,
 				"routing_rule_set_store":      s.ruleSets != nil,
 				"rule_set_upload_api":         s.ruleSets != nil,
@@ -303,6 +306,27 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"tui":                         false,
 			},
 		})
+	})
+	mux.HandleFunc("POST /v1/route/explain", func(w http.ResponseWriter, r *http.Request) {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+		decoder.DisallowUnknownFields()
+		var request apiv1.RouteExplainRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode route explain request: " + err.Error()})
+			return
+		}
+		if err := requireJSONEOF(decoder); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode route explain request: " + err.Error()})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		response, err := routeExplain.Explain(ctx, request)
+		if err != nil {
+			writeRouteExplainError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
 	})
 	mux.HandleFunc("GET /v1/selection/current", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -548,6 +572,19 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		runCoreOperation(w, r, runtime, "stop")
 	})
 	return mux
+}
+
+func writeRouteExplainError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, ErrRouteExplainInput):
+		status = http.StatusBadRequest
+	case errors.Is(err, ErrRouteExplainUnavailable):
+		status = http.StatusConflict
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusGatewayTimeout
+	}
+	writeJSON(w, status, apiv1.ErrorResponse{Error: err.Error()})
 }
 
 func currentSelectionResponse(value CurrentSelectionState) apiv1.CurrentSelectionResponse {

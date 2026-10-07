@@ -56,6 +56,34 @@ func (c *Client) CoreStop(ctx context.Context) error {
 	return c.post(ctx, "/v1/core/stop")
 }
 
+func (c *Client) RouteExplain(
+	ctx context.Context,
+	request apiv1.RouteExplainRequest,
+) (apiv1.RouteExplainResponse, error) {
+	body, err := json.Marshal(request)
+	if err != nil {
+		return apiv1.RouteExplainResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/route/explain", bytes.NewReader(body))
+	if err != nil {
+		return apiv1.RouteExplainResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.controlClient.Do(req)
+	if err != nil {
+		return apiv1.RouteExplainResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return apiv1.RouteExplainResponse{}, responseError(resp)
+	}
+	var response apiv1.RouteExplainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return apiv1.RouteExplainResponse{}, fmt.Errorf("decode daemon response: %w", err)
+	}
+	return response, nil
+}
+
 func (c *Client) CurrentSelection(ctx context.Context) (apiv1.CurrentSelectionResponse, error) {
 	var response apiv1.CurrentSelectionResponse
 	if err := c.get(ctx, "/v1/selection/current", &response); err != nil {

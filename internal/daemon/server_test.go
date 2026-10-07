@@ -102,6 +102,8 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["routing_rule_lowerer"] ||
 		!caps.Capabilities["routing_entry_scoping"] ||
 		!caps.Capabilities["routing_target_registry"] ||
+		!caps.Capabilities["route_explain_simulated"] ||
+		caps.Capabilities["route_explain_observed"] ||
 		!caps.Capabilities["routing_rule_set_closure"] ||
 		!caps.Capabilities["routing_rule_set_store"] ||
 		!caps.Capabilities["selection_group_model"] ||
