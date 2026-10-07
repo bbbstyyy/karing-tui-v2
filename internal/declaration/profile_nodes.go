@@ -166,6 +166,14 @@ func nodeV1FromDomain(node domain.Node) (nodeV1, error) {
 			Username: node.HTTP.Username,
 			Password: node.HTTP.Password,
 		}
+	case domain.NodeShadowsocks:
+		result.Shadowsocks = &shadowsocksV1{
+			Method:        node.Shadowsocks.Method,
+			Password:      node.Shadowsocks.Password,
+			Plugin:        node.Shadowsocks.Plugin,
+			PluginOptions: node.Shadowsocks.PluginOptions,
+			Network:       node.Shadowsocks.Network,
+		}
 	default:
 		return nodeV1{}, fmt.Errorf("unsupported node type %q", node.Kind)
 	}
