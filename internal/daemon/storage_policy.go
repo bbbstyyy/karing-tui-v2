@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	storageKeepConfirmedEnv  = "KARING_TUI_KEEP_CONFIRMED_GENERATIONS"
+	storageKeepConfirmedEnv   = "KARING_TUI_KEEP_CONFIRMED_GENERATIONS"
 	storageGenerationQuotaEnv = "KARING_TUI_GENERATION_QUOTA_MIB"
 )
 
