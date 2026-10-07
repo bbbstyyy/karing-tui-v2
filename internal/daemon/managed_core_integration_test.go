@@ -318,7 +318,7 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 		secondArtifact.Manifest.DeclarationSHA256 != secondDeclaration.SHA256 {
 		t.Fatalf("second declaration provenance mismatch: artifact=%+v declaration=%+v", secondArtifact.Manifest, secondDeclaration)
 	}
-	if !bytes.Contains(secondArtifact.JSON, []byte(`"port":10`)) {
+	if !bytes.Contains(secondArtifact.JSON, []byte(`"server_port":10`)) {
 		t.Fatalf("second controlled apply did not compile the structural node-port change: %s", secondArtifact.JSON)
 	}
 	snapshot, err = store.Snapshot(ctx)
