@@ -322,6 +322,10 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode current selection request: " + err.Error()})
 			return
 		}
+		if err := requireJSONEOF(decoder); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "decode current selection request: " + err.Error()})
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
 		defer cancel()
 		state, err := selection.Set(ctx, request.Target)

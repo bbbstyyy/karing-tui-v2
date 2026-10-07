@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
+	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 )
 
 type Client struct {
@@ -52,6 +54,42 @@ func (c *Client) CoreStart(ctx context.Context) error {
 
 func (c *Client) CoreStop(ctx context.Context) error {
 	return c.post(ctx, "/v1/core/stop")
+}
+
+func (c *Client) CurrentSelection(ctx context.Context) (apiv1.CurrentSelectionResponse, error) {
+	var response apiv1.CurrentSelectionResponse
+	if err := c.get(ctx, "/v1/selection/current", &response); err != nil {
+		return apiv1.CurrentSelectionResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) SetCurrentSelection(
+	ctx context.Context,
+	target domain.TargetRef,
+) (apiv1.CurrentSelectionResponse, error) {
+	body, err := json.Marshal(apiv1.CurrentSelectionRequest{Target: target})
+	if err != nil {
+		return apiv1.CurrentSelectionResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://unix/v1/selection/current", bytes.NewReader(body))
+	if err != nil {
+		return apiv1.CurrentSelectionResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.controlClient.Do(req)
+	if err != nil {
+		return apiv1.CurrentSelectionResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return apiv1.CurrentSelectionResponse{}, responseError(resp)
+	}
+	var response apiv1.CurrentSelectionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return apiv1.CurrentSelectionResponse{}, fmt.Errorf("decode daemon response: %w", err)
+	}
+	return response, nil
 }
 
 func (c *Client) StorageRetention(ctx context.Context) (apiv1.StorageRetentionResponse, error) {
