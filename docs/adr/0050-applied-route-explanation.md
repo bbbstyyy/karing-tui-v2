@@ -107,6 +107,7 @@ the simulator is not counted as observed traffic evidence.
 This closes the simulation half of T26 and creates an API that the future CLI
 and TUI can consume without parsing generated sing-box JSON themselves.
 
-T26 is not fully closed until observed connection presentation is implemented
-with equally explicit provenance. Until then the daemon advertises observed
-route explanation as unavailable.
+Observed connection presentation was implemented subsequently and is documented
+separately in ADR 0052. The `/v1/route/explain` endpoint itself remains a
+simulator, so `route_explain_observed=false` continues to be correct even when
+the connection-observation API is available.

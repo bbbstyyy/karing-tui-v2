@@ -218,6 +218,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		declarationCompileRuntime := runtime != nil && runtime.DeclarationCompilerReady()
 		declarationApplyRuntime := runtime != nil && runtime.DeclarationApplyReady()
 		currentSelectionLive := runtime != nil && runtime.CurrentSelectionReady()
+		connectionObservation := runtime != nil && runtime.ConnectionsReady()
 		writeJSON(w, http.StatusOK, apiv1.CapabilitiesResponse{
 			APIVersion: apiv1.Version,
 			Capabilities: map[string]bool{
@@ -270,6 +271,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"routing_target_registry":     true,
 				"route_explain_simulated":     true,
 				"route_explain_observed":      false,
+				"connection_observation":      connectionObservation,
 				"routing_rule_set_closure":    true,
 				"routing_rule_set_store":      s.ruleSets != nil,
 				"rule_set_upload_api":         s.ruleSets != nil,
