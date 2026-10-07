@@ -3,6 +3,8 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -173,9 +175,17 @@ func (c *CurrentSelectionCoordinator) selectionDeclaration(ctx context.Context) 
 	if err != nil {
 		return storage.DeclarationRevision{}, fmt.Errorf("read applied generation provenance for current selection: %w", err)
 	}
-	if len(artifacts.ManifestJSON) == 0 {
+	if len(artifacts.ManifestJSON) == 0 || artifacts.ManifestSHA256 == "" {
 		return storage.DeclarationRevision{}, fmt.Errorf(
 			"%w: applied generation %d has no declaration provenance",
+			ErrCurrentSelectionUnavailable,
+			*snapshot.AppliedGenerationID,
+		)
+	}
+	manifestSum := sha256.Sum256(artifacts.ManifestJSON)
+	if hex.EncodeToString(manifestSum[:]) != artifacts.ManifestSHA256 {
+		return storage.DeclarationRevision{}, fmt.Errorf(
+			"%w: applied generation %d manifest hash mismatch",
 			ErrCurrentSelectionUnavailable,
 			*snapshot.AppliedGenerationID,
 		)
