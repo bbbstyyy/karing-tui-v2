@@ -55,7 +55,7 @@ func TestCompileBasicNodeOutboundsPreservesRequiredOrder(t *testing.T) {
 	}
 }
 
-func TestCompileBasicNodeOutboundsEmitsSOCKSAndHTTPFields(t *testing.T) {
+func TestCompileBasicNodeOutboundsEmitsSupportedProtocolFields(t *testing.T) {
 	socks := domain.Node{
 		ProfileID: "profile-a",
 		NodeID:    "socks-a",
@@ -80,18 +80,34 @@ func TestCompileBasicNodeOutboundsEmitsSOCKSAndHTTPFields(t *testing.T) {
 			Password: "secret",
 		},
 	}
+	ssNode := domain.Node{
+		ProfileID: "profile-c",
+		NodeID:    "ss-c",
+		Kind:      domain.NodeShadowsocks,
+		Server:    "ss.example.com",
+		Port:      8388,
+		Shadowsocks: &domain.ShadowsocksNodeOptions{
+			Method:        "aes-256-gcm",
+			Password:      "ss-secret",
+			Plugin:        "obfs-local",
+			PluginOptions: "obfs=http",
+			Network:       domain.ProxyNetworkTCP,
+		},
+	}
 	keyS := NodeTargetKey{ProfileID: socks.ProfileID, NodeID: socks.NodeID}
 	keyH := NodeTargetKey{ProfileID: httpNode.ProfileID, NodeID: httpNode.NodeID}
-	catalog, err := NewTargetCatalog(nil, []NodeTargetKey{keyS, keyH})
+	keySS := NodeTargetKey{ProfileID: ssNode.ProfileID, NodeID: ssNode.NodeID}
+	catalog, err := NewTargetCatalog(nil, []NodeTargetKey{keyS, keyH, keySS})
 	if err != nil {
 		t.Fatal(err)
 	}
 	compiled, err := CompileBasicNodeOutbounds(
-		[]domain.Node{socks, httpNode},
+		[]domain.Node{socks, httpNode, ssNode},
 		catalog,
 		[]domain.TargetRef{
 			{Kind: domain.TargetSpecificNode, ProfileID: socks.ProfileID, NodeID: socks.NodeID},
 			{Kind: domain.TargetSpecificNode, ProfileID: httpNode.ProfileID, NodeID: httpNode.NodeID},
+			{Kind: domain.TargetSpecificNode, ProfileID: ssNode.ProfileID, NodeID: ssNode.NodeID},
 		},
 	)
 	if err != nil {
@@ -114,6 +130,15 @@ func TestCompileBasicNodeOutboundsEmitsSOCKSAndHTTPFields(t *testing.T) {
 	wantSecond := `{"type":"http","tag":"` + catalog.NodeTags[keyH] + `","server":"192.0.2.30","server_port":8080,"username":"bob","password":"secret"}`
 	if string(second) != wantSecond {
 		t.Fatalf("HTTP JSON = %s, want %s", second, wantSecond)
+	}
+
+	third, err := json.Marshal(compiled.Outbounds[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantThird := `{"type":"shadowsocks","tag":"` + catalog.NodeTags[keySS] + `","server":"ss.example.com","server_port":8388,"password":"ss-secret","method":"aes-256-gcm","plugin":"obfs-local","plugin_opts":"obfs=http","network":"tcp"}`
+	if string(third) != wantThird {
+		t.Fatalf("Shadowsocks JSON = %s, want %s", third, wantThird)
 	}
 }
 
