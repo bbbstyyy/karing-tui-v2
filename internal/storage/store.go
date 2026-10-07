@@ -789,7 +789,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -940,6 +940,25 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(5, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 5: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 6 {
+		statements := []string{
+			`CREATE TABLE selection_state (
+				singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+				current_target_json BLOB,
+				updated_at TEXT
+			)`,
+			`INSERT INTO selection_state(singleton, current_target_json, updated_at) VALUES(1, NULL, NULL)`,
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply sqlite migration 6: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(6, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 6: %w", err)
 		}
 	}
 
