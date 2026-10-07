@@ -234,6 +234,8 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 		return BasicNode{}, fmt.Errorf("unsupported SOCKS fields: %s", strings.Join(extras, ", "))
 	}
 	var wire struct {
+		Type     string `json:"type"`
+		Tag      string `json:"tag"`
 		Server   string `json:"server"`
 		Port     uint16 `json:"server_port"`
 		Version  string `json:"version"`
@@ -283,6 +285,8 @@ func parseBasicHTTPOutbound(raw []byte, tag string) (BasicNode, error) {
 		return BasicNode{}, fmt.Errorf("unsupported HTTP fields: %s", strings.Join(extras, ", "))
 	}
 	var wire struct {
+		Type     string `json:"type"`
+		Tag      string `json:"tag"`
 		Server   string `json:"server"`
 		Port     uint16 `json:"server_port"`
 		Username string `json:"username"`
