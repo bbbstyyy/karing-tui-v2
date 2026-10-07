@@ -13,6 +13,32 @@ import (
 	"time"
 )
 
+func TestOpenCorruptDatabaseFailsWithoutReplacingFile(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "state.db")
+	original := []byte("not-a-sqlite-database\nconfirmed-state-must-not-be-overwritten")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, path)
+	if err == nil {
+		_ = store.Close()
+		t.Fatal("corrupt database unexpectedly opened")
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(original) {
+		t.Fatalf("corrupt database was modified on failed open: got %q want %q", after, original)
+	}
+}
+
 func TestApplyLifecycleKeepsRevisionOnRollback(t *testing.T) {
 	ctx := context.Background()
 	store, path := newTestStore(t, ctx)
