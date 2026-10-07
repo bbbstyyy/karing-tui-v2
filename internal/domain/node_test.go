@@ -43,6 +43,20 @@ func TestBasicSOCKSAndHTTPNodesValidate(t *testing.T) {
 				Network: ProxyNetworkTCP,
 			},
 		},
+		{
+			ProfileID: "profile-c",
+			NodeID:    "ss-a",
+			Kind:      NodeShadowsocks,
+			Server:    "ss.example.com",
+			Port:      8388,
+			Shadowsocks: &ShadowsocksNodeOptions{
+				Method:        "aes-256-gcm",
+				Password:      "secret",
+				Plugin:        "obfs-local",
+				PluginOptions: "obfs=http;obfs-host=example.com",
+				Network:       ProxyNetworkBoth,
+			},
+		},
 	}
 	for _, node := range nodes {
 		if err := node.Validate(); err != nil {
@@ -54,12 +68,15 @@ func TestBasicSOCKSAndHTTPNodesValidate(t *testing.T) {
 func TestNodeRejectsAmbiguousOrUnsupportedOptions(t *testing.T) {
 	validSOCKS := &SOCKSNodeOptions{Version: SOCKS5, Network: ProxyNetworkBoth}
 	validHTTP := &HTTPNodeOptions{}
+	validSS := &ShadowsocksNodeOptions{Method: "aes-256-gcm", Password: "secret", Network: ProxyNetworkBoth}
 	cases := []Node{
 		{},
 		{ProfileID: "p", NodeID: "n", Kind: NodeSOCKS, Server: "proxy.example.com", Port: 1080},
 		{ProfileID: "p", NodeID: "n", Kind: NodeHTTP, Server: "proxy.example.com", Port: 8080},
 		{ProfileID: "p", NodeID: "n", Kind: NodeSOCKS, Server: "proxy.example.com", Port: 1080, SOCKS: validSOCKS, HTTP: validHTTP},
 		{ProfileID: "p", NodeID: "n", Kind: NodeHTTP, Server: "proxy.example.com", Port: 8080, SOCKS: validSOCKS, HTTP: validHTTP},
+		{ProfileID: "p", NodeID: "n", Kind: NodeShadowsocks, Server: "proxy.example.com", Port: 8388},
+		{ProfileID: "p", NodeID: "n", Kind: NodeShadowsocks, Server: "proxy.example.com", Port: 8388, HTTP: validHTTP, Shadowsocks: validSS},
 		{ProfileID: "p", NodeID: "n", Kind: NodeKind("vless"), Server: "proxy.example.com", Port: 443},
 		{ProfileID: "p", NodeID: "n", Kind: NodeSOCKS, Server: "proxy.example.com", Port: 0, SOCKS: validSOCKS},
 	}
@@ -97,6 +114,39 @@ func TestSOCKSOptionsAreExplicitAndVersionAware(t *testing.T) {
 	for _, options := range valid {
 		if err := options.Validate(); err != nil {
 			t.Fatalf("valid SOCKS options %+v: %v", options, err)
+		}
+	}
+}
+
+func TestShadowsocksOptionsAreBoundedAndExplicit(t *testing.T) {
+	valid := []ShadowsocksNodeOptions{
+		{Method: "aes-256-gcm", Password: "secret", Network: ProxyNetworkBoth},
+		{Method: "chacha20-ietf-poly1305", Password: "secret", Network: ProxyNetworkTCP},
+		{
+			Method:        "aes-128-gcm",
+			Password:      "secret",
+			Plugin:        "v2ray-plugin",
+			PluginOptions: "mode=websocket;host=example.com",
+			Network:       ProxyNetworkUDP,
+		},
+	}
+	for _, options := range valid {
+		if err := options.Validate(); err != nil {
+			t.Fatalf("valid Shadowsocks options %+v: %v", options, err)
+		}
+	}
+
+	invalid := []ShadowsocksNodeOptions{
+		{},
+		{Method: "aes-256-gcm", Network: ProxyNetworkBoth},
+		{Method: " aes-256-gcm", Password: "secret", Network: ProxyNetworkBoth},
+		{Method: "aes-256-gcm", Password: "secret", PluginOptions: "orphan=1", Network: ProxyNetworkBoth},
+		{Method: "aes-256-gcm", Password: "bad\nsecret", Network: ProxyNetworkBoth},
+		{Method: "aes-256-gcm", Password: "secret", Network: ProxyNetwork("icmp")},
+	}
+	for i, options := range invalid {
+		if err := options.Validate(); !errors.Is(err, ErrInvalidNode) {
+			t.Fatalf("invalid Shadowsocks case %d error = %v", i, err)
 		}
 	}
 }
