@@ -84,11 +84,7 @@ func (s *Server) Run(ctx context.Context) error {
 		defer coreCancel()
 	}
 
-	httpServer := &http.Server{
-		Handler:           s.handler(store, runtime),
-		ReadHeaderTimeout: 2 * time.Second,
-		IdleTimeout:       30 * time.Second,
-	}
+	httpServer := newDaemonHTTPServer(s.handler(store, runtime))
 
 	httpErrCh := make(chan error, 1)
 	go func() {
@@ -149,6 +145,16 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	return cause
+}
+
+func newDaemonHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       65 * time.Second,
+		WriteTimeout:      90 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
 }
 
 func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Handler {
