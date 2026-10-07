@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,8 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 
 	proxyAddress, proxyHits, closeProxy := startRejectingHTTPProxy(t)
 	defer closeProxy()
+	fallbackDNSAddress, fallbackDNSHits, closeFallbackDNS := startFallbackDNSServer(t)
+	defer closeFallbackDNS()
 
 	ports := reserveLoopbackPorts(t, 4)
 	inbounds := domain.InboundSet{
@@ -118,7 +121,7 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 	committed, err := store.CommitDeclaration(
 		ctx,
 		0,
-		routeOutcomeDeclaration(ruleSetSHA256, proxyAddress.Port()),
+		routeOutcomeDeclaration(ruleSetSHA256, proxyAddress.Port(), fallbackDNSAddress.Port()),
 		"integration:route-outcomes",
 	)
 	if err != nil {
@@ -177,6 +180,24 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "Direct inbound selected proxy")
 
 	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
+	conn, err = socks5ConnectDomain(connectCtx, directAddress, "fallback.integration.test", targetAddress.Port())
+	connectCancel()
+	if err != nil {
+		t.Fatalf("Direct inbound fallback DNS connect failed: %v; stderr=%s", err, managed.StderrTail())
+	}
+	if _, err := io.ReadFull(conn, marker[:]); err != nil {
+		_ = conn.Close()
+		t.Fatalf("read fallback DNS target marker: %v", err)
+	}
+	_ = conn.Close()
+	if marker != [2]byte{'o', 'k'} {
+		t.Fatalf("fallback DNS target marker = %q", marker)
+	}
+	assertRouteOutcomeSignal(t, fallbackDNSHits, 2*time.Second, "Global fallback DNS")
+	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "fallback-resolved Direct target")
+	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "fallback Direct selected proxy")
+
+	connectCtx, connectCancel = context.WithTimeout(context.Background(), 3*time.Second)
 	conn, err = socks5Connect(connectCtx, selectedAddress, targetAddress)
 	connectCancel()
 	if err == nil {
@@ -197,7 +218,7 @@ func TestManagedCoreRealRouteOutcomes(t *testing.T) {
 	})
 }
 
-func routeOutcomeDeclaration(ruleSetSHA256 string, proxyPort uint16) []byte {
+func routeOutcomeDeclaration(ruleSetSHA256 string, proxyPort, fallbackDNSPort uint16) []byte {
 	return []byte(fmt.Sprintf(`{
   "schema_version":1,
   "log_level":"warn",
@@ -241,10 +262,17 @@ func routeOutcomeDeclaration(ruleSetSHA256 string, proxyPort uint16) []byte {
       "transport":"udp",
       "server":"127.0.0.1",
       "port":9
+    },{
+      "id":"route-outcome-fallback",
+      "role":"fallback",
+      "transport":"udp",
+      "server":"127.0.0.1",
+      "port":%d
     }],
-    "outbound_profile_id":"route-outcome-dns"
+    "outbound_profile_id":"route-outcome-dns",
+    "fallback_profile_id":"route-outcome-fallback"
   }
-}`, ruleSetSHA256, proxyPort))
+}`, ruleSetSHA256, proxyPort, fallbackDNSPort))
 }
 
 func socks5Connect(ctx context.Context, inbound, target netip.AddrPort) (net.Conn, error) {
@@ -317,6 +345,162 @@ func socks5Connect(ctx context.Context, inbound, target netip.AddrPort) (net.Con
 		return fail(err)
 	}
 	return conn, nil
+}
+
+func socks5ConnectDomain(ctx context.Context, inbound netip.AddrPort, domain string, port uint16) (net.Conn, error) {
+	if domain == "" || len(domain) > 255 {
+		return nil, errors.New("route-outcome SOCKS domain must contain 1..255 bytes")
+	}
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp", inbound.String())
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (net.Conn, error) {
+		_ = conn.Close()
+		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return fail(err)
+		}
+	}
+
+	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		return fail(err)
+	}
+	var greeting [2]byte
+	if _, err := io.ReadFull(conn, greeting[:]); err != nil {
+		return fail(err)
+	}
+	if greeting != [2]byte{0x05, 0x00} {
+		return fail(fmt.Errorf("unexpected SOCKS5 greeting response %v", greeting))
+	}
+
+	request := make([]byte, 0, 7+len(domain))
+	request = append(request, 0x05, 0x01, 0x00, 0x03, byte(len(domain)))
+	request = append(request, domain...)
+	request = append(request, byte(port>>8), byte(port))
+	if _, err := conn.Write(request); err != nil {
+		return fail(err)
+	}
+
+	var response [4]byte
+	if _, err := io.ReadFull(conn, response[:]); err != nil {
+		return fail(err)
+	}
+	if response[0] != 0x05 {
+		return fail(fmt.Errorf("unexpected SOCKS5 response version %d", response[0]))
+	}
+	if response[1] != 0x00 {
+		return fail(fmt.Errorf("SOCKS5 CONNECT rejected with code 0x%02x", response[1]))
+	}
+
+	var addressBytes int
+	switch response[3] {
+	case 0x01:
+		addressBytes = 4
+	case 0x04:
+		addressBytes = 16
+	case 0x03:
+		var length [1]byte
+		if _, err := io.ReadFull(conn, length[:]); err != nil {
+			return fail(err)
+		}
+		addressBytes = int(length[0])
+	default:
+		return fail(fmt.Errorf("unexpected SOCKS5 bound address type 0x%02x", response[3]))
+	}
+	if _, err := io.CopyN(io.Discard, conn, int64(addressBytes+2)); err != nil {
+		return fail(err)
+	}
+	return conn, nil
+}
+
+func startFallbackDNSServer(t *testing.T) (netip.AddrPort, <-chan struct{}, func()) {
+	t.Helper()
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, err := netip.ParseAddrPort(conn.LocalAddr().String())
+	if err != nil {
+		_ = conn.Close()
+		t.Fatal(err)
+	}
+	hits := make(chan struct{}, 16)
+	go func() {
+		buffer := make([]byte, 1500)
+		for {
+			n, peer, err := conn.ReadFrom(buffer)
+			if err != nil {
+				return
+			}
+			response, err := fallbackDNSResponse(buffer[:n])
+			if err != nil {
+				continue
+			}
+			select {
+			case hits <- struct{}{}:
+			default:
+			}
+			_, _ = conn.WriteTo(response, peer)
+		}
+	}()
+	var once sync.Once
+	closeFn := func() {
+		once.Do(func() { _ = conn.Close() })
+	}
+	return address, hits, closeFn
+}
+
+func fallbackDNSResponse(query []byte) ([]byte, error) {
+	if len(query) < 12 || binary.BigEndian.Uint16(query[4:6]) != 1 {
+		return nil, errors.New("unsupported DNS query")
+	}
+	offset := 12
+	for {
+		if offset >= len(query) {
+			return nil, errors.New("truncated DNS question")
+		}
+		length := int(query[offset])
+		offset++
+		if length == 0 {
+			break
+		}
+		if length&0xc0 != 0 || offset+length > len(query) {
+			return nil, errors.New("unsupported DNS question name")
+		}
+		offset += length
+	}
+	if offset+4 > len(query) {
+		return nil, errors.New("truncated DNS question type")
+	}
+	questionEnd := offset + 4
+	queryType := binary.BigEndian.Uint16(query[offset : offset+2])
+
+	response := make([]byte, 12, 12+(questionEnd-12)+16)
+	copy(response[:2], query[:2])
+	binary.BigEndian.PutUint16(response[2:4], 0x8180)
+	binary.BigEndian.PutUint16(response[4:6], 1)
+	answerCount := uint16(0)
+	if queryType == 1 {
+		answerCount = 1
+	}
+	binary.BigEndian.PutUint16(response[6:8], answerCount)
+	response = append(response, query[12:questionEnd]...)
+	if answerCount == 0 {
+		return response, nil
+	}
+	response = append(response,
+		0xc0, 0x0c,
+		0x00, 0x01,
+		0x00, 0x01,
+		0x00, 0x00, 0x00, 0x3c,
+		0x00, 0x04,
+		127, 0, 0, 1,
+	)
+	return response, nil
 }
 
 func startRejectingHTTPProxy(t *testing.T) (netip.AddrPort, <-chan struct{}, func()) {
