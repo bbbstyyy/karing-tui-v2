@@ -73,16 +73,17 @@ type ProfileAnalysis struct {
 	Diagnostics  []Diagnostic
 }
 
-func (a ProfileAnalysis) CanCommit() bool {
-	if len(a.Nodes) == 0 {
-		return false
-	}
+func (a ProfileAnalysis) HasBlockingDiagnostics() bool {
 	for _, diagnostic := range a.Diagnostics {
 		if diagnostic.Level == DiagnosticError {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+func (a ProfileAnalysis) CanCommit() bool {
+	return len(a.Nodes) != 0 && !a.HasBlockingDiagnostics()
 }
 
 func (a ProfileAnalysis) SnapshotNodes() (profileNodes []profile.SourceNode, sourceSHA256 string, ok bool) {
@@ -221,6 +222,38 @@ func AnalyzeBasicProfile(data []byte, profileID string) (ProfileAnalysis, error)
 	}
 
 	return analysis, nil
+}
+
+func DecodeBasicNode(payload []byte, identity profile.NodeIdentity) (domain.Node, error) {
+	if len(payload) == 0 {
+		return domain.Node{}, errors.New("basic node payload is empty")
+	}
+	var base struct {
+		Type string `json:"type"`
+		Tag  string `json:"tag"`
+	}
+	if err := json.Unmarshal(payload, &base); err != nil {
+		return domain.Node{}, fmt.Errorf("decode basic node payload: %w", err)
+	}
+	if base.Tag != identity.SourceKey {
+		return domain.Node{}, fmt.Errorf("basic node payload tag %q does not match source key %q", base.Tag, identity.SourceKey)
+	}
+	var (
+		node BasicNode
+		err  error
+	)
+	switch base.Type {
+	case "socks":
+		node, err = parseBasicSOCKSOutbound(payload, base.Tag)
+	case "http":
+		node, err = parseBasicHTTPOutbound(payload, base.Tag)
+	default:
+		return domain.Node{}, fmt.Errorf("basic node payload type %q is unsupported", base.Type)
+	}
+	if err != nil {
+		return domain.Node{}, err
+	}
+	return node.Materialize(identity)
 }
 
 func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
