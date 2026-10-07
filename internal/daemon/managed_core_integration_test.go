@@ -12,6 +12,8 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -25,6 +27,7 @@ import (
 )
 
 func TestManagedCoreRealIntegration(t *testing.T) {
+	assertOrdinaryUserCoreEnvironment(t)
 	corePath := os.Getenv("KARING_TUI_TEST_CORE")
 	if corePath == "" {
 		t.Skip("KARING_TUI_TEST_CORE is not set")
@@ -420,6 +423,42 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256
     "outbound_profile_id":"integration-outbound-dns"
   }
 }`, logLevel, ruleSetSHA256, regionGeoSiteSHA256, regionGeoIPSHA256, nodePort))
+}
+
+func assertOrdinaryUserCoreEnvironment(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Fatal("T01 fixed-core integration must run as an ordinary non-root user")
+	}
+	if os.Getenv("DISPLAY") != "" {
+		t.Fatalf("T01 fixed-core integration unexpectedly has DISPLAY=%q", os.Getenv("DISPLAY"))
+	}
+
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		t.Fatalf("read Linux capability status: %v", err)
+	}
+	var capEff uint64
+	found := false
+	for _, line := range strings.Split(string(status), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "CapEff:" {
+			continue
+		}
+		capEff, err = strconv.ParseUint(fields[1], 16, 64)
+		if err != nil {
+			t.Fatalf("parse CapEff %q: %v", fields[1], err)
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatal("Linux /proc/self/status did not expose CapEff")
+	}
+	const capNetAdmin = uint64(1) << 12
+	if capEff&capNetAdmin != 0 {
+		t.Fatalf("T01 fixed-core integration unexpectedly has CAP_NET_ADMIN: CapEff=%x", capEff)
+	}
 }
 
 func TestManagedCoreRealPortConflictFailsClosed(t *testing.T) {
