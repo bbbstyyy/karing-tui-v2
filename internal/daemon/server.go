@@ -87,6 +87,15 @@ func (s *Server) Run(ctx context.Context) error {
 		defer coreCancel()
 	}
 
+	profileScheduler, err := buildProfileRefreshScheduler(store, runtime)
+	if err != nil {
+		return fmt.Errorf("configure profile refresh scheduler: %w", err)
+	}
+	profileErrCh := make(chan error, 1)
+	go func() {
+		profileErrCh <- profileScheduler.Run(daemonCtx)
+	}()
+
 	httpServer := newDaemonHTTPServer(s.handler(store, runtime))
 
 	httpErrCh := make(chan error, 1)
@@ -104,9 +113,10 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	var (
-		cause    error
-		httpDone bool
-		coreDone bool
+		cause       error
+		httpDone    bool
+		coreDone    bool
+		profileDone bool
 	)
 	select {
 	case <-ctx.Done():
@@ -120,6 +130,16 @@ func (s *Server) Run(ctx context.Context) error {
 				err = errors.New("core supervisor exited unexpectedly")
 			}
 			cause = fmt.Errorf("core supervisor engine: %w", err)
+		} else {
+			cause = err
+		}
+	case err := <-profileErrCh:
+		profileDone = true
+		if ctx.Err() == nil {
+			if err == nil {
+				err = errors.New("profile refresh scheduler exited unexpectedly")
+			}
+			cause = fmt.Errorf("profile refresh scheduler: %w", err)
 		} else {
 			cause = err
 		}
@@ -145,6 +165,11 @@ func (s *Server) Run(ctx context.Context) error {
 	if coreErrCh != nil && !coreDone {
 		if err := waitError(coreErrCh, 12*time.Second); err != nil {
 			cause = errors.Join(cause, fmt.Errorf("wait for core supervisor shutdown: %w", err))
+		}
+	}
+	if !profileDone {
+		if err := waitError(profileErrCh, 12*time.Second); err != nil {
+			cause = errors.Join(cause, fmt.Errorf("wait for profile refresh scheduler shutdown: %w", err))
 		}
 	}
 	return cause
