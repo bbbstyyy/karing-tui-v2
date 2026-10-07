@@ -188,7 +188,6 @@ func declarationCompilerTestArtifact() corecompiler.NativeConfigArtifact {
 	}
 }
 
-
 func TestDeclarationCompileCoordinatorAppliesPersistedCurrentSelection(t *testing.T) {
 	document := []byte(`{"schema_version":1}`)
 	sum := sha256.Sum256(document)
