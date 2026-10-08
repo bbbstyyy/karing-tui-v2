@@ -30,7 +30,7 @@ Current implementation: `internal/importer/singbox.AnalyzeBasicProfile`.
 | VMess | Not yet supported | Blocks complete automatic import |
 | VLESS | Not yet supported | Blocks complete automatic import |
 | Trojan | Not yet supported | Blocks complete automatic import |
-| Shadowsocks | Not yet supported | Blocks complete automatic import |
+| Shadowsocks: `method`, `password`, optional plugin/plugin_opts, network | Supported basic subset | Complete supported fields are preserved; unsupported UDP-over-TCP/multiplex/dial extensions still block import |
 | Hysteria / Hysteria2 | Not yet supported | Blocks complete automatic import |
 | TUIC | Not yet supported | Blocks complete automatic import |
 | source `route` | Intentionally ignored | Reported as `ignored_by_product_policy`; cannot create runtime RuleGroups or FINAL |
@@ -50,6 +50,7 @@ The current declaration/runtime compiler can materialize:
 | SOCKS4 | Implemented | TCP only |
 | SOCKS4a | Implemented | TCP only |
 | SOCKS5 | Implemented | TCP/UDP/both as represented by the domain model |
+| Shadowsocks | Implemented basic subset | method/password/plugin/plugin_opts/network; no UDP-over-TCP, multiplex or detour field loss |
 | Domain-valued node server | Implemented with explicit Outbound DNS | Fails closed without configured node/outbound resolver |
 | TLS/Reality/advanced transport/Mux | Not yet implemented | Must not be dropped by importers |
 | Detour/pre-proxy chain | P1 / not yet implemented | Unsupported imported detour must block application |
@@ -134,7 +135,6 @@ Implemented refresh/scheduling foundation:
 
 Still not implemented:
 
-- daemon startup wiring for the refresh scheduler;
 - Specific Node network fetch execution;
 - automatic snapshot -> declaration -> compile/apply policy after a refresh;
 - traffic quota/expiry metadata;
