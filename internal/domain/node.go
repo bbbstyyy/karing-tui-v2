@@ -15,6 +15,7 @@ const (
 	NodeHTTP        NodeKind = "http"
 	NodeShadowsocks NodeKind = "shadowsocks"
 	NodeVMess       NodeKind = "vmess"
+	NodeVLESS       NodeKind = "vless"
 )
 
 type SOCKSVersion string
@@ -65,6 +66,14 @@ type VMessNodeOptions struct {
 	PacketEncoding      string
 }
 
+type VLESSNodeOptions struct {
+	UUID           string
+	Flow           string
+	Encryption     string
+	Network        ProxyNetwork
+	PacketEncoding *string
+}
+
 type Node struct {
 	ProfileID   string
 	NodeID      string
@@ -75,6 +84,7 @@ type Node struct {
 	HTTP        *HTTPNodeOptions
 	Shadowsocks *ShadowsocksNodeOptions
 	VMess       *VMessNodeOptions
+	VLESS       *VLESSNodeOptions
 }
 
 func (n Node) Validate() error {
@@ -93,31 +103,38 @@ func (n Node) Validate() error {
 
 	switch n.Kind {
 	case NodeSOCKS:
-		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil {
+		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil {
 			return fmt.Errorf("%w: SOCKS node must contain only SOCKS options", ErrInvalidNode)
 		}
 		if err := n.SOCKS.Validate(); err != nil {
 			return err
 		}
 	case NodeHTTP:
-		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil || n.VMess != nil {
+		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil {
 			return fmt.Errorf("%w: HTTP node must contain only HTTP options", ErrInvalidNode)
 		}
 		if err := n.HTTP.Validate(); err != nil {
 			return err
 		}
 	case NodeShadowsocks:
-		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil || n.VMess != nil {
+		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil || n.VMess != nil || n.VLESS != nil {
 			return fmt.Errorf("%w: Shadowsocks node must contain only Shadowsocks options", ErrInvalidNode)
 		}
 		if err := n.Shadowsocks.Validate(); err != nil {
 			return err
 		}
 	case NodeVMess:
-		if n.VMess == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil {
+		if n.VMess == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VLESS != nil {
 			return fmt.Errorf("%w: VMess node must contain only VMess options", ErrInvalidNode)
 		}
 		if err := n.VMess.Validate(); err != nil {
+			return err
+		}
+	case NodeVLESS:
+		if n.VLESS == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil {
+			return fmt.Errorf("%w: VLESS node must contain only VLESS options", ErrInvalidNode)
+		}
+		if err := n.VLESS.Validate(); err != nil {
 			return err
 		}
 	default:
@@ -214,6 +231,45 @@ func (o VMessNodeOptions) Validate() error {
 	case "", "packetaddr", "xudp":
 	default:
 		return fmt.Errorf("%w: unsupported VMess packet encoding %q", ErrInvalidNode, o.PacketEncoding)
+	}
+	return nil
+}
+
+func (o VLESSNodeOptions) Validate() error {
+	if err := validateVMessUUID(o.UUID); err != nil {
+		return fmt.Errorf("%w: VLESS UUID: %v", ErrInvalidNode, err)
+	}
+	if o.Flow != "" {
+		return fmt.Errorf(
+			"%w: VLESS flow %q requires TLS/encryption semantics outside the basic node model",
+			ErrInvalidNode,
+			o.Flow,
+		)
+	}
+	switch o.Encryption {
+	case "", "none":
+	default:
+		return fmt.Errorf(
+			"%w: VLESS encryption %q is outside the verified basic subset",
+			ErrInvalidNode,
+			o.Encryption,
+		)
+	}
+	switch o.Network {
+	case ProxyNetworkBoth, ProxyNetworkTCP, ProxyNetworkUDP:
+	default:
+		return fmt.Errorf("%w: unsupported VLESS network %q", ErrInvalidNode, o.Network)
+	}
+	if o.PacketEncoding != nil {
+		switch *o.PacketEncoding {
+		case "", "packetaddr", "xudp":
+		default:
+			return fmt.Errorf(
+				"%w: unsupported VLESS packet encoding %q",
+				ErrInvalidNode,
+				*o.PacketEncoding,
+			)
+		}
 	}
 	return nil
 }
