@@ -40,6 +40,7 @@ type BasicNode struct {
 	VMess       *domain.VMessNodeOptions
 	VLESS       *domain.VLESSNodeOptions
 	Trojan      *domain.TrojanNodeOptions
+	TLS         *domain.OutboundTLSOptions
 }
 
 func (n BasicNode) Materialize(identity profile.NodeIdentity) (domain.Node, error) {
@@ -83,6 +84,10 @@ func (n BasicNode) Materialize(identity profile.NodeIdentity) (domain.Node, erro
 	if n.Trojan != nil {
 		value := *n.Trojan
 		node.Trojan = &value
+	}
+	if n.TLS != nil {
+		value := *n.TLS
+		node.TLS = &value
 	}
 	if err := node.Validate(); err != nil {
 		return domain.Node{}, err
@@ -315,6 +320,7 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 		Username string          `json:"username"`
 		Password string          `json:"password"`
 		Network  networkListJSON `json:"network"`
+		TLS      json.RawMessage `json:"tls"`
 	}
 	if err := decodeStrictObject(raw, &wire); err != nil {
 		return BasicNode{}, err
@@ -326,6 +332,10 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 	network, err := wire.Network.ProxyNetwork()
 	if err != nil {
 		return BasicNode{}, err
+	}
+	tlsOptions, err := parseBasicOutboundTLS(wire.TLS)
+	if err != nil {
+		return BasicNode{}, fmt.Errorf("VMess TLS: %w", err)
 	}
 	node := BasicNode{
 		Source: profile.SourceNode{SourceKey: tag, SourceName: tag, PayloadJSON: append([]byte(nil), raw...)},
@@ -454,7 +464,7 @@ func parseBasicVMessOutbound(raw []byte, tag string) (BasicNode, error) {
 	allowed := map[string]struct{}{
 		"type": {}, "tag": {}, "server": {}, "server_port": {},
 		"uuid": {}, "security": {}, "alter_id": {}, "global_padding": {},
-		"authenticated_length": {}, "network": {}, "packet_encoding": {},
+		"authenticated_length": {}, "network": {}, "packet_encoding": {}, "tls": {},
 	}
 	if extras, err := unsupportedObjectFields(raw, allowed); err != nil {
 		return BasicNode{}, err
@@ -476,6 +486,7 @@ func parseBasicVMessOutbound(raw []byte, tag string) (BasicNode, error) {
 		AuthenticatedLength bool            `json:"authenticated_length"`
 		Network             networkListJSON `json:"network"`
 		PacketEncoding      string          `json:"packet_encoding"`
+		TLS                 json.RawMessage `json:"tls"`
 	}
 	if err := decodeStrictObject(raw, &wire); err != nil {
 		return BasicNode{}, err
@@ -502,6 +513,7 @@ func parseBasicVMessOutbound(raw []byte, tag string) (BasicNode, error) {
 			Network:             network,
 			PacketEncoding:      wire.PacketEncoding,
 		},
+		TLS: tlsOptions,
 	}
 	identity, err := profile.StableNodeID("validation-profile", tag)
 	if err != nil {
@@ -520,7 +532,7 @@ func parseBasicVMessOutbound(raw []byte, tag string) (BasicNode, error) {
 
 func parseBasicTrojanOutbound(raw []byte, tag string) (BasicNode, error) {
 	allowed := map[string]struct{}{
-		"type": {}, "tag": {}, "server": {}, "server_port": {}, "password": {}, "network": {},
+		"type": {}, "tag": {}, "server": {}, "server_port": {}, "password": {}, "network": {}, "tls": {},
 	}
 	if extras, err := unsupportedObjectFields(raw, allowed); err != nil {
 		return BasicNode{}, err
@@ -545,6 +557,10 @@ func parseBasicTrojanOutbound(raw []byte, tag string) (BasicNode, error) {
 	if err != nil {
 		return BasicNode{}, err
 	}
+	tlsOptions, err := parseBasicOutboundTLS(wire.TLS)
+	if err != nil {
+		return BasicNode{}, fmt.Errorf("Trojan TLS: %w", err)
+	}
 	node := BasicNode{
 		Source: profile.SourceNode{
 			SourceKey:   tag,
@@ -558,6 +574,7 @@ func parseBasicTrojanOutbound(raw []byte, tag string) (BasicNode, error) {
 			Password: wire.Password,
 			Network:  network,
 		},
+		TLS: tlsOptions,
 	}
 	identity, err := profile.StableNodeID("validation-profile", tag)
 	if err != nil {
@@ -577,7 +594,7 @@ func parseBasicTrojanOutbound(raw []byte, tag string) (BasicNode, error) {
 func parseBasicVLESSOutbound(raw []byte, tag string) (BasicNode, error) {
 	allowed := map[string]struct{}{
 		"type": {}, "tag": {}, "server": {}, "server_port": {},
-		"uuid": {}, "flow": {}, "encryption": {}, "network": {}, "packet_encoding": {},
+		"uuid": {}, "flow": {}, "encryption": {}, "network": {}, "packet_encoding": {}, "tls": {},
 	}
 	if extras, err := unsupportedObjectFields(raw, allowed); err != nil {
 		return BasicNode{}, err
@@ -597,6 +614,7 @@ func parseBasicVLESSOutbound(raw []byte, tag string) (BasicNode, error) {
 		Encryption     string          `json:"encryption"`
 		Network        networkListJSON `json:"network"`
 		PacketEncoding *string         `json:"packet_encoding"`
+		TLS            json.RawMessage `json:"tls"`
 	}
 	if err := decodeStrictObject(raw, &wire); err != nil {
 		return BasicNode{}, err
@@ -609,6 +627,10 @@ func parseBasicVLESSOutbound(raw []byte, tag string) (BasicNode, error) {
 	if wire.PacketEncoding != nil {
 		value := *wire.PacketEncoding
 		packetEncoding = &value
+	}
+	tlsOptions, err := parseBasicOutboundTLS(wire.TLS)
+	if err != nil {
+		return BasicNode{}, fmt.Errorf("VLESS TLS: %w", err)
 	}
 	node := BasicNode{
 		Source: profile.SourceNode{
@@ -626,6 +648,7 @@ func parseBasicVLESSOutbound(raw []byte, tag string) (BasicNode, error) {
 			Network:        network,
 			PacketEncoding: packetEncoding,
 		},
+		TLS: tlsOptions,
 	}
 	identity, err := profile.StableNodeID("validation-profile", tag)
 	if err != nil {
@@ -640,6 +663,42 @@ func parseBasicVLESSOutbound(raw []byte, tag string) (BasicNode, error) {
 		return BasicNode{}, err
 	}
 	return node, nil
+}
+
+func parseBasicOutboundTLS(raw json.RawMessage) (*domain.OutboundTLSOptions, error) {
+	if len(raw) == 0 || isJSONNull(raw) {
+		return nil, nil
+	}
+	allowed := map[string]struct{}{
+		"enabled": {}, "disable_sni": {}, "server_name": {}, "insecure": {},
+	}
+	if extras, err := unsupportedObjectFields(raw, allowed); err != nil {
+		return nil, err
+	} else if len(extras) != 0 {
+		return nil, fmt.Errorf(
+			"unsupported TLS fields: %s",
+			strings.Join(extras, ", "),
+		)
+	}
+	var wire struct {
+		Enabled    bool   `json:"enabled"`
+		DisableSNI bool   `json:"disable_sni"`
+		ServerName string `json:"server_name"`
+		Insecure   bool   `json:"insecure"`
+	}
+	if err := decodeStrictObject(raw, &wire); err != nil {
+		return nil, err
+	}
+	options := &domain.OutboundTLSOptions{
+		Enabled:    wire.Enabled,
+		DisableSNI: wire.DisableSNI,
+		ServerName: wire.ServerName,
+		Insecure:   wire.Insecure,
+	}
+	if err := options.Validate(); err != nil {
+		return nil, err
+	}
+	return options, nil
 }
 
 type networkListJSON []string
