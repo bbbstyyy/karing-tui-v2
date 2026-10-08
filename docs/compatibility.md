@@ -27,9 +27,9 @@ Current implementation: `internal/importer/singbox.AnalyzeBasicProfile`.
 | SOCKS `udp_over_tcp`, detour, dial extensions | Blocked | No silent field loss |
 | `direct`, `block`, `dns` outbounds | Ignored as non-node plumbing | Reported; not imported as proxy nodes |
 | selector / urltest source outbounds | Blocked | Not silently converted into project SelectionGroups |
-| VMess basic subset | Supported | uuid/security/alter_id/global_padding/authenticated_length/network/packet_encoding; any TLS, multiplex, transport or other dial extension blocks import |
-| VLESS basic subset | Supported | uuid/network/packet_encoding plus no-op encryption; packet_encoding omission vs explicit empty is preserved; flow, custom encryption, TLS, multiplex, transport and dial extensions block import |
-| Trojan basic subset | Supported | password/network; TLS, multiplex, transport and other dial extensions block import |
+| VMess basic subset | Supported | uuid/security/alter_id/global_padding/authenticated_length/network/packet_encoding plus verified basic TLS; multiplex, transport and other dial extensions block import |
+| VLESS basic subset | Supported | uuid/network/packet_encoding plus no-op encryption and verified basic TLS; packet_encoding omission vs explicit empty is preserved; flow, custom encryption, multiplex, transport and dial extensions block import |
+| Trojan basic subset | Supported | password/network plus verified basic TLS; multiplex, transport and other dial extensions block import |
 | Shadowsocks: `method`, `password`, optional plugin/plugin_opts, network | Supported basic subset | Complete supported fields are preserved; unsupported UDP-over-TCP/multiplex/dial extensions still block import |
 | Hysteria / Hysteria2 | Not yet supported | Blocks complete automatic import |
 | TUIC | Not yet supported | Blocks complete automatic import |
@@ -51,11 +51,12 @@ The current declaration/runtime compiler can materialize:
 | SOCKS4a | Implemented | TCP only |
 | SOCKS5 | Implemented | TCP/UDP/both as represented by the domain model |
 | Shadowsocks | Implemented basic subset | method/password/plugin/plugin_opts/network; no UDP-over-TCP, multiplex or detour field loss |
-| VMess | Implemented basic subset | uuid/security/alter_id/global_padding/authenticated_length/network/packet_encoding; no TLS, multiplex, V2Ray transport or detour field loss |
-| VLESS | Implemented basic subset | uuid/network and lossless packet_encoding presence; empty/none encryption only; flow/custom encryption/TLS/multiplex/transport/detour remain blocked |
-| Trojan | Implemented basic subset | password/network; TLS/multiplex/transport/detour and other dial extensions remain blocked |
+| VMess | Implemented basic subset | uuid/security/alter_id/global_padding/authenticated_length/network/packet_encoding plus basic TLS; no multiplex, V2Ray transport or detour field loss |
+| VLESS | Implemented basic subset | uuid/network, lossless packet_encoding presence and basic TLS; empty/none encryption only; flow/custom encryption/multiplex/transport/detour remain blocked |
+| Trojan | Implemented basic subset | password/network plus basic TLS; multiplex/transport/detour and other dial extensions remain blocked |
 | Domain-valued node server | Implemented with explicit Outbound DNS | Fails closed without configured node/outbound resolver |
-| TLS/Reality/advanced transport/Mux | Not yet implemented | Must not be dropped by importers |
+| Basic outbound TLS | Implemented for VMess/VLESS/Trojan | `enabled:true`, `server_name`, `insecure`, `disable_sni`; omitted TLS remains omitted; explicit disabled TLS and unmodelled TLS fields block import |
+| Reality/uTLS/ECH/certificates/advanced TLS, transport/Mux | Not yet implemented | Must not be dropped by importers |
 | Detour/pre-proxy chain | P1 / not yet implemented | Unsupported imported detour must block application |
 
 ## Routing compatibility
