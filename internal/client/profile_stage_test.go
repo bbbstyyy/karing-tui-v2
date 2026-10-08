@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
@@ -19,9 +20,9 @@ func TestStageProfileDeclarationClientRequiresCreatedResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
+	var calls atomic.Int32
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		call := calls.Add(1)
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/profiles/work/declaration/stage" {
 			http.Error(w, "unexpected route", http.StatusNotFound)
 			return
@@ -34,7 +35,7 @@ func TestStageProfileDeclarationClientRequiresCreatedResponse(t *testing.T) {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if calls == 2 {
+		if call == 2 {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
@@ -45,6 +46,9 @@ func TestStageProfileDeclarationClientRequiresCreatedResponse(t *testing.T) {
 			DeclarationSHA256: strings.Repeat("a", 64), CoreValidated: false, Applied: false,
 		})
 	}))
+	if err := server.Listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 	server.Listener = listener
 	server.Start()
 	defer server.Close()
@@ -62,7 +66,7 @@ func TestStageProfileDeclarationClientRequiresCreatedResponse(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "409") || errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("stale stage did not return conflict: %v", err)
 	}
-	if calls != 2 {
-		t.Fatalf("RPC count = %d, want 2", calls)
+	if calls.Load() != 2 {
+		t.Fatalf("RPC count = %d, want 2", calls.Load())
 	}
 }
