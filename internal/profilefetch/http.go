@@ -56,10 +56,13 @@ type ConditionalRequest struct {
 }
 
 type Result struct {
-	Body         []byte
-	NotModified  bool
-	ETag         string
-	LastModified string
+	Body                  []byte
+	NotModified           bool
+	ETag                  string
+	LastModified          string
+	SubscriptionUsage     *profile.SubscriptionUsage
+	UsageMetadataObserved bool
+	UsageMetadataError    string
 }
 
 type HTTPStatusError struct {
@@ -183,14 +186,24 @@ func (f *HTTPFetcher) Fetch(
 	if err != nil {
 		return Result{}, err
 	}
+	usage, usageObserved, usageErr := profile.ParseSubscriptionUserinfo(
+		response.Header.Get("Subscription-Userinfo"),
+	)
+	usageError := ""
+	if usageErr != nil {
+		usageError = usageErr.Error()
+	}
 
 	switch response.StatusCode {
 	case http.StatusNotModified:
 		drainResponse(response.Body)
 		return Result{
-			NotModified:  true,
-			ETag:         etag,
-			LastModified: lastModified,
+			NotModified:           true,
+			ETag:                  etag,
+			LastModified:          lastModified,
+			SubscriptionUsage:     usage,
+			UsageMetadataObserved: usageObserved,
+			UsageMetadataError:    usageError,
 		}, nil
 	case http.StatusOK:
 		body, err := readBoundedBody(response.Body, f.options.MaxBodyBytes)
@@ -198,9 +211,12 @@ func (f *HTTPFetcher) Fetch(
 			return Result{}, err
 		}
 		return Result{
-			Body:         body,
-			ETag:         etag,
-			LastModified: lastModified,
+			Body:                  body,
+			ETag:                  etag,
+			LastModified:          lastModified,
+			SubscriptionUsage:     usage,
+			UsageMetadataObserved: usageObserved,
+			UsageMetadataError:    usageError,
 		}, nil
 	default:
 		retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
