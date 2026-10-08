@@ -151,6 +151,73 @@ func TestShadowsocksOptionsAreBoundedAndExplicit(t *testing.T) {
 	}
 }
 
+func TestVMessOptionsMatchApprovedCoreBasicFields(t *testing.T) {
+	valid := []VMessNodeOptions{
+		{
+			UUID:    "11111111-2222-3333-4444-555555555555",
+			Security: "auto",
+			Network:  ProxyNetworkBoth,
+		},
+		{
+			UUID:                "11111111222233334444555555555555",
+			Security:            "aes-128-gcm",
+			AlterID:             1,
+			GlobalPadding:       true,
+			AuthenticatedLength: true,
+			Network:             ProxyNetworkTCP,
+			PacketEncoding:      "xudp",
+		},
+		{
+			UUID:           "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+			Security:       "none",
+			Network:        ProxyNetworkUDP,
+			PacketEncoding: "packetaddr",
+		},
+	}
+	for _, options := range valid {
+		if err := options.Validate(); err != nil {
+			t.Fatalf("valid VMess options %+v: %v", options, err)
+		}
+	}
+
+	invalid := []VMessNodeOptions{
+		{},
+		{UUID: "not-a-uuid", Security: "auto", Network: ProxyNetworkBoth},
+		{UUID: "11111111-2222-3333-4444-555555555555", Security: "rc4-md5", Network: ProxyNetworkBoth},
+		{UUID: "11111111-2222-3333-4444-555555555555", Security: "auto", Network: ProxyNetwork("icmp")},
+		{UUID: "11111111-2222-3333-4444-555555555555", Security: "auto", Network: ProxyNetworkBoth, PacketEncoding: "unknown"},
+	}
+	for i, options := range invalid {
+		if err := options.Validate(); !errors.Is(err, ErrInvalidNode) {
+			t.Fatalf("invalid VMess case %d error = %v", i, err)
+		}
+	}
+}
+
+func TestVMessNodeRejectsMixedProtocolOptions(t *testing.T) {
+	vmess := &VMessNodeOptions{
+		UUID:    "11111111-2222-3333-4444-555555555555",
+		Security: "auto",
+		Network:  ProxyNetworkBoth,
+	}
+	valid := Node{
+		ProfileID: "profile-v",
+		NodeID:    "vmess-a",
+		Kind:      NodeVMess,
+		Server:    "vmess.example.com",
+		Port:      10086,
+		VMess:     vmess,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	mixed := valid
+	mixed.HTTP = &HTTPNodeOptions{}
+	if err := mixed.Validate(); !errors.Is(err, ErrInvalidNode) {
+		t.Fatalf("mixed VMess options error = %v", err)
+	}
+}
+
 func TestNodeServerMustBeBareHost(t *testing.T) {
 	base := Node{
 		ProfileID: "profile-a",
