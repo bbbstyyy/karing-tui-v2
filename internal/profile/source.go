@@ -14,6 +14,7 @@ type SourceFormat string
 
 const (
 	SourceFormatSingBox SourceFormat = "sing-box"
+	SourceFormatURIList SourceFormat = "uri-list"
 
 	DefaultUpdateInterval = 12 * time.Hour
 	MinUpdateInterval     = 5 * time.Minute
@@ -59,7 +60,9 @@ func (s SourceSpec) Validate() error {
 	if err := ValidateProfileID(s.ProfileID); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidProfileSource, err)
 	}
-	if s.Format != SourceFormatSingBox {
+	switch s.Format {
+	case SourceFormatSingBox, SourceFormatURIList:
+	default:
 		return fmt.Errorf("%w: unsupported source format %q", ErrInvalidProfileSource, s.Format)
 	}
 	if err := validateSourceLocation(s.LocationKind, s.Location); err != nil {
