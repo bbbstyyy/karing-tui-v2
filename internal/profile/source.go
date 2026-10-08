@@ -50,6 +50,7 @@ type SourceSpec struct {
 	Location       string
 	UserAgent      string
 	Fetch          FetchPolicy
+	Filter         NodeFilterSpec
 	UpdateInterval time.Duration
 	Enabled        bool
 }
@@ -69,6 +70,9 @@ func (s SourceSpec) Validate() error {
 	}
 	if err := s.Fetch.Validate(); err != nil {
 		return err
+	}
+	if err := s.Filter.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidProfileSource, err)
 	}
 	if s.UpdateInterval != 0 {
 		if s.LocationKind != SourceLocationURL {
