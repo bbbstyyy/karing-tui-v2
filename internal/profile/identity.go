@@ -56,6 +56,13 @@ func ValidateProfileID(profileID string) error {
 	return nil
 }
 
+func ValidateNodeID(nodeID string) error {
+	if err := validateStableID(nodeID); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidPriorIdentity, err)
+	}
+	return nil
+}
+
 func StableNodeID(profileID, sourceKey string) (string, error) {
 	if err := ValidateProfileID(profileID); err != nil {
 		return "", err
