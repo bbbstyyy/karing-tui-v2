@@ -39,6 +39,7 @@ type BasicNode struct {
 	Shadowsocks *domain.ShadowsocksNodeOptions
 	VMess       *domain.VMessNodeOptions
 	VLESS       *domain.VLESSNodeOptions
+	Trojan      *domain.TrojanNodeOptions
 }
 
 func (n BasicNode) Materialize(identity profile.NodeIdentity) (domain.Node, error) {
@@ -78,6 +79,10 @@ func (n BasicNode) Materialize(identity profile.NodeIdentity) (domain.Node, erro
 			value.PacketEncoding = &packetEncoding
 		}
 		node.VLESS = &value
+	}
+	if n.Trojan != nil {
+		value := *n.Trojan
+		node.Trojan = &value
 	}
 	if err := node.Validate(); err != nil {
 		return domain.Node{}, err
@@ -230,6 +235,8 @@ func AnalyzeBasicProfile(data []byte, profileID string) (ProfileAnalysis, error)
 			node, err = parseBasicVMessOutbound(raw, base.Tag)
 		case "vless":
 			node, err = parseBasicVLESSOutbound(raw, base.Tag)
+		case "trojan":
+			node, err = parseBasicTrojanOutbound(raw, base.Tag)
 		default:
 			analysis.Diagnostics = append(analysis.Diagnostics, Diagnostic{
 				Level: DiagnosticError, Path: path + ".type", Code: "unsupported_proxy_protocol",
@@ -278,6 +285,8 @@ func DecodeBasicNode(payload []byte, identity profile.NodeIdentity) (domain.Node
 		node, err = parseBasicVMessOutbound(payload, base.Tag)
 	case "vless":
 		node, err = parseBasicVLESSOutbound(payload, base.Tag)
+	case "trojan":
+		node, err = parseBasicTrojanOutbound(payload, base.Tag)
 	default:
 		return domain.Node{}, fmt.Errorf("basic node payload type %q is unsupported", base.Type)
 	}
@@ -492,6 +501,62 @@ func parseBasicVMessOutbound(raw []byte, tag string) (BasicNode, error) {
 			AuthenticatedLength: wire.AuthenticatedLength,
 			Network:             network,
 			PacketEncoding:      wire.PacketEncoding,
+		},
+	}
+	identity, err := profile.StableNodeID("validation-profile", tag)
+	if err != nil {
+		return BasicNode{}, err
+	}
+	if _, err := node.Materialize(profile.NodeIdentity{
+		ProfileID:  "validation-profile",
+		NodeID:     identity,
+		SourceKey:  tag,
+		SourceName: tag,
+	}); err != nil {
+		return BasicNode{}, err
+	}
+	return node, nil
+}
+
+func parseBasicTrojanOutbound(raw []byte, tag string) (BasicNode, error) {
+	allowed := map[string]struct{}{
+		"type": {}, "tag": {}, "server": {}, "server_port": {}, "password": {}, "network": {},
+	}
+	if extras, err := unsupportedObjectFields(raw, allowed); err != nil {
+		return BasicNode{}, err
+	} else if len(extras) != 0 {
+		return BasicNode{}, fmt.Errorf(
+			"unsupported Trojan fields: %s",
+			strings.Join(extras, ", "),
+		)
+	}
+	var wire struct {
+		Type     string          `json:"type"`
+		Tag      string          `json:"tag"`
+		Server   string          `json:"server"`
+		Port     uint16          `json:"server_port"`
+		Password string          `json:"password"`
+		Network  networkListJSON `json:"network"`
+	}
+	if err := decodeStrictObject(raw, &wire); err != nil {
+		return BasicNode{}, err
+	}
+	network, err := wire.Network.ProxyNetwork()
+	if err != nil {
+		return BasicNode{}, err
+	}
+	node := BasicNode{
+		Source: profile.SourceNode{
+			SourceKey:   tag,
+			SourceName:  tag,
+			PayloadJSON: append([]byte(nil), raw...),
+		},
+		Kind:   domain.NodeTrojan,
+		Server: wire.Server,
+		Port:   wire.Port,
+		Trojan: &domain.TrojanNodeOptions{
+			Password: wire.Password,
+			Network:  network,
 		},
 	}
 	identity, err := profile.StableNodeID("validation-profile", tag)
