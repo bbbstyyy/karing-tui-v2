@@ -99,7 +99,6 @@ type vmessV1 struct {
 	PacketEncoding      string              `json:"packet_encoding,omitempty"`
 }
 
-
 func (n nodeV1) toDomain() (domain.Node, error) {
 	result := domain.Node{
 		ProfileID: n.ProfileID,
