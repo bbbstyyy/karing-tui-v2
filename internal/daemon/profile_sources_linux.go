@@ -317,6 +317,7 @@ func writeProfileSourceAPIError(
 		errors.Is(err, profile.ErrInvalidSourceNode),
 		errors.Is(err, profile.ErrDuplicateSourceKey),
 		errors.Is(err, profileupdate.ErrImportBlocked),
+		errors.Is(err, profileupdate.ErrSourceAnalysisFailed),
 		errors.Is(err, profilefetch.ErrUnsupportedSourceLocation),
 		errors.Is(err, profilefetch.ErrUnsupportedFetchMode),
 		errors.Is(err, profile.ErrInvalidProfileID):
