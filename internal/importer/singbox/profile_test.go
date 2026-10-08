@@ -232,6 +232,108 @@ func TestAnalyzeBasicProfileBlocksUnsupportedVMessExtensions(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBasicProfileVLESSPreservesPacketEncodingPresence(t *testing.T) {
+	data := []byte(`{
+  "outbounds":[
+    {
+      "type":"vless",
+      "tag":"vless-default",
+      "server":"vless.example.com",
+      "server_port":443,
+      "uuid":"11111111-2222-3333-4444-555555555555",
+      "network":["tcp","udp"]
+    },
+    {
+      "type":"vless",
+      "tag":"vless-none",
+      "server":"192.0.2.44",
+      "server_port":8443,
+      "uuid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      "encryption":"none",
+      "network":"udp",
+      "packet_encoding":""
+    }
+  ]
+}`)
+	analysis, err := AnalyzeBasicProfile(data, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !analysis.CanCommit() || len(analysis.Nodes) != 2 {
+		t.Fatalf("VLESS analysis = %+v", analysis)
+	}
+	first := analysis.Nodes[0]
+	if first.Kind != domain.NodeVLESS ||
+		first.VLESS == nil ||
+		first.VLESS.PacketEncoding != nil ||
+		first.VLESS.Network != domain.ProxyNetworkBoth {
+		t.Fatalf("default VLESS node = %+v", first)
+	}
+	second := analysis.Nodes[1]
+	if second.Kind != domain.NodeVLESS ||
+		second.VLESS == nil ||
+		second.VLESS.Encryption != "none" ||
+		second.VLESS.Network != domain.ProxyNetworkUDP ||
+		second.VLESS.PacketEncoding == nil ||
+		*second.VLESS.PacketEncoding != "" {
+		t.Fatalf("explicit VLESS node = %+v", second)
+	}
+
+	node, err := DecodeBasicNode(second.Source.PayloadJSON, profile.NodeIdentity{
+		ProfileID:  "profile-a",
+		NodeID:     "stable-vless",
+		SourceKey:  "vless-none",
+		SourceName: "vless-none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.NodeID != "stable-vless" ||
+		node.Kind != domain.NodeVLESS ||
+		node.VLESS == nil ||
+		node.VLESS.PacketEncoding == nil ||
+		*node.VLESS.PacketEncoding != "" {
+		t.Fatalf("decoded VLESS node = %+v", node)
+	}
+}
+
+func TestAnalyzeBasicProfileBlocksUnsupportedVLESSExtensions(t *testing.T) {
+	for _, field := range []string{
+		`"tls":{"enabled":true}`,
+		`"transport":{"type":"ws","path":"/ws"}`,
+		`"multiplex":{"enabled":true}`,
+		`"detour":"bootstrap"`,
+		`"flow":"xtls-rprx-vision"`,
+		`"encryption":"mlkem768x25519plus.native.1rtt.invalid"`,
+	} {
+		data := []byte(`{
+  "outbounds":[{
+    "type":"vless",
+    "tag":"vless-a",
+    "server":"vless.example.com",
+    "server_port":443,
+    "uuid":"11111111-2222-3333-4444-555555555555",
+    ` + field + `
+  }]
+}`)
+		analysis, err := AnalyzeBasicProfile(data, "profile-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if analysis.CanCommit() || len(analysis.Nodes) != 0 {
+			t.Fatalf("VLESS extension %s was silently accepted: %+v", field, analysis)
+		}
+		if !hasDiagnostic(
+			analysis.Diagnostics,
+			DiagnosticError,
+			"outbounds[0]",
+			"unsupported_or_invalid_node",
+		) {
+			t.Fatalf("VLESS extension diagnostic for %s = %+v", field, analysis.Diagnostics)
+		}
+	}
+}
+
 func TestAnalyzeBasicProfileAcceptsCoreNetworkListArray(t *testing.T) {
 	data := []byte(`{
   "outbounds":[{
@@ -285,7 +387,7 @@ func TestAnalyzeBasicProfileBlocksUnknownProxyProtocolEvenWithSupportedNodes(t *
 	data := []byte(`{
   "outbounds":[
     {"type":"http","tag":"http-a","server":"127.0.0.1","server_port":8080},
-    {"type":"vless","tag":"vless-b","server":"example.com","server_port":443,"uuid":"00000000-0000-0000-0000-000000000000"}
+    {"type":"trojan","tag":"trojan-b","server":"example.com","server_port":443,"password":"secret"}
   ]
 }`)
 	analysis, err := AnalyzeBasicProfile(data, "profile-a")
