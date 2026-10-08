@@ -393,9 +393,9 @@ func parseBasicShadowsocksOutbound(raw []byte, tag string) (BasicNode, error) {
 			SourceName:  tag,
 			PayloadJSON: append([]byte(nil), raw...),
 		},
-		Kind:        domain.NodeShadowsocks,
-		Server:      wire.Server,
-		Port:        wire.Port,
+		Kind:   domain.NodeShadowsocks,
+		Server: wire.Server,
+		Port:   wire.Port,
 		Shadowsocks: &domain.ShadowsocksNodeOptions{
 			Method:        wire.Method,
 			Password:      wire.Password,
