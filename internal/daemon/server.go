@@ -187,7 +187,9 @@ func newDaemonHTTPServer(handler http.Handler) *http.Server {
 
 func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Handler {
 	mux := http.NewServeMux()
-	profileMetadataRefresh := registerProfileMetadataRoutes(mux, store, runtime)
+	profileOperations := newProfileOperationGate(maxConcurrentProfileMetadataRefreshes)
+	profileMetadataRefresh := registerProfileMetadataRoutes(mux, store, runtime, profileOperations)
+	profileFullRefresh := registerProfileSourceRoutes(mux, store, runtime, profileOperations)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
 		selectionCore = runtime
@@ -347,6 +349,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"dns_fallback_lowerer":        true,
 				"dns_runtime_paths_observed":  true,
 				"profile_source_state":        true,
+				"profile_source_api":          true,
+				"profile_refresh_api":         profileFullRefresh,
 				"profile_node_overlays":       true,
 				"profile_overlay_runtime":     true,
 				"profile_node_filter_state":   true,
