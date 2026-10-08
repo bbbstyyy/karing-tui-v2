@@ -127,24 +127,23 @@ type ProfileSourcePutRequest struct {
 }
 
 type ProfileSourceResponse struct {
-	ProfileID              string            `json:"profile_id"`
-	Revision               uint64            `json:"revision"`
-	Source                 ProfileSourceSpec `json:"source"`
-	CreatedAt              string            `json:"created_at"`
-	UpdatedAt              string            `json:"updated_at"`
-	LastAttemptAt          string            `json:"last_attempt_at,omitempty"`
-	LastSuccessAt          string            `json:"last_success_at,omitempty"`
-	LastError              string            `json:"last_error,omitempty"`
-	LastSourceRevision     string            `json:"last_source_revision,omitempty"`
-	ETag                   string            `json:"etag,omitempty"`
-	LastModified           string            `json:"last_modified,omitempty"`
-	ConsecutiveFailures    uint32            `json:"consecutive_failures"`
-	RetryAfterAt           string            `json:"retry_after_at,omitempty"`
-	ActiveUpdateID         string            `json:"active_update_id,omitempty"`
-	ActiveUpdateStartedAt  string            `json:"active_update_started_at,omitempty"`
-	CurrentSnapshotID      *int64            `json:"current_snapshot_id,omitempty"`
+	ProfileID             string            `json:"profile_id"`
+	Revision              uint64            `json:"revision"`
+	Source                ProfileSourceSpec `json:"source"`
+	CreatedAt             string            `json:"created_at"`
+	UpdatedAt             string            `json:"updated_at"`
+	LastAttemptAt         string            `json:"last_attempt_at,omitempty"`
+	LastSuccessAt         string            `json:"last_success_at,omitempty"`
+	LastError             string            `json:"last_error,omitempty"`
+	LastSourceRevision    string            `json:"last_source_revision,omitempty"`
+	ETag                  string            `json:"etag,omitempty"`
+	LastModified          string            `json:"last_modified,omitempty"`
+	ConsecutiveFailures   uint32            `json:"consecutive_failures"`
+	RetryAfterAt          string            `json:"retry_after_at,omitempty"`
+	ActiveUpdateID        string            `json:"active_update_id,omitempty"`
+	ActiveUpdateStartedAt string            `json:"active_update_started_at,omitempty"`
+	CurrentSnapshotID     *int64            `json:"current_snapshot_id,omitempty"`
 }
-
 type ProfileSourceListResponse struct {
 	Profiles []ProfileSourceResponse `json:"profiles"`
 }
