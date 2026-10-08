@@ -40,10 +40,7 @@ func TestRefreshProfileSourceMetadataPersistsUsageWithoutTouchingRefreshHealth(t
 	upload := int64(11)
 	download := int64(22)
 	total := int64(100)
-	fetcher := metadataFetcherFunc(func(
-		_ context.Context,
-		spec profile.SourceSpec,
-	) (profilefetch.MetadataResult, error) {
+	fetcher := metadataFetcherFunc(func(_ context.Context, spec profile.SourceSpec) (profilefetch.MetadataResult, error) {
 		if spec.ProfileID != "profile-a" {
 			t.Fatalf("metadata source = %+v", spec)
 		}
@@ -79,10 +76,7 @@ func TestRefreshProfileSourceMetadataPersistsUsageWithoutTouchingRefreshHealth(t
 		t.Fatalf("metadata refresh result = %+v", result)
 	}
 
-	malformed := metadataFetcherFunc(func(
-		context.Context,
-		profile.SourceSpec,
-	) (profilefetch.MetadataResult, error) {
+	malformed := metadataFetcherFunc(func(context.Context, profile.SourceSpec) (profilefetch.MetadataResult, error) {
 		return profilefetch.MetadataResult{
 			UsageMetadataObserved: true,
 			UsageMetadataError:    "invalid Subscription-Userinfo metadata",
@@ -124,10 +118,7 @@ func TestRefreshProfileSourceMetadataNetworkFailureDoesNotChangeSourceHealth(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	fetcher := metadataFetcherFunc(func(
-		context.Context,
-		profile.SourceSpec,
-	) (profilefetch.MetadataResult, error) {
+	fetcher := metadataFetcherFunc(func(context.Context, profile.SourceSpec) (profilefetch.MetadataResult, error) {
 		return profilefetch.MetadataResult{}, profilefetch.ErrFetchNetwork
 	})
 	_, err = RefreshProfileSourceMetadata(
@@ -169,10 +160,7 @@ func TestRefreshProfileSourceMetadataFailsClosedOnSourceRevisionChange(t *testin
 		t.Fatal(err)
 	}
 	total := int64(100)
-	fetcher := metadataFetcherFunc(func(
-		ctx context.Context,
-		spec profile.SourceSpec,
-	) (profilefetch.MetadataResult, error) {
+	fetcher := metadataFetcherFunc(func(ctx context.Context, spec profile.SourceSpec) (profilefetch.MetadataResult, error) {
 		changed := spec
 		changed.Location = "https://example.net/new-subscription"
 		if _, err := store.CommitProfileSource(ctx, source.Revision, changed); err != nil {
