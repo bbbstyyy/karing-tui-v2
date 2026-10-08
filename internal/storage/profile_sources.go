@@ -138,12 +138,15 @@ func (s *Store) CommitProfileSource(
 				fetch_mode,
 				fetch_profile_id,
 				fetch_node_id,
+				filter_method,
+				filter_expression,
+				filter_match_attribute,
 				enabled,
 				update_interval_seconds,
 				created_at,
 				updated_at
 			)
-			VALUES(?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES(?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			spec.ProfileID,
 			spec.Format,
@@ -153,6 +156,9 @@ func (s *Store) CommitProfileSource(
 			spec.Fetch.Mode,
 			spec.Fetch.ProfileID,
 			spec.Fetch.NodeID,
+			spec.Filter.Method,
+			spec.Filter.KeywordOrRegex,
+			boolInt(spec.Filter.MatchAttribute),
 			boolInt(spec.Enabled),
 			int64(spec.UpdateInterval/time.Second),
 			now.Format(time.RFC3339Nano),
@@ -185,6 +191,9 @@ func (s *Store) CommitProfileSource(
 				fetch_mode = ?,
 				fetch_profile_id = ?,
 				fetch_node_id = ?,
+				filter_method = ?,
+				filter_expression = ?,
+				filter_match_attribute = ?,
 				enabled = ?,
 				update_interval_seconds = ?,
 				updated_at = ?
@@ -197,6 +206,9 @@ func (s *Store) CommitProfileSource(
 			spec.Fetch.Mode,
 			spec.Fetch.ProfileID,
 			spec.Fetch.NodeID,
+			spec.Filter.Method,
+			spec.Filter.KeywordOrRegex,
+			boolInt(spec.Filter.MatchAttribute),
 			boolInt(spec.Enabled),
 			int64(spec.UpdateInterval/time.Second),
 			now,
@@ -623,6 +635,9 @@ const profileSourceSelect = `
 		s.fetch_mode,
 		s.fetch_profile_id,
 		s.fetch_node_id,
+		s.filter_method,
+		s.filter_expression,
+		s.filter_match_attribute,
 		s.enabled,
 		s.update_interval_seconds,
 		s.created_at,
@@ -654,6 +669,7 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		revision           int64
 		enabled            int
 		updateInterval     int64
+		filterMatchAttr    int
 		createdAt          string
 		updatedAt          string
 		lastAttempt        sql.NullString
@@ -679,6 +695,9 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		&state.Spec.Fetch.Mode,
 		&state.Spec.Fetch.ProfileID,
 		&state.Spec.Fetch.NodeID,
+		&state.Spec.Filter.Method,
+		&state.Spec.Filter.KeywordOrRegex,
+		&filterMatchAttr,
 		&enabled,
 		&updateInterval,
 		&createdAt,
@@ -710,6 +729,7 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		return ProfileSourceState{}, errors.New("profile source contains invalid persisted counters")
 	}
 	state.Revision = uint64(revision)
+	state.Spec.Filter.MatchAttribute = filterMatchAttr != 0
 	state.Spec.Enabled = enabled != 0
 	state.Spec.UpdateInterval = time.Duration(updateInterval) * time.Second
 	state.ConsecutiveFailures = uint32(consecutiveFailure)
