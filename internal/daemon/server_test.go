@@ -140,6 +140,8 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		caps.Capabilities["profile_node_filter"] ||
 		!caps.Capabilities["profile_refresh_fetch"] ||
 		!caps.Capabilities["profile_refresh_scheduler"] ||
+		!caps.Capabilities["profile_metadata_api"] ||
+		!caps.Capabilities["profile_metadata_refresh"] ||
 		caps.Capabilities["profile_fetch_selected"] ||
 		caps.Capabilities["profile_fetch_specific_node"] ||
 		!caps.Capabilities["cn_preset_snapshot"] ||
