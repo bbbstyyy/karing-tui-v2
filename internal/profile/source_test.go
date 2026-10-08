@@ -21,6 +21,28 @@ func TestSourceSpecAcceptsHTTPSDirect(t *testing.T) {
 	}
 }
 
+func TestSourceSpecAcceptsURIListSources(t *testing.T) {
+	for _, location := range []struct {
+		kind  SourceLocationKind
+		value string
+	}{
+		{kind: SourceLocationURL, value: "https://example.com/subscription.txt"},
+		{kind: SourceLocationFile, value: "/home/user/subscription.txt"},
+	} {
+		spec := SourceSpec{
+			ProfileID:    "profile-uri",
+			Format:       SourceFormatURIList,
+			LocationKind: location.kind,
+			Location:     location.value,
+			Fetch:        FetchPolicy{Mode: FetchDirect},
+			Enabled:      true,
+		}
+		if err := spec.Validate(); err != nil {
+			t.Fatalf("URI-list source %+v: %v", location, err)
+		}
+	}
+}
+
 func TestSourceSpecAcceptsSelectedAndFixedFetch(t *testing.T) {
 	for _, fetch := range []FetchPolicy{
 		{Mode: FetchSelected},
