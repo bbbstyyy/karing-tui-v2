@@ -14,6 +14,7 @@ const (
 	NodeSOCKS       NodeKind = "socks"
 	NodeHTTP        NodeKind = "http"
 	NodeShadowsocks NodeKind = "shadowsocks"
+	NodeVMess       NodeKind = "vmess"
 )
 
 type SOCKSVersion string
@@ -54,6 +55,17 @@ type ShadowsocksNodeOptions struct {
 	Network       ProxyNetwork
 }
 
+type VMessNodeOptions struct {
+	UUID                string
+	Security            string
+	AlterID             uint16
+	GlobalPadding       bool
+	AuthenticatedLength bool
+	Network             ProxyNetwork
+	PacketEncoding      string
+}
+
+
 type Node struct {
 	ProfileID   string
 	NodeID      string
@@ -63,6 +75,7 @@ type Node struct {
 	SOCKS       *SOCKSNodeOptions
 	HTTP        *HTTPNodeOptions
 	Shadowsocks *ShadowsocksNodeOptions
+	VMess       *VMessNodeOptions
 }
 
 func (n Node) Validate() error {
@@ -81,24 +94,31 @@ func (n Node) Validate() error {
 
 	switch n.Kind {
 	case NodeSOCKS:
-		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil {
+		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil {
 			return fmt.Errorf("%w: SOCKS node must contain only SOCKS options", ErrInvalidNode)
 		}
 		if err := n.SOCKS.Validate(); err != nil {
 			return err
 		}
 	case NodeHTTP:
-		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil {
+		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil || n.VMess != nil {
 			return fmt.Errorf("%w: HTTP node must contain only HTTP options", ErrInvalidNode)
 		}
 		if err := n.HTTP.Validate(); err != nil {
 			return err
 		}
 	case NodeShadowsocks:
-		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil {
+		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil || n.VMess != nil {
 			return fmt.Errorf("%w: Shadowsocks node must contain only Shadowsocks options", ErrInvalidNode)
 		}
 		if err := n.Shadowsocks.Validate(); err != nil {
+			return err
+		}
+	case NodeVMess:
+		if n.VMess == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil {
+			return fmt.Errorf("%w: VMess node must contain only VMess options", ErrInvalidNode)
+		}
+		if err := n.VMess.Validate(); err != nil {
 			return err
 		}
 	default:
@@ -173,6 +193,52 @@ func (o ShadowsocksNodeOptions) Validate() error {
 	case ProxyNetworkBoth, ProxyNetworkTCP, ProxyNetworkUDP:
 	default:
 		return fmt.Errorf("%w: unsupported Shadowsocks network %q", ErrInvalidNode, o.Network)
+	}
+	return nil
+}
+
+func (o VMessNodeOptions) Validate() error {
+	if err := validateVMessUUID(o.UUID); err != nil {
+		return fmt.Errorf("%w: VMess UUID: %v", ErrInvalidNode, err)
+	}
+	switch o.Security {
+	case "", "auto", "zero", "none", "aes-128-gcm", "chacha20-poly1305", "aes-128-cfb":
+	default:
+		return fmt.Errorf("%w: unsupported VMess security %q", ErrInvalidNode, o.Security)
+	}
+	switch o.Network {
+	case ProxyNetworkBoth, ProxyNetworkTCP, ProxyNetworkUDP:
+	default:
+		return fmt.Errorf("%w: unsupported VMess network %q", ErrInvalidNode, o.Network)
+	}
+	switch o.PacketEncoding {
+	case "", "packetaddr", "xudp":
+	default:
+		return fmt.Errorf("%w: unsupported VMess packet encoding %q", ErrInvalidNode, o.PacketEncoding)
+	}
+	return nil
+}
+
+func validateVMessUUID(value string) error {
+	if len(value) != 32 && len(value) != 36 {
+		return errors.New("UUID must contain 32 hexadecimal digits with optional canonical hyphens")
+	}
+	for index, r := range value {
+		if len(value) == 36 {
+			switch index {
+			case 8, 13, 18, 23:
+				if r != '-' {
+					return errors.New("UUID has invalid canonical hyphen placement")
+				}
+				continue
+			}
+		}
+		if (r >= '0' && r <= '9') ||
+			(r >= 'a' && r <= 'f') ||
+			(r >= 'A' && r <= 'F') {
+			continue
+		}
+		return errors.New("UUID contains a non-hexadecimal character")
 	}
 	return nil
 }
