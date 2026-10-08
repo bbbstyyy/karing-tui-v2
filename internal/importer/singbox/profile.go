@@ -495,6 +495,10 @@ func parseBasicVMessOutbound(raw []byte, tag string) (BasicNode, error) {
 	if err != nil {
 		return BasicNode{}, err
 	}
+	tlsOptions, err := parseBasicOutboundTLS(wire.TLS)
+	if err != nil {
+		return BasicNode{}, fmt.Errorf("VMess TLS: %w", err)
+	}
 	node := BasicNode{
 		Source: profile.SourceNode{
 			SourceKey:   tag,
@@ -549,6 +553,7 @@ func parseBasicTrojanOutbound(raw []byte, tag string) (BasicNode, error) {
 		Port     uint16          `json:"server_port"`
 		Password string          `json:"password"`
 		Network  networkListJSON `json:"network"`
+		TLS      json.RawMessage `json:"tls"`
 	}
 	if err := decodeStrictObject(raw, &wire); err != nil {
 		return BasicNode{}, err
