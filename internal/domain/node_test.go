@@ -289,6 +289,52 @@ func TestVLESSNodeRejectsMixedProtocolOptions(t *testing.T) {
 	}
 }
 
+func TestTrojanOptionsAreBoundedAndExplicit(t *testing.T) {
+	valid := []TrojanNodeOptions{
+		{Password: "secret", Network: ProxyNetworkBoth},
+		{Password: "secret with spaces", Network: ProxyNetworkTCP},
+		{Password: "another-secret", Network: ProxyNetworkUDP},
+	}
+	for _, options := range valid {
+		if err := options.Validate(); err != nil {
+			t.Fatalf("valid Trojan options %+v: %v", options, err)
+		}
+	}
+
+	invalid := []TrojanNodeOptions{
+		{},
+		{Password: "bad\nsecret", Network: ProxyNetworkBoth},
+		{Password: "secret", Network: ProxyNetwork("icmp")},
+	}
+	for i, options := range invalid {
+		if err := options.Validate(); !errors.Is(err, ErrInvalidNode) {
+			t.Fatalf("invalid Trojan case %d error = %v", i, err)
+		}
+	}
+}
+
+func TestTrojanNodeRejectsMixedProtocolOptions(t *testing.T) {
+	valid := Node{
+		ProfileID: "profile-trojan",
+		NodeID:    "trojan-a",
+		Kind:      NodeTrojan,
+		Server:    "trojan.example.com",
+		Port:      443,
+		Trojan: &TrojanNodeOptions{
+			Password: "secret",
+			Network:  ProxyNetworkBoth,
+		},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	mixed := valid
+	mixed.HTTP = &HTTPNodeOptions{}
+	if err := mixed.Validate(); !errors.Is(err, ErrInvalidNode) {
+		t.Fatalf("mixed Trojan options error = %v", err)
+	}
+}
+
 func TestNodeServerMustBeBareHost(t *testing.T) {
 	base := Node{
 		ProfileID: "profile-a",
