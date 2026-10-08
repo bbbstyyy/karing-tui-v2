@@ -2,7 +2,7 @@
 
 Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs/plan.md).
 
-> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. The deterministic routing/config compiler, managed apply API, CN preset runtime, subscriptions, and TUI are **not** implemented yet.
+> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. M2 routing/compiler primitives and M3 source/snapshot management exist, but broad subscription compatibility, the complete CN offline resource bundle, automatic profile-to-declaration promotion, and TUI are **not** finished.
 
 ## Non-negotiable scope
 
@@ -109,3 +109,17 @@ Compiler-owned strict apply now requires declaration provenance on new native ar
 
 
 `internal/daemon.DeclarationCompileCoordinator` now provides the immutable declaration-to-artifact trust boundary. It loads an exact positive declaration revision, recomputes and verifies the stored declaration SHA-256 before invoking any schema compiler, passes a defensive copy of the exact declaration bytes to the compiler engine, and then binds the resulting native artifact to that revision/hash. It intentionally does not apply the artifact; declaration compilation and runtime apply remain separate operations until the versioned declaration schema/compiler is wired into the daemon API.
+
+## Profile management CLI (M3/M4 groundwork)
+
+The daemon remains the sole state writer. Profile commands use the protected local Unix socket; they cannot modify the running core generation.
+
+```sh
+karing-tui profiles list --json
+karing-tui profiles nodes my-profile --offset=0 --limit=100 --json
+karing-tui profiles replace-overlay my-profile node-id \
+  --expected-revision=0 --disabled=false --favorite=true \
+  --alias='Local alias' --sort-rank=none
+```
+
+Listing commands exclude source locations, import source keys and proxy credentials. `replace-overlay` uses **full replacement**, not an implicit patch: all five state flags (revision, disabled, favorite, alias and sort-rank) must be explicitly provided to prevent accidentally resetting an existing preference. Read the node's current overlay revision with `profiles nodes` before editing. A stale revision or removed node is rejected; this does not auto-apply the declaration or restart the core. See [ADR 0067](docs/adr/0067-profile-node-management-api.md) and [ADR 0068](docs/adr/0068-profiles-cli.md).

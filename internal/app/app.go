@@ -35,6 +35,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runCapabilities(args[1:], stdout, stderr)
 	case "storage":
 		return runStorage(args[1:], stdout, stderr)
+	case "profiles":
+		return runProfiles(args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "karing-tui-v2 %s (%s, %s)\n", version.Version, version.Commit, version.Date)
 		return 0
@@ -218,6 +220,7 @@ Usage:
   karing-tui capabilities      show implemented capability flags
   karing-tui storage retention show generation retention policy and usage
   karing-tui storage prune     compact audit and prune old generations
+  karing-tui profiles help     list safe profile and node-management commands
   karing-tui version           show build version
 
 The daemon intentionally requires XDG_RUNTIME_DIR (or the explicit

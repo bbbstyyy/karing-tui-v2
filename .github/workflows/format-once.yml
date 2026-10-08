@@ -5,6 +5,7 @@ on:
       - feat/m0-m1-foundation
     paths:
       - .github/workflows/format-once.yml
+      - internal/app/profile_cli.go
 permissions:
   contents: write
 jobs:

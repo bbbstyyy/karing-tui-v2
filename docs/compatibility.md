@@ -177,3 +177,7 @@ Still not implemented:
 - automatic snapshot -> declaration -> compile/apply policy after a refresh;
 - source node filter execution semantics (Karing UI state is persisted, but exact vpn-service matching behavior is not yet verified);
 - provider materialization.
+
+## CLI integration
+
+The local `profiles` CLI currently supports credential-safe profile summaries (`list`), source-order node pages (`nodes`), and explicit revisioned full node overlay replacement (`replace-overlay`). The CLI does not infer Karing's unknown filtering semantics or silently apply source route content. The snapshot-to-declaration and runtime apply transaction remain distinct and require explicit future orchestration.
