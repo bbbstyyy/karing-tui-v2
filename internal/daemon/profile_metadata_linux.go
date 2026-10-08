@@ -67,12 +67,12 @@ func registerProfileMetadataRoutes(
 	mux *http.ServeMux,
 	store *storage.Store,
 	runtime *serverRuntime,
+	gate *profileOperationGate,
 ) bool {
-	if mux == nil || store == nil {
+	if mux == nil || store == nil || gate == nil {
 		return false
 	}
 	fetcher, fetcherErr := profilefetch.NewSourceFetcher(profileFetchOptions(runtime))
-	gate := newProfileOperationGate(maxConcurrentProfileMetadataRefreshes)
 
 	mux.HandleFunc("GET /v1/profiles/{profile_id}/metadata", func(w http.ResponseWriter, r *http.Request) {
 		state, err := store.ProfileSource(r.Context(), r.PathValue("profile_id"))
