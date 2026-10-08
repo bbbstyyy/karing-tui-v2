@@ -157,7 +157,7 @@ func TestProfileMetadataAPIRefreshesHeadWithoutChangingProfileHealth(t *testing.
 }
 
 func TestProfileMetadataRefreshGateBoundsGlobalAndPerProfileConcurrency(t *testing.T) {
-	gate := newProfileMetadataRefreshGate(4)
+	gate := newProfileOperationGate(4)
 	for _, profileID := range []string{"p1", "p2", "p3", "p4"} {
 		if !gate.TryAcquire(profileID) {
 			t.Fatalf("failed to acquire %s", profileID)
