@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	maxProfileAPIRequestBytes = 16 << 10
+	maxProfileAPIRequestBytes   = 16 << 10
 	manualProfileRefreshTimeout = 60 * time.Second
 )
 
@@ -143,13 +143,13 @@ func registerProfileSourceRoutes(
 		}
 
 		response := apiv1.ProfileRefreshResponse{
-			ProfileID:        profileID,
-			SourceRevision:   result.SourceAfter.Revision,
-			AcceptedRevision: result.SourceAfter.LastSourceRevision,
-			NotModified:      result.NotModified,
+			ProfileID:         profileID,
+			SourceRevision:    result.SourceAfter.Revision,
+			AcceptedRevision:  result.SourceAfter.LastSourceRevision,
+			NotModified:       result.NotModified,
 			CurrentSnapshotID: result.SourceAfter.CurrentSnapshotID,
-			NodeCount:        len(result.Nodes),
-			Diagnostics:      profileDiagnosticsResponse(result.Analysis.Diagnostics),
+			NodeCount:         len(result.Nodes),
+			Diagnostics:       profileDiagnosticsResponse(result.Analysis.Diagnostics),
 		}
 		if result.NotModified && result.SourceAfter.CurrentSnapshotID != nil {
 			snapshot, err := store.ProfileSnapshotByID(
@@ -218,18 +218,18 @@ func profileSourceFromAPI(
 func profileSourceResponse(state storage.ProfileSourceState) apiv1.ProfileSourceResponse {
 	spec := state.Spec
 	response := apiv1.ProfileSourceResponse{
-		ProfileID:         spec.ProfileID,
-		Revision:          state.Revision,
-		CreatedAt:         state.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:         state.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		LastError:         state.LastError,
-		LastSourceRevision: state.LastSourceRevision,
-		ETag:              state.ETag,
-		LastModified:      state.LastModified,
+		ProfileID:           spec.ProfileID,
+		Revision:            state.Revision,
+		CreatedAt:           state.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:           state.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		LastError:           state.LastError,
+		LastSourceRevision:  state.LastSourceRevision,
+		ETag:                state.ETag,
+		LastModified:        state.LastModified,
 		ConsecutiveFailures: state.ConsecutiveFailures,
-		ActiveUpdateID:    state.ActiveUpdateID,
-		CurrentSnapshotID: state.CurrentSnapshotID,
-		Source: apiv1.ProfileSourceSpec{
+		ActiveUpdateID:      state.ActiveUpdateID,
+		CurrentSnapshotID:   state.CurrentSnapshotID,
+		Source:              apiv1.ProfileSourceSpec{
 			Format:                string(spec.Format),
 			LocationKind:          string(spec.LocationKind),
 			Location:              spec.Location,
