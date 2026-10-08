@@ -31,9 +31,12 @@ type ProfileSourceState struct {
 	LastSuccessAt       *time.Time
 	LastError           string
 	LastSourceRevision  string
-	ETag                string
-	LastModified        string
-	ConsecutiveFailures uint32
+	ETag                       string
+	LastModified               string
+	SubscriptionUsage          *profile.SubscriptionUsage
+	SubscriptionUsageUpdatedAt *time.Time
+	LastMetadataError          string
+	ConsecutiveFailures        uint32
 	RetryAfterAt        *time.Time
 	ActiveUpdateID      string
 	ActiveUpdateStarted *time.Time
@@ -41,9 +44,12 @@ type ProfileSourceState struct {
 }
 
 type ProfileUpdateSuccess struct {
-	SourceRevision string
-	ETag           string
-	LastModified   string
+	SourceRevision        string
+	ETag                  string
+	LastModified          string
+	UsageMetadataObserved bool
+	SubscriptionUsage     *profile.SubscriptionUsage
+	UsageMetadataError    string
 }
 
 type ProfileUpdateLease struct {
@@ -216,6 +222,12 @@ func (s *Store) CommitProfileSource(
 					last_source_revision = '',
 					etag = '',
 					last_modified = '',
+					subscription_upload_bytes = NULL,
+					subscription_download_bytes = NULL,
+					subscription_total_bytes = NULL,
+					subscription_expires_at = NULL,
+					subscription_usage_updated_at = NULL,
+					subscription_metadata_error = '',
 					consecutive_failures = 0,
 					retry_after_at = NULL
 				WHERE profile_id = ? AND revision = ?
@@ -385,7 +397,26 @@ func finishProfileUpdateSuccessWith(
 	lease ProfileUpdateLease,
 	success ProfileUpdateSuccess,
 ) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC()
+	observed := boolInt(success.UsageMetadataObserved)
+	usagePresent := 0
+	var (
+		uploadBytes   any
+		downloadBytes any
+		totalBytes    any
+		expiresAt     any
+		usageUpdated  any
+	)
+	if success.SubscriptionUsage != nil {
+		usagePresent = 1
+		uploadBytes = nullableInt64Pointer(success.SubscriptionUsage.UploadBytes)
+		downloadBytes = nullableInt64Pointer(success.SubscriptionUsage.DownloadBytes)
+		totalBytes = nullableInt64Pointer(success.SubscriptionUsage.TotalBytes)
+		if success.SubscriptionUsage.ExpiresAt != nil {
+			expiresAt = success.SubscriptionUsage.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		}
+		usageUpdated = now.Format(time.RFC3339Nano)
+	}
 	result, err := execer.ExecContext(ctx, `
 		UPDATE profile_sources
 		SET active_update_id = NULL,
@@ -395,16 +426,52 @@ func finishProfileUpdateSuccessWith(
 			last_source_revision = ?,
 			etag = ?,
 			last_modified = ?,
+			subscription_metadata_error = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_metadata_error
+			END,
+			subscription_upload_bytes = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_upload_bytes
+			END,
+			subscription_download_bytes = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_download_bytes
+			END,
+			subscription_total_bytes = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_total_bytes
+			END,
+			subscription_expires_at = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_expires_at
+			END,
+			subscription_usage_updated_at = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_usage_updated_at
+			END,
 			consecutive_failures = 0,
 			retry_after_at = NULL
 		WHERE profile_id = ?
 		  AND revision = ?
 		  AND active_update_id = ?
 	`,
-		now,
+		now.Format(time.RFC3339Nano),
 		success.SourceRevision,
 		success.ETag,
 		success.LastModified,
+		observed,
+		success.UsageMetadataError,
+		usagePresent,
+		uploadBytes,
+		usagePresent,
+		downloadBytes,
+		usagePresent,
+		totalBytes,
+		usagePresent,
+		expiresAt,
+		usagePresent,
+		usageUpdated,
 		lease.ProfileID,
 		lease.SourceRevision,
 		lease.ID,
@@ -424,6 +491,23 @@ func validateProfileUpdateSuccess(success ProfileUpdateSuccess) error {
 	}
 	if err := validateProfileUpdateStatusText("Last-Modified", success.LastModified, 4096, false); err != nil {
 		return err
+	}
+	if err := validateProfileUpdateStatusText("subscription metadata error", success.UsageMetadataError, 2048, false); err != nil {
+		return err
+	}
+	if success.SubscriptionUsage != nil {
+		if err := success.SubscriptionUsage.Validate(); err != nil {
+			return err
+		}
+		if !success.UsageMetadataObserved || success.UsageMetadataError != "" {
+			return ErrInvalidProfileUpdateStatus
+		}
+	}
+	if success.UsageMetadataError != "" && !success.UsageMetadataObserved {
+		return ErrInvalidProfileUpdateStatus
+	}
+	if success.UsageMetadataObserved && success.SubscriptionUsage == nil && success.UsageMetadataError == "" {
+		return ErrInvalidProfileUpdateStatus
 	}
 	return nil
 }
@@ -549,6 +633,12 @@ const profileSourceSelect = `
 		s.last_source_revision,
 		s.etag,
 		s.last_modified,
+		s.subscription_upload_bytes,
+		s.subscription_download_bytes,
+		s.subscription_total_bytes,
+		s.subscription_expires_at,
+		s.subscription_usage_updated_at,
+		s.subscription_metadata_error,
 		s.consecutive_failures,
 		s.retry_after_at,
 		s.active_update_id,
@@ -572,6 +662,11 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		activeUpdate       sql.NullString
 		activeStarted      sql.NullString
 		currentSnapshot    sql.NullInt64
+		usageUpload        sql.NullInt64
+		usageDownload      sql.NullInt64
+		usageTotal         sql.NullInt64
+		usageExpires       sql.NullString
+		usageUpdated       sql.NullString
 		consecutiveFailure int64
 	)
 	if err := row.Scan(
@@ -594,6 +689,12 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		&state.LastSourceRevision,
 		&state.ETag,
 		&state.LastModified,
+		&usageUpload,
+		&usageDownload,
+		&usageTotal,
+		&usageExpires,
+		&usageUpdated,
+		&state.LastMetadataError,
 		&consecutiveFailure,
 		&retryAfter,
 		&activeUpdate,
@@ -633,6 +734,29 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 	}
 	if state.ActiveUpdateStarted, err = parseNullableTime(activeStarted); err != nil {
 		return ProfileSourceState{}, fmt.Errorf("parse profile source active_update_started_at: %w", err)
+	}
+	state.SubscriptionUsageUpdatedAt, err = parseNullableTime(usageUpdated)
+	if err != nil {
+		return ProfileSourceState{}, fmt.Errorf("parse subscription usage updated_at: %w", err)
+	}
+	usageExpiresAt, err := parseNullableTime(usageExpires)
+	if err != nil {
+		return ProfileSourceState{}, fmt.Errorf("parse subscription expiry: %w", err)
+	}
+	if usageUpload.Valid || usageDownload.Valid || usageTotal.Valid || usageExpires.Valid || usageUpdated.Valid {
+		if !usageUpdated.Valid {
+			return ProfileSourceState{}, errors.New("profile source subscription usage timestamp is missing")
+		}
+		usage := &profile.SubscriptionUsage{
+			UploadBytes:   nullInt64ValuePtr(usageUpload),
+			DownloadBytes: nullInt64ValuePtr(usageDownload),
+			TotalBytes:    nullInt64ValuePtr(usageTotal),
+			ExpiresAt:     usageExpiresAt,
+		}
+		if err := usage.Validate(); err != nil {
+			return ProfileSourceState{}, fmt.Errorf("validate persisted subscription usage: %w", err)
+		}
+		state.SubscriptionUsage = usage
 	}
 	if err := state.Spec.Validate(); err != nil {
 		return ProfileSourceState{}, fmt.Errorf("validate persisted profile source: %w", err)
@@ -711,6 +835,21 @@ func parseNullableTime(value sql.NullString) (*time.Time, error) {
 		return nil, err
 	}
 	return &parsed, nil
+}
+
+func nullableInt64Pointer(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullInt64ValuePtr(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Int64
+	return &result
 }
 
 func boolInt(value bool) int {
