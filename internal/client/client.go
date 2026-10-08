@@ -391,3 +391,16 @@ func (c *Client) PutProfileNodeOverlay(ctx context.Context, profileID, nodeID st
 	}
 	return response, nil
 }
+
+func (c *Client) PreviewProfileDeclaration(
+	ctx context.Context,
+	profileID string,
+	request apiv1.ProfileDeclarationPreviewRequest,
+) (apiv1.ProfileDeclarationPreviewResponse, error) {
+	var response apiv1.ProfileDeclarationPreviewResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID) + "/declaration/preview"
+	if err := c.sendJSON(ctx, c.refreshClient, http.MethodPost, path, request, &response); err != nil {
+		return apiv1.ProfileDeclarationPreviewResponse{}, err
+	}
+	return response, nil
+}

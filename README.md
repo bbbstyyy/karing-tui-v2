@@ -151,3 +151,13 @@ Example source specification (placeholder URI, **not** an operational subscripti
 ```
 
 Use `uri-list` or `uri-list-base64` only for the implemented compatible subsets; unsupported protocol/transport fields reject the complete imported update. `--allow-empty` must be explicitly supplied before an empty accepted snapshot can replace a nonempty one. Refresh output omits imported credentials and raw untrusted diagnostic text. Refresh **does not** compile/apply a core config or change the active routing generation. See [ADR 0069](docs/adr/0069-profile-source-cli.md) and [compatibility matrix](docs/compatibility.md).
+
+## Read-only snapshot-to-declaration preview (M3)
+
+After a profile refresh produces an accepted snapshot, the Unix-socket daemon can examine how it would change an **existing** declaration:
+
+`POST /v1/profiles/{profile_id}/declaration/preview`, with JSON `{"snapshot_id":123,"expected_declaration_revision":1}`.
+
+The response reports a candidate SHA-256, stable overlay digest, counts of nodes added/removed/retained and whether the candidate was applied. Source keys, server passwords and complete candidate JSON are never included. Snapshot ID and base declaration revision must match current state; invalid selected-node references or unsupported formats fail closed.
+
+A successful response is **schema-level, read-only evidence**, explicitly `core_validated=false` and `applied=false`. No declaration revision, rule resource or core generation is changed, and no core check is performed. See [ADR 0070](docs/adr/0070-read-only-profile-declaration-preview.md).

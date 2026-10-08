@@ -367,3 +367,23 @@ type ProfileNodeOverlayResponse struct {
 	UpdatedAt string                 `json:"updated_at"`
 	Overlay   ProfileNodeOverlaySpec `json:"overlay"`
 }
+
+type ProfileDeclarationPreviewRequest struct {
+	SnapshotID                  int64  `json:"snapshot_id"`
+	ExpectedDeclarationRevision uint64 `json:"expected_declaration_revision"`
+}
+
+type ProfileDeclarationPreviewResponse struct {
+	ProfileID               string `json:"profile_id"`
+	SnapshotID              int64  `json:"snapshot_id"`
+	BaseDeclarationRevision uint64 `json:"base_declaration_revision"`
+	SnapshotNodeCount       int    `json:"snapshot_node_count"`
+	EffectiveNodeCount      int    `json:"effective_node_count"`
+	AddedNodeCount          int    `json:"added_node_count"`
+	RemovedNodeCount        int    `json:"removed_node_count"`
+	RetainedNodeCount       int    `json:"retained_node_count"`
+	RuntimeOverlaySHA256    string `json:"runtime_overlay_sha256"`
+	CandidateSHA256         string `json:"candidate_sha256"`
+	CoreValidated           bool   `json:"core_validated"`
+	Applied                 bool   `json:"applied"`
+}

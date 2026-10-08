@@ -185,3 +185,7 @@ The local `profiles` CLI currently supports credential-safe profile summaries (`
 ## Profile source CLI (M3)
 
 `profiles put <id> --expected-revision=N --stdin` sends a strict, bounded JSON source specification to the existing source CAS API; successful output is a credential-safe summary. `profiles refresh <id> --expected-revision=N` invokes the existing bounded manual update lease; it requires an explicit `--allow-empty` to accept an empty result. Refresh output contains only normalized diagnostic levels/codes, not untrusted message text or raw upstream configuration. Neither operation accepts subscription route/rule-provider/ISP routing as runtime route data or automatically updates the applied declaration.
+
+## Profile snapshot proposal preview
+
+`POST /v1/profiles/{profile_id}/declaration/preview` provides a bounded, credential-free V1 declaration proposal summary for an exact current accepted snapshot. It supports only the implemented canonical basic-node subsets, preserves stable identities and runtime overlays, and refuses stale references and required disabled nodes. This is not proof that a candidate will pass the pinned core checker: it is not committed or applied, and subscription/ISP routing is still excluded.
