@@ -27,7 +27,7 @@ Current implementation: `internal/importer/singbox.AnalyzeBasicProfile`.
 | SOCKS `udp_over_tcp`, detour, dial extensions | Blocked | No silent field loss |
 | `direct`, `block`, `dns` outbounds | Ignored as non-node plumbing | Reported; not imported as proxy nodes |
 | selector / urltest source outbounds | Blocked | Not silently converted into project SelectionGroups |
-| VMess | Not yet supported | Blocks complete automatic import |
+| VMess basic subset | Supported | uuid/security/alter_id/global_padding/authenticated_length/network/packet_encoding; any TLS, multiplex, transport or other dial extension blocks import |
 | VLESS | Not yet supported | Blocks complete automatic import |
 | Trojan | Not yet supported | Blocks complete automatic import |
 | Shadowsocks: `method`, `password`, optional plugin/plugin_opts, network | Supported basic subset | Complete supported fields are preserved; unsupported UDP-over-TCP/multiplex/dial extensions still block import |
@@ -51,6 +51,7 @@ The current declaration/runtime compiler can materialize:
 | SOCKS4a | Implemented | TCP only |
 | SOCKS5 | Implemented | TCP/UDP/both as represented by the domain model |
 | Shadowsocks | Implemented basic subset | method/password/plugin/plugin_opts/network; no UDP-over-TCP, multiplex or detour field loss |
+| VMess | Implemented basic subset | uuid/security/alter_id/global_padding/authenticated_length/network/packet_encoding; no TLS, multiplex, V2Ray transport or detour field loss |
 | Domain-valued node server | Implemented with explicit Outbound DNS | Fails closed without configured node/outbound resolver |
 | TLS/Reality/advanced transport/Mux | Not yet implemented | Must not be dropped by importers |
 | Detour/pre-proxy chain | P1 / not yet implemented | Unsupported imported detour must block application |
