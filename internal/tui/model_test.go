@@ -254,7 +254,7 @@ func TestProfileModelStoresOnlyAllowlistedMetadata(t *testing.T) {
 			Format: "sing-box", Location: "https://host.invalid/path?token=SECRET_TEST_TOKEN",
 			UserAgent: "Bearer SECRET_TEST_TOKEN", Enabled: true,
 		},
-		LastError: "SECRET_TEST_TOKEN",
+		LastError:          "SECRET_TEST_TOKEN",
 		LastSourceRevision: "SECRET_TEST_TOKEN",
 	}
 	m := NewModel(context.Background(), &fakeAPI{})
