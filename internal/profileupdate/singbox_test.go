@@ -223,7 +223,8 @@ func TestCommitBasicSingBoxProfilePersistsVLESSPacketEncodingAcrossReopen(t *tes
     "uuid":"11111111-2222-3333-4444-555555555555",
     "encryption":"none",
     "network":"udp",
-    "packet_encoding":""
+    "packet_encoding":"",
+    "tls":{"enabled":true,"server_name":"edge.example.com","insecure":true}
   }]
 }`), Options{})
 	if err != nil {
@@ -233,7 +234,11 @@ func TestCommitBasicSingBoxProfilePersistsVLESSPacketEncodingAcrossReopen(t *tes
 		result.Nodes[0].Kind != domain.NodeVLESS ||
 		result.Nodes[0].VLESS == nil ||
 		result.Nodes[0].VLESS.PacketEncoding == nil ||
-		*result.Nodes[0].VLESS.PacketEncoding != "" {
+		*result.Nodes[0].VLESS.PacketEncoding != "" ||
+		result.Nodes[0].TLS == nil ||
+		!result.Nodes[0].TLS.Enabled ||
+		result.Nodes[0].TLS.ServerName != "edge.example.com" ||
+		!result.Nodes[0].TLS.Insecure {
 		t.Fatalf("committed VLESS nodes = %+v", result.Nodes)
 	}
 	nodeID := result.Nodes[0].NodeID
@@ -264,7 +269,11 @@ func TestCommitBasicSingBoxProfilePersistsVLESSPacketEncodingAcrossReopen(t *tes
 		nodes[0].VLESS.Encryption != "none" ||
 		nodes[0].VLESS.Network != domain.ProxyNetworkUDP ||
 		nodes[0].VLESS.PacketEncoding == nil ||
-		*nodes[0].VLESS.PacketEncoding != "" {
+		*nodes[0].VLESS.PacketEncoding != "" ||
+		nodes[0].TLS == nil ||
+		!nodes[0].TLS.Enabled ||
+		nodes[0].TLS.ServerName != "edge.example.com" ||
+		!nodes[0].TLS.Insecure {
 		t.Fatalf("reopened VLESS nodes = %+v", nodes)
 	}
 }
