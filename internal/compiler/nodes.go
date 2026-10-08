@@ -26,10 +26,12 @@ type NodeOutboundConfig struct {
 	Network             string  `json:"network,omitempty"`
 	UUID                string  `json:"uuid,omitempty"`
 	Security            *string `json:"security,omitempty"`
+	Flow                string  `json:"flow,omitempty"`
+	Encryption          string  `json:"encryption,omitempty"`
 	AlterID             uint16  `json:"alter_id,omitempty"`
 	GlobalPadding       bool    `json:"global_padding,omitempty"`
 	AuthenticatedLength bool    `json:"authenticated_length,omitempty"`
-	PacketEncoding      string  `json:"packet_encoding,omitempty"`
+	PacketEncoding      *string `json:"packet_encoding,omitempty"`
 	DomainResolver      string  `json:"domain_resolver,omitempty"`
 }
 
@@ -163,6 +165,11 @@ func compileBasicNode(node domain.Node, tag string) (NodeOutboundConfig, error) 
 			)
 		}
 		security := node.VMess.Security
+		var packetEncoding *string
+		if node.VMess.PacketEncoding != "" {
+			value := node.VMess.PacketEncoding
+			packetEncoding = &value
+		}
 		return NodeOutboundConfig{
 			Type:                "vmess",
 			Tag:                 tag,
@@ -174,7 +181,38 @@ func compileBasicNode(node domain.Node, tag string) (NodeOutboundConfig, error) 
 			AlterID:             node.VMess.AlterID,
 			GlobalPadding:       node.VMess.GlobalPadding,
 			AuthenticatedLength: node.VMess.AuthenticatedLength,
-			PacketEncoding:      node.VMess.PacketEncoding,
+			PacketEncoding:      packetEncoding,
+		}, nil
+	case domain.NodeVLESS:
+		network := ""
+		switch node.VLESS.Network {
+		case domain.ProxyNetworkBoth:
+		case domain.ProxyNetworkTCP:
+			network = "tcp"
+		case domain.ProxyNetworkUDP:
+			network = "udp"
+		default:
+			return NodeOutboundConfig{}, fmt.Errorf(
+				"%w: unsupported VLESS network %q",
+				domain.ErrInvalidNode,
+				node.VLESS.Network,
+			)
+		}
+		var packetEncoding *string
+		if node.VLESS.PacketEncoding != nil {
+			value := *node.VLESS.PacketEncoding
+			packetEncoding = &value
+		}
+		return NodeOutboundConfig{
+			Type:           "vless",
+			Tag:            tag,
+			Server:         node.Server,
+			ServerPort:     node.Port,
+			Network:        network,
+			UUID:           node.VLESS.UUID,
+			Flow:           node.VLESS.Flow,
+			Encryption:     node.VLESS.Encryption,
+			PacketEncoding: packetEncoding,
 		}, nil
 	default:
 		return NodeOutboundConfig{}, fmt.Errorf("%w: unsupported basic node kind %q", domain.ErrInvalidNode, node.Kind)
