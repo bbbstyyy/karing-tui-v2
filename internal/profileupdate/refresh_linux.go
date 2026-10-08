@@ -12,6 +12,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	singboximport "github.com/bbbstyyy/karing-tui-v2/internal/importer/singbox"
+	urilistimport "github.com/bbbstyyy/karing-tui-v2/internal/importer/urilist"
 	"github.com/bbbstyyy/karing-tui-v2/internal/profile"
 	"github.com/bbbstyyy/karing-tui-v2/internal/profilefetch"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
@@ -112,54 +113,12 @@ func RefreshProfileSource(
 		return result, nil
 	}
 
+	var analysis singboximport.ProfileAnalysis
 	switch source.Spec.Format {
 	case profile.SourceFormatSingBox:
-		analysis, analyzeErr := singboximport.AnalyzeBasicProfile(fetched.Body, profileID)
-		result.Analysis = analysis
-		if analyzeErr != nil {
-			return result, finishRefreshFailure(ctx, store, lease, analyzeErr)
-		}
-		if analysis.HasBlockingDiagnostics() {
-			return result, finishRefreshFailure(ctx, store, lease, ErrImportBlocked)
-		}
-
-		sourceRevision := refreshSourceRevision(fetched, analysis.SourceSHA256)
-		sourceNodes := make([]profile.SourceNode, 0, len(analysis.Nodes))
-		for _, node := range analysis.Nodes {
-			item := node.Source
-			item.PayloadJSON = append([]byte(nil), item.PayloadJSON...)
-			sourceNodes = append(sourceNodes, item)
-		}
-		commit, commitErr := store.CommitProfileUpdateSnapshot(
-			ctx,
-			lease,
-			storage.ProfileSnapshotCandidate{
-				ProfileID:      profileID,
-				SourceKind:     string(source.Spec.Format),
-				SourceRevision: sourceRevision,
-				SourceSHA256:   analysis.SourceSHA256,
-				Nodes:          sourceNodes,
-			},
-			storage.ProfileSnapshotCommitOptions{AllowEmpty: options.AllowEmpty},
-			storage.ProfileUpdateSuccess{
-				SourceRevision:        sourceRevision,
-				ETag:                  fetched.ETag,
-				LastModified:          fetched.LastModified,
-				UsageMetadataObserved: fetched.UsageMetadataObserved,
-				SubscriptionUsage:     fetched.SubscriptionUsage,
-				UsageMetadataError:    fetched.UsageMetadataError,
-			},
-		)
-		result.Commit = commit
-		if commitErr != nil {
-			return result, finishRefreshFailure(ctx, store, lease, commitErr)
-		}
-
-		nodes, materializeErr := MaterializeBasicSingBoxSnapshot(commit.Snapshot)
-		if materializeErr != nil {
-			return result, materializeErr
-		}
-		result.Nodes = nodes
+		analysis, err = singboximport.AnalyzeBasicProfile(fetched.Body, profileID)
+	case profile.SourceFormatURIList:
+		analysis, err = urilistimport.AnalyzeBasicProfile(fetched.Body, profileID)
 	default:
 		return result, finishRefreshFailure(
 			ctx,
@@ -168,6 +127,51 @@ func RefreshProfileSource(
 			fmt.Errorf("unsupported profile source format %q", source.Spec.Format),
 		)
 	}
+	result.Analysis = analysis
+	if err != nil {
+		return result, finishRefreshFailure(ctx, store, lease, err)
+	}
+	if analysis.HasBlockingDiagnostics() {
+		return result, finishRefreshFailure(ctx, store, lease, ErrImportBlocked)
+	}
+
+	sourceRevision := refreshSourceRevision(fetched, analysis.SourceSHA256)
+	sourceNodes := make([]profile.SourceNode, 0, len(analysis.Nodes))
+	for _, node := range analysis.Nodes {
+		item := node.Source
+		item.PayloadJSON = append([]byte(nil), item.PayloadJSON...)
+		sourceNodes = append(sourceNodes, item)
+	}
+	commit, commitErr := store.CommitProfileUpdateSnapshot(
+		ctx,
+		lease,
+		storage.ProfileSnapshotCandidate{
+			ProfileID:      profileID,
+			SourceKind:     string(source.Spec.Format),
+			SourceRevision: sourceRevision,
+			SourceSHA256:   analysis.SourceSHA256,
+			Nodes:          sourceNodes,
+		},
+		storage.ProfileSnapshotCommitOptions{AllowEmpty: options.AllowEmpty},
+		storage.ProfileUpdateSuccess{
+			SourceRevision:        sourceRevision,
+			ETag:                  fetched.ETag,
+			LastModified:          fetched.LastModified,
+			UsageMetadataObserved: fetched.UsageMetadataObserved,
+			SubscriptionUsage:     fetched.SubscriptionUsage,
+			UsageMetadataError:    fetched.UsageMetadataError,
+		},
+	)
+	result.Commit = commit
+	if commitErr != nil {
+		return result, finishRefreshFailure(ctx, store, lease, commitErr)
+	}
+
+	nodes, materializeErr := MaterializeBasicProfileSnapshot(commit.Snapshot)
+	if materializeErr != nil {
+		return result, materializeErr
+	}
+	result.Nodes = nodes
 
 	result.SourceAfter, err = store.ProfileSource(ctx, profileID)
 	if err != nil {
