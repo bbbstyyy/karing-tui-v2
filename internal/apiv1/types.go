@@ -387,3 +387,18 @@ type ProfileDeclarationPreviewResponse struct {
 	CoreValidated           bool   `json:"core_validated"`
 	Applied                 bool   `json:"applied"`
 }
+
+type ProfileDeclarationStageRequest struct {
+ SnapshotID int64 `json:"snapshot_id"`
+ ExpectedDeclarationRevision uint64 `json:"expected_declaration_revision"`
+ CandidateSHA256 string `json:"candidate_sha256"`
+ RuntimeOverlaySHA256 string `json:"runtime_overlay_sha256"`
+}
+type ProfileDeclarationStageResponse struct {
+ ProfileID string `json:"profile_id"`
+ SnapshotID int64 `json:"snapshot_id"`
+ DeclarationRevision uint64 `json:"declaration_revision"`
+ DeclarationSHA256 string `json:"declaration_sha256"`
+ CoreValidated bool `json:"core_validated"`
+ Applied bool `json:"applied"`
+}

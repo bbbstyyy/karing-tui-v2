@@ -192,6 +192,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	profileFullRefresh := registerProfileSourceRoutes(mux, store, runtime, profileOperations)
 	registerProfileNodeRoutes(mux, store, profileOperations)
 	registerProfileSnapshotPreviewRoutes(mux, store, profileOperations)
+	registerProfileDeclarationStageRoutes(mux, store, profileOperations)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
 		selectionCore = runtime

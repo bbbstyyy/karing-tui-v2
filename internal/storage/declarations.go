@@ -91,22 +91,44 @@ func (s *Store) CommitDeclaration(
 	document []byte,
 	source string,
 ) (DeclarationRevision, error) {
-	if len(document) == 0 || !json.Valid(document) {
-		return DeclarationRevision{}, ErrInvalidDeclaration
-	}
-	if len(document) > MaxDeclarationBytes {
-		return DeclarationRevision{}, fmt.Errorf("%w: %d bytes > %d bytes", ErrDeclarationTooLarge, len(document), MaxDeclarationBytes)
-	}
-	if err := validateDeclarationSource(source); err != nil {
+	if err := validateDeclarationCommit(document, source); err != nil {
 		return DeclarationRevision{}, err
 	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return DeclarationRevision{}, fmt.Errorf("begin declaration transaction: %w", err)
 	}
 	defer tx.Rollback()
+	revision, err := commitDeclarationTx(ctx, tx, expectedRevision, document, source)
+	if err != nil {
+		return DeclarationRevision{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return DeclarationRevision{}, fmt.Errorf("commit declaration revision %d: %w", revision.Revision, err)
+	}
+	return revision, nil
+}
 
+func validateDeclarationCommit(document []byte, source string) error {
+	if len(document) == 0 || !json.Valid(document) {
+		return ErrInvalidDeclaration
+	}
+	if len(document) > MaxDeclarationBytes {
+		return fmt.Errorf("%w: %d bytes > %d bytes", ErrDeclarationTooLarge, len(document), MaxDeclarationBytes)
+	}
+	return validateDeclarationSource(source)
+}
+
+// commitDeclarationTx performs the CAS and immutable revision insertion in the
+// caller's transaction. The caller must commit only after any additional
+// domain-state guards have passed.
+func commitDeclarationTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	expectedRevision uint64,
+	document []byte,
+	source string,
+) (DeclarationRevision, error) {
 	var current sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT current_revision
@@ -171,10 +193,6 @@ func (s *Store) CommitDeclaration(
 	}
 	if affected != 1 {
 		return DeclarationRevision{}, fmt.Errorf("advance declaration state: updated %d rows", affected)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return DeclarationRevision{}, fmt.Errorf("commit declaration revision %d: %w", targetRevision, err)
 	}
 
 	var parentRevision *uint64
