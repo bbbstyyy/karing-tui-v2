@@ -119,6 +119,8 @@ func RefreshProfileSource(
 		analysis, err = singboximport.AnalyzeBasicProfile(fetched.Body, profileID)
 	case profile.SourceFormatURIList:
 		analysis, err = urilistimport.AnalyzeBasicProfile(fetched.Body, profileID)
+	case profile.SourceFormatBase64URIList:
+		analysis, err = urilistimport.AnalyzeBase64Profile(fetched.Body, profileID)
 	default:
 		return result, finishRefreshFailure(
 			ctx,
