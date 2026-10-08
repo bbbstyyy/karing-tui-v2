@@ -110,16 +110,15 @@ type ProfileSubscriptionUsageResponse struct {
 }
 
 type ProfileMetadataResponse struct {
-	ProfileID                  string                            `json:"profile_id"`
-	SourceRevision             uint64                            `json:"source_revision"`
-	Usage                      *ProfileSubscriptionUsageResponse `json:"usage,omitempty"`
-	UsageUpdatedAt             string                            `json:"usage_updated_at,omitempty"`
-	MetadataObservedAt         string                            `json:"metadata_observed_at,omitempty"`
-	MetadataError              string                            `json:"metadata_error,omitempty"`
-	HeaderObserved             bool                              `json:"header_observed"`
-	ObservationApplied         bool                              `json:"observation_applied"`
+	ProfileID          string                            `json:"profile_id"`
+	SourceRevision     uint64                            `json:"source_revision"`
+	Usage              *ProfileSubscriptionUsageResponse `json:"usage,omitempty"`
+	UsageUpdatedAt     string                            `json:"usage_updated_at,omitempty"`
+	MetadataObservedAt string                            `json:"metadata_observed_at,omitempty"`
+	MetadataError      string                            `json:"metadata_error,omitempty"`
+	HeaderObserved     bool                              `json:"header_observed"`
+	ObservationApplied bool                              `json:"observation_applied"`
 }
-
 
 type StorageRetentionResponse struct {
 	ConfirmedGenerations     int   `json:"confirmed_generations"`
