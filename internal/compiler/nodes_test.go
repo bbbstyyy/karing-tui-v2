@@ -310,6 +310,72 @@ func TestCompileBasicNodeOutboundsEmitsBasicTrojanFields(t *testing.T) {
 	}
 }
 
+func TestCompileBasicNodeOutboundsEmitsVerifiedTLSSubset(t *testing.T) {
+	node := domain.Node{
+		ProfileID: "profile-vless",
+		NodeID:    "vless-tls",
+		Kind:      domain.NodeVLESS,
+		Server:    "vless.example.com",
+		Port:      443,
+		VLESS: &domain.VLESSNodeOptions{
+			UUID:    "11111111-2222-3333-4444-555555555555",
+			Network: domain.ProxyNetworkBoth,
+		},
+		TLS: &domain.OutboundTLSOptions{
+			Enabled:    true,
+			DisableSNI: true,
+			ServerName: "edge.example.com",
+			Insecure:   true,
+		},
+	}
+	key := NodeTargetKey{ProfileID: node.ProfileID, NodeID: node.NodeID}
+	catalog, err := NewTargetCatalog(nil, []NodeTargetKey{key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := CompileBasicNodeOutbounds(
+		[]domain.Node{node},
+		catalog,
+		[]domain.TargetRef{{
+			Kind:      domain.TargetSpecificNode,
+			ProfileID: node.ProfileID,
+			NodeID:    node.NodeID,
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(compiled.Outbounds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"vless","tag":"` + catalog.NodeTags[key] + `","server":"vless.example.com","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555","tls":{"enabled":true,"disable_sni":true,"server_name":"edge.example.com","insecure":true}}`
+	if string(encoded) != want {
+		t.Fatalf("VLESS TLS JSON = %s, want %s", encoded, want)
+	}
+
+	node.TLS = nil
+	compiled, err = CompileBasicNodeOutbounds(
+		[]domain.Node{node},
+		catalog,
+		[]domain.TargetRef{{
+			Kind:      domain.TargetSpecificNode,
+			ProfileID: node.ProfileID,
+			NodeID:    node.NodeID,
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(compiled.Outbounds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"tls"`) {
+		t.Fatalf("node without TLS emitted tls field: %s", encoded)
+	}
+}
+
 func TestCompileBasicNodeOutboundsRejectsMissingAndDuplicateNodes(t *testing.T) {
 	node := domain.Node{
 		ProfileID: "profile-a",
