@@ -13,8 +13,9 @@ import (
 type SourceFormat string
 
 const (
-	SourceFormatSingBox SourceFormat = "sing-box"
-	SourceFormatURIList SourceFormat = "uri-list"
+	SourceFormatSingBox       SourceFormat = "sing-box"
+	SourceFormatURIList       SourceFormat = "uri-list"
+	SourceFormatBase64URIList SourceFormat = "uri-list-base64"
 
 	DefaultUpdateInterval = 12 * time.Hour
 	MinUpdateInterval     = 5 * time.Minute
@@ -61,7 +62,7 @@ func (s SourceSpec) Validate() error {
 		return fmt.Errorf("%w: %v", ErrInvalidProfileSource, err)
 	}
 	switch s.Format {
-	case SourceFormatSingBox, SourceFormatURIList:
+	case SourceFormatSingBox, SourceFormatURIList, SourceFormatBase64URIList:
 	default:
 		return fmt.Errorf("%w: unsupported source format %q", ErrInvalidProfileSource, s.Format)
 	}
