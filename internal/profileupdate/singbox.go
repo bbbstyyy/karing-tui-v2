@@ -72,7 +72,7 @@ func CommitBasicSingBoxProfile(
 
 func MaterializeBasicProfileSnapshot(snapshot storage.ProfileSnapshot) ([]domain.Node, error) {
 	switch profile.SourceFormat(snapshot.SourceKind) {
-	case profile.SourceFormatSingBox, profile.SourceFormatURIList:
+	case profile.SourceFormatSingBox, profile.SourceFormatURIList, profile.SourceFormatBase64URIList:
 	default:
 		return nil, fmt.Errorf(
 			"unsupported canonical profile snapshot source kind %q",
