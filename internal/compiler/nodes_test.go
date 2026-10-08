@@ -215,6 +215,62 @@ func TestCompileBasicNodeOutboundsEmitsBasicVMessFields(t *testing.T) {
 	}
 }
 
+func TestCompileBasicNodeOutboundsPreservesVLESSPacketEncodingPresence(t *testing.T) {
+	explicitNone := ""
+	node := domain.Node{
+		ProfileID: "profile-vless",
+		NodeID:    "vless-a",
+		Kind:      domain.NodeVLESS,
+		Server:    "vless.example.com",
+		Port:      443,
+		VLESS: &domain.VLESSNodeOptions{
+			UUID:           "11111111-2222-3333-4444-555555555555",
+			Encryption:     "none",
+			Network:        domain.ProxyNetworkUDP,
+			PacketEncoding: &explicitNone,
+		},
+	}
+	key := NodeTargetKey{ProfileID: node.ProfileID, NodeID: node.NodeID}
+	catalog, err := NewTargetCatalog(nil, []NodeTargetKey{key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	required := []domain.TargetRef{{
+		Kind:      domain.TargetSpecificNode,
+		ProfileID: node.ProfileID,
+		NodeID:    node.NodeID,
+	}}
+	compiled, err := CompileBasicNodeOutbounds([]domain.Node{node}, catalog, required)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(compiled.Outbounds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"vless","tag":"` + catalog.NodeTags[key] + `","server":"vless.example.com","server_port":443,"network":"udp","uuid":"11111111-2222-3333-4444-555555555555","encryption":"none","packet_encoding":""}`
+	if string(encoded) != want {
+		t.Fatalf("VLESS explicit packet encoding JSON = %s, want %s", encoded, want)
+	}
+
+	defaultEncoding := node
+	defaultEncoding.VLESS = &domain.VLESSNodeOptions{
+		UUID:    node.VLESS.UUID,
+		Network: domain.ProxyNetworkBoth,
+	}
+	compiled, err = CompileBasicNodeOutbounds([]domain.Node{defaultEncoding}, catalog, required)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(compiled.Outbounds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "packet_encoding") {
+		t.Fatalf("VLESS omitted packet encoding was emitted: %s", encoded)
+	}
+}
+
 func TestCompileBasicNodeOutboundsRejectsMissingAndDuplicateNodes(t *testing.T) {
 	node := domain.Node{
 		ProfileID: "profile-a",
