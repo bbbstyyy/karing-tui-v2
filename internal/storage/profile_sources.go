@@ -33,9 +33,10 @@ type ProfileSourceState struct {
 	LastSourceRevision         string
 	ETag                       string
 	LastModified               string
-	SubscriptionUsage          *profile.SubscriptionUsage
-	SubscriptionUsageUpdatedAt *time.Time
-	LastMetadataError          string
+	SubscriptionUsage             *profile.SubscriptionUsage
+	SubscriptionUsageUpdatedAt    *time.Time
+	SubscriptionMetadataObservedAt *time.Time
+	LastMetadataError             string
 	ConsecutiveFailures        uint32
 	RetryAfterAt               *time.Time
 	ActiveUpdateID             string
@@ -239,6 +240,7 @@ func (s *Store) CommitProfileSource(
 					subscription_total_bytes = NULL,
 					subscription_expires_at = NULL,
 					subscription_usage_updated_at = NULL,
+					subscription_metadata_observed_at = NULL,
 					subscription_metadata_error = '',
 					consecutive_failures = 0,
 					retry_after_at = NULL
@@ -462,6 +464,10 @@ func finishProfileUpdateSuccessWith(
 				WHEN ? = 1 THEN ?
 				ELSE subscription_usage_updated_at
 			END,
+			subscription_metadata_observed_at = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_metadata_observed_at
+			END,
 			consecutive_failures = 0,
 			retry_after_at = NULL
 		WHERE profile_id = ?
@@ -484,6 +490,8 @@ func finishProfileUpdateSuccessWith(
 		expiresAt,
 		usagePresent,
 		usageUpdated,
+		observed,
+		now.Format(time.RFC3339Nano),
 		lease.ProfileID,
 		lease.SourceRevision,
 		lease.ID,
@@ -522,6 +530,171 @@ func validateProfileUpdateSuccess(success ProfileUpdateSuccess) error {
 		return ErrInvalidProfileUpdateStatus
 	}
 	return nil
+}
+
+func (s *Store) CommitProfileSubscriptionMetadata(
+	ctx context.Context,
+	profileID string,
+	expectedRevision uint64,
+	observedAt time.Time,
+	observed bool,
+	usage *profile.SubscriptionUsage,
+	metadataError string,
+) (bool, error) {
+	if err := profile.ValidateProfileID(profileID); err != nil {
+		return false, err
+	}
+	if expectedRevision == 0 || observedAt.IsZero() {
+		return false, ErrInvalidProfileUpdateStatus
+	}
+	observedAt = observedAt.UTC()
+	if err := validateProfileUpdateStatusText(
+		"subscription metadata error",
+		metadataError,
+		2048,
+		false,
+	); err != nil {
+		return false, err
+	}
+	if usage != nil {
+		if err := usage.Validate(); err != nil {
+			return false, err
+		}
+		if !observed || metadataError != "" {
+			return false, ErrInvalidProfileUpdateStatus
+		}
+	}
+	if metadataError != "" && !observed {
+		return false, ErrInvalidProfileUpdateStatus
+	}
+	if observed && usage == nil && metadataError == "" {
+		return false, ErrInvalidProfileUpdateStatus
+	}
+	if !observed && (usage != nil || metadataError != "") {
+		return false, ErrInvalidProfileUpdateStatus
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin profile metadata transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var (
+		revision        int64
+		activeUpdate    sql.NullString
+		currentObserved sql.NullString
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT revision, active_update_id, subscription_metadata_observed_at
+		FROM profile_sources
+		WHERE profile_id = ?
+	`, profileID).Scan(&revision, &activeUpdate, &currentObserved)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrProfileSourceNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("read profile source before metadata update: %w", err)
+	}
+	if uint64(revision) != expectedRevision {
+		return false, fmt.Errorf(
+			"%w: expected %d, current %d",
+			ErrProfileSourceRevisionConflict,
+			expectedRevision,
+			revision,
+		)
+	}
+	if activeUpdate.Valid {
+		return false, fmt.Errorf("%w: %s", ErrProfileUpdateInProgress, activeUpdate.String)
+	}
+	if currentObserved.Valid {
+		current, err := time.Parse(time.RFC3339Nano, currentObserved.String)
+		if err != nil {
+			return false, fmt.Errorf("parse existing subscription metadata observation: %w", err)
+		}
+		if !observedAt.After(current) {
+			return false, nil
+		}
+	}
+	if !observed {
+		return false, nil
+	}
+
+	usagePresent := 0
+	var (
+		uploadBytes   any
+		downloadBytes any
+		totalBytes    any
+		expiresAt     any
+		usageUpdated  any
+	)
+	if usage != nil {
+		usagePresent = 1
+		uploadBytes = nullableInt64Pointer(usage.UploadBytes)
+		downloadBytes = nullableInt64Pointer(usage.DownloadBytes)
+		totalBytes = nullableInt64Pointer(usage.TotalBytes)
+		if usage.ExpiresAt != nil {
+			expiresAt = usage.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		}
+		usageUpdated = observedAt.Format(time.RFC3339Nano)
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE profile_sources
+		SET subscription_metadata_observed_at = ?,
+			subscription_metadata_error = ?,
+			subscription_upload_bytes = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_upload_bytes
+			END,
+			subscription_download_bytes = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_download_bytes
+			END,
+			subscription_total_bytes = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_total_bytes
+			END,
+			subscription_expires_at = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_expires_at
+			END,
+			subscription_usage_updated_at = CASE
+				WHEN ? = 1 THEN ?
+				ELSE subscription_usage_updated_at
+			END
+		WHERE profile_id = ?
+		  AND revision = ?
+		  AND active_update_id IS NULL
+	`,
+		observedAt.Format(time.RFC3339Nano),
+		metadataError,
+		usagePresent,
+		uploadBytes,
+		usagePresent,
+		downloadBytes,
+		usagePresent,
+		totalBytes,
+		usagePresent,
+		expiresAt,
+		usagePresent,
+		usageUpdated,
+		profileID,
+		expectedRevision,
+	)
+	if err != nil {
+		return false, fmt.Errorf("persist profile subscription metadata: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read profile metadata update result: %w", err)
+	}
+	if affected != 1 {
+		return false, ErrProfileUpdateInProgress
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit profile metadata transaction: %w", err)
+	}
+	return true, nil
 }
 
 func (s *Store) FinishProfileUpdateFailure(
@@ -653,6 +826,7 @@ const profileSourceSelect = `
 		s.subscription_total_bytes,
 		s.subscription_expires_at,
 		s.subscription_usage_updated_at,
+		s.subscription_metadata_observed_at,
 		s.subscription_metadata_error,
 		s.consecutive_failures,
 		s.retry_after_at,
@@ -683,6 +857,7 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		usageTotal         sql.NullInt64
 		usageExpires       sql.NullString
 		usageUpdated       sql.NullString
+		metadataObserved   sql.NullString
 		consecutiveFailure int64
 	)
 	if err := row.Scan(
@@ -713,6 +888,7 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 		&usageTotal,
 		&usageExpires,
 		&usageUpdated,
+		&metadataObserved,
 		&state.LastMetadataError,
 		&consecutiveFailure,
 		&retryAfter,
@@ -758,6 +934,10 @@ func scanProfileSource(row scanner) (ProfileSourceState, error) {
 	state.SubscriptionUsageUpdatedAt, err = parseNullableTime(usageUpdated)
 	if err != nil {
 		return ProfileSourceState{}, fmt.Errorf("parse subscription usage updated_at: %w", err)
+	}
+	state.SubscriptionMetadataObservedAt, err = parseNullableTime(metadataObserved)
+	if err != nil {
+		return ProfileSourceState{}, fmt.Errorf("parse subscription metadata observed_at: %w", err)
 	}
 	usageExpiresAt, err := parseNullableTime(usageExpires)
 	if err != nil {
