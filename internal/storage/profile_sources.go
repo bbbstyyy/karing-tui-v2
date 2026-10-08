@@ -23,24 +23,24 @@ var (
 )
 
 type ProfileSourceState struct {
-	Revision            uint64
-	Spec                profile.SourceSpec
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	LastAttemptAt       *time.Time
-	LastSuccessAt       *time.Time
-	LastError           string
-	LastSourceRevision  string
+	Revision                   uint64
+	Spec                       profile.SourceSpec
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	LastAttemptAt              *time.Time
+	LastSuccessAt              *time.Time
+	LastError                  string
+	LastSourceRevision         string
 	ETag                       string
 	LastModified               string
 	SubscriptionUsage          *profile.SubscriptionUsage
 	SubscriptionUsageUpdatedAt *time.Time
 	LastMetadataError          string
 	ConsecutiveFailures        uint32
-	RetryAfterAt        *time.Time
-	ActiveUpdateID      string
-	ActiveUpdateStarted *time.Time
-	CurrentSnapshotID   *int64
+	RetryAfterAt               *time.Time
+	ActiveUpdateID             string
+	ActiveUpdateStarted        *time.Time
+	CurrentSnapshotID          *int64
 }
 
 type ProfileUpdateSuccess struct {
