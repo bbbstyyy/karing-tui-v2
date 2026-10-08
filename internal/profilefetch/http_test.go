@@ -71,6 +71,68 @@ func TestHTTPFetcherDirectConditionalRequestAndMetadata(t *testing.T) {
 	}
 }
 
+func TestHTTPFetcherCapturesSubscriptionUsageMetadataWithoutBlockingBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(
+			"Subscription-Userinfo",
+			"upload=1024; download=2048; total=4096; expire=1798761600",
+		)
+		_, _ = w.Write([]byte("subscription-v1"))
+	}))
+	defer server.Close()
+
+	fetcher, err := NewHTTPFetcher(DefaultHTTPOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fetcher.Fetch(
+		context.Background(),
+		testURLSource(server.URL, profile.FetchPolicy{Mode: profile.FetchDirect}),
+		ConditionalRequest{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UsageMetadataObserved ||
+		result.UsageMetadataError != "" ||
+		result.SubscriptionUsage == nil ||
+		result.SubscriptionUsage.UploadBytes == nil ||
+		*result.SubscriptionUsage.UploadBytes != 1024 ||
+		result.SubscriptionUsage.DownloadBytes == nil ||
+		*result.SubscriptionUsage.DownloadBytes != 2048 ||
+		result.SubscriptionUsage.TotalBytes == nil ||
+		*result.SubscriptionUsage.TotalBytes != 4096 {
+		t.Fatalf("subscription usage result = %+v", result)
+	}
+}
+
+func TestHTTPFetcherReportsMalformedSubscriptionUsageWithoutFailingFetch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=not-a-number")
+		_, _ = w.Write([]byte("subscription-v1"))
+	}))
+	defer server.Close()
+
+	fetcher, err := NewHTTPFetcher(DefaultHTTPOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fetcher.Fetch(
+		context.Background(),
+		testURLSource(server.URL, profile.FetchPolicy{Mode: profile.FetchDirect}),
+		ConditionalRequest{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result.Body) != "subscription-v1" ||
+		!result.UsageMetadataObserved ||
+		result.SubscriptionUsage != nil ||
+		result.UsageMetadataError == "" {
+		t.Fatalf("malformed metadata result = %+v", result)
+	}
+}
+
 func TestHTTPFetcherNeverUsesEnvironmentProxyForDirectMode(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
