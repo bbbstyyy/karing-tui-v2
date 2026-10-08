@@ -320,7 +320,6 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 		Username string          `json:"username"`
 		Password string          `json:"password"`
 		Network  networkListJSON `json:"network"`
-		TLS      json.RawMessage `json:"tls"`
 	}
 	if err := decodeStrictObject(raw, &wire); err != nil {
 		return BasicNode{}, err
@@ -332,10 +331,6 @@ func parseBasicSOCKSOutbound(raw []byte, tag string) (BasicNode, error) {
 	network, err := wire.Network.ProxyNetwork()
 	if err != nil {
 		return BasicNode{}, err
-	}
-	tlsOptions, err := parseBasicOutboundTLS(wire.TLS)
-	if err != nil {
-		return BasicNode{}, fmt.Errorf("VMess TLS: %w", err)
 	}
 	node := BasicNode{
 		Source: profile.SourceNode{SourceKey: tag, SourceName: tag, PayloadJSON: append([]byte(nil), raw...)},
