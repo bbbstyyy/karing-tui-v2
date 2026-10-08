@@ -18,6 +18,7 @@ import (
 type Client struct {
 	queryClient   *http.Client
 	controlClient *http.Client
+	refreshClient *http.Client
 }
 
 func New(socketPath string) *Client {
@@ -30,6 +31,7 @@ func New(socketPath string) *Client {
 	return &Client{
 		queryClient:   &http.Client{Transport: transport, Timeout: 3 * time.Second},
 		controlClient: &http.Client{Transport: transport, Timeout: 20 * time.Second},
+		refreshClient: &http.Client{Transport: transport, Timeout: 75 * time.Second},
 	}
 }
 
@@ -167,6 +169,87 @@ func (c *Client) SetCurrentSelection(
 		return apiv1.CurrentSelectionResponse{}, fmt.Errorf("decode daemon response: %w", err)
 	}
 	return response, nil
+}
+
+func (c *Client) ProfileSources(
+	ctx context.Context,
+) (apiv1.ProfileSourceListResponse, error) {
+	var response apiv1.ProfileSourceListResponse
+	if err := c.get(ctx, "/v1/profiles", &response); err != nil {
+		return apiv1.ProfileSourceListResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ProfileSource(
+	ctx context.Context,
+	profileID string,
+) (apiv1.ProfileSourceResponse, error) {
+	var response apiv1.ProfileSourceResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID)
+	if err := c.get(ctx, path, &response); err != nil {
+		return apiv1.ProfileSourceResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) PutProfileSource(
+	ctx context.Context,
+	profileID string,
+	request apiv1.ProfileSourcePutRequest,
+) (apiv1.ProfileSourceResponse, error) {
+	var response apiv1.ProfileSourceResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID)
+	if err := c.sendJSON(ctx, c.controlClient, http.MethodPut, path, request, &response); err != nil {
+		return apiv1.ProfileSourceResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RefreshProfileSource(
+	ctx context.Context,
+	profileID string,
+	request apiv1.ProfileRefreshRequest,
+) (apiv1.ProfileRefreshResponse, error) {
+	var response apiv1.ProfileRefreshResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID) + "/refresh"
+	if err := c.sendJSON(ctx, c.refreshClient, http.MethodPost, path, request, &response); err != nil {
+		return apiv1.ProfileRefreshResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) sendJSON(
+	ctx context.Context,
+	httpClient *http.Client,
+	method string,
+	path string,
+	payload any,
+	target any,
+) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(
+		ctx, method, "http://unix"+path, bytes.NewReader(body),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return responseError(resp)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		return fmt.Errorf("decode daemon response: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) ProfileMetadata(
