@@ -123,6 +123,8 @@ Implemented source/update-state foundation:
 - Direct / CurrentSelected / Specific Node fetch-policy modelling;
 - persisted ETag, Last-Modified, Retry-After and consecutive-failure metadata;
 - bounded Subscription-Userinfo upload/download/total/expiry metadata with last-known-good preservation;
+- independent metadata observation timestamp so stale HEAD results cannot overwrite newer usage/error state;
+- metadata-only HEAD refresh storage uses source-revision CAS and refuses to commit while a full profile update lease is active;
 - one crash-safe active update lease per profile;
 - daemon-start recovery of interrupted update leases;
 - source configuration cannot change while its worker lease is active;
@@ -141,12 +143,15 @@ Implemented refresh/scheduling foundation:
 - persisted update interval and stable profile-source listing;
 - staggered overdue startup planning, bounded exponential failure backoff and stable per-profile jitter;
 - global scheduled-refresh concurrency budget plus same-profile non-reentry;
-- scheduler cancellation waits for active workers.
+- scheduler cancellation waits for active workers;
+- dedicated GET + bounded HEAD-refresh profile metadata API for traffic/quota/expiry display;
+- metadata HEAD requests reuse the explicit Direct/Selected fetch path, have a five-second upstream timeout ceiling, a four-request global budget and same-profile non-reentry;
+- metadata-only network failures do not mutate node snapshots or full-refresh failure/backoff health;
+- internal client methods consume the metadata API so future TUI code does not read SQLite directly.
 
 Still not implemented:
 
 - Specific Node network fetch execution;
 - automatic snapshot -> declaration -> compile/apply policy after a refresh;
-- dedicated metadata-only/HEAD refresh API for traffic display;
 - source node filter execution semantics (Karing UI state is persisted, but exact vpn-service matching behavior is not yet verified);
 - provider materialization.
