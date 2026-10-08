@@ -43,6 +43,26 @@ func TestSourceSpecAcceptsURIListSources(t *testing.T) {
 	}
 }
 
+func TestSourceSpecAcceptsExplicitBase64URIList(t *testing.T) {
+	for _, kind := range []SourceLocationKind{SourceLocationURL, SourceLocationFile} {
+		location := "https://example.com/v2ray-subscription"
+		if kind == SourceLocationFile {
+			location = "/home/user/subscription.base64"
+		}
+		spec := SourceSpec{
+			ProfileID:    "profile-b64",
+			Format:       SourceFormatBase64URIList,
+			LocationKind: kind,
+			Location:     location,
+			Fetch:        FetchPolicy{Mode: FetchDirect},
+			Enabled:      true,
+		}
+		if err := spec.Validate(); err != nil {
+			t.Fatalf("base64 URI-list source %q: %v", kind, err)
+		}
+	}
+}
+
 func TestSourceSpecAcceptsSelectedAndFixedFetch(t *testing.T) {
 	for _, fetch := range []FetchPolicy{
 		{Mode: FetchSelected},
