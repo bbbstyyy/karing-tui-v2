@@ -347,7 +347,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"dns_runtime_paths_observed":  true,
 				"profile_source_state":        true,
 				"profile_node_overlays":       true,
-				"profile_overlay_runtime":      true,
+				"profile_overlay_runtime":     true,
 				"profile_node_filter":         false,
 				"profile_refresh_fetch":       true,
 				"profile_refresh_scheduler":   true,
