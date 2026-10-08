@@ -32,6 +32,9 @@ func TestProfileDeclarationStageRequiresAcknowledgedPreviewAndNeverApplies(t *te
 	if err := json.Unmarshal(body, &preview); err != nil {
 		t.Fatal(err)
 	}
+	if preview.SourceRevision == 0 {
+		t.Fatal("preview omitted source revision guard")
+	}
 	req := apiv1.ProfileDeclarationStageRequest{SnapshotID: snapshotID, ExpectedSourceRevision: preview.SourceRevision, ExpectedDeclarationRevision: rev,
 		CandidateSHA256: preview.CandidateSHA256, RuntimeOverlaySHA256: preview.RuntimeOverlaySHA256}
 	bad := req
@@ -64,11 +67,17 @@ func TestProfileDeclarationStageRequiresAcknowledgedPreviewAndNeverApplies(t *te
 		t.Fatalf("duplicate stage status=%d", status)
 	}
 	status, _ = requestProfileAPI(t, api.URL, http.MethodPost, path+"stage", map[string]any{
-		"snapshot_id": snapshotID, "expected_declaration_revision": rev,
+		"snapshot_id": snapshotID, "expected_source_revision": preview.SourceRevision, "expected_declaration_revision": rev,
 		"candidate_sha256": req.CandidateSHA256, "runtime_overlay_sha256": req.RuntimeOverlaySHA256, "extra": true,
 	})
 	if status != http.StatusBadRequest {
 		t.Fatalf("extra stage field status=%d", status)
+	}
+	missingRevision := req
+	missingRevision.ExpectedSourceRevision = 0
+	status, _ = requestProfileAPI(t, api.URL, http.MethodPost, path+"stage", missingRevision)
+	if status != http.StatusBadRequest {
+		t.Fatalf("missing source revision stage status=%d", status)
 	}
 }
 
