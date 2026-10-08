@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
@@ -164,6 +165,55 @@ func (c *Client) SetCurrentSelection(
 	var response apiv1.CurrentSelectionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return apiv1.CurrentSelectionResponse{}, fmt.Errorf("decode daemon response: %w", err)
+	}
+	return response, nil
+}
+
+func (c *Client) ProfileMetadata(
+	ctx context.Context,
+	profileID string,
+) (apiv1.ProfileMetadataResponse, error) {
+	var response apiv1.ProfileMetadataResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID) + "/metadata"
+	if err := c.get(ctx, path, &response); err != nil {
+		return apiv1.ProfileMetadataResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RefreshProfileMetadata(
+	ctx context.Context,
+	profileID string,
+	expectedSourceRevision uint64,
+) (apiv1.ProfileMetadataResponse, error) {
+	body, err := json.Marshal(apiv1.ProfileMetadataRefreshRequest{
+		ExpectedSourceRevision: expectedSourceRevision,
+	})
+	if err != nil {
+		return apiv1.ProfileMetadataResponse{}, err
+	}
+	path := "/v1/profiles/" + url.PathEscape(profileID) + "/metadata/refresh"
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"http://unix"+path,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return apiv1.ProfileMetadataResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.controlClient.Do(req)
+	if err != nil {
+		return apiv1.ProfileMetadataResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return apiv1.ProfileMetadataResponse{}, responseError(resp)
+	}
+	var response apiv1.ProfileMetadataResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return apiv1.ProfileMetadataResponse{}, fmt.Errorf("decode daemon response: %w", err)
 	}
 	return response, nil
 }
