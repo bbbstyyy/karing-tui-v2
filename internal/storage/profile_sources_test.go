@@ -99,6 +99,90 @@ func TestListProfileSourcesIsStableAndCarriesSchedule(t *testing.T) {
 	}
 }
 
+func TestProfileSourceIdentityChangeResetsFetchStateButKeepsSnapshot(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	spec := testRemoteProfileSource("profile-a", profile.FetchDirect)
+	spec.UpdateInterval = profile.DefaultUpdateInterval
+	created, err := store.CommitProfileSource(ctx, 0, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := store.CommitProfileSnapshot(ctx, ProfileSnapshotCandidate{
+		ProfileID:    "profile-a",
+		SourceKind:   "sing-box",
+		SourceSHA256: strings.Repeat("d", 64),
+		Nodes: []profile.SourceNode{{
+			SourceKey:   "proxy-a",
+			SourceName:  "Proxy A",
+			PayloadJSON: []byte(`{"type":"http","tag":"proxy-a","server":"127.0.0.1","server_port":8080}`),
+		}},
+	}, ProfileSnapshotCommitOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lease, err := store.BeginProfileUpdate(ctx, "profile-a", created.Revision, "metadata-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishProfileUpdateSuccess(ctx, lease, ProfileUpdateSuccess{
+		SourceRevision: "etag:\"v1\"",
+		ETag:           "\"v1\"",
+		LastModified:   "Wed, 07 Oct 2026 16:00:00 GMT",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lease, err = store.BeginProfileUpdate(ctx, "profile-a", created.Revision, "metadata-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryAfter := time.Now().UTC().Add(15 * time.Minute).Round(time.Second)
+	if err := store.FinishProfileUpdateFailure(ctx, lease, "temporary failure", &retryAfter); err != nil {
+		t.Fatal(err)
+	}
+
+	scheduleOnly := spec
+	scheduleOnly.UpdateInterval = 24 * time.Hour
+	preserved, err := store.CommitProfileSource(ctx, created.Revision, scheduleOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved.ETag != "\"v1\"" ||
+		preserved.LastModified != "Wed, 07 Oct 2026 16:00:00 GMT" ||
+		preserved.LastSourceRevision != "etag:\"v1\"" ||
+		preserved.LastAttemptAt == nil ||
+		preserved.LastSuccessAt == nil ||
+		preserved.LastError != "temporary failure" ||
+		preserved.ConsecutiveFailures != 1 ||
+		preserved.RetryAfterAt == nil {
+		t.Fatalf("schedule-only edit reset fetch state: %+v", preserved)
+	}
+
+	changed := scheduleOnly
+	changed.Location = "https://example.net/new-subscription"
+	reset, err := store.CommitProfileSource(ctx, preserved.Revision, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset.ETag != "" ||
+		reset.LastModified != "" ||
+		reset.LastSourceRevision != "" ||
+		reset.LastAttemptAt != nil ||
+		reset.LastSuccessAt != nil ||
+		reset.LastError != "" ||
+		reset.ConsecutiveFailures != 0 ||
+		reset.RetryAfterAt != nil {
+		t.Fatalf("source identity edit retained stale fetch state: %+v", reset)
+	}
+	if reset.CurrentSnapshotID == nil || *reset.CurrentSnapshotID != snapshot.Snapshot.ID {
+		t.Fatalf("source identity edit discarded last usable snapshot: %+v", reset)
+	}
+}
+
 func TestProfileUpdateLeaseFailureThenSuccess(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
