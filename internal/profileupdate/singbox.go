@@ -52,7 +52,7 @@ func CommitBasicSingBoxProfile(
 
 	commit, err := store.CommitProfileSnapshot(ctx, storage.ProfileSnapshotCandidate{
 		ProfileID:      profileID,
-		SourceKind:     "sing-box",
+		SourceKind:     string(profile.SourceFormatSingBox),
 		SourceRevision: sourceRevision,
 		SourceSHA256:   analysis.SourceSHA256,
 		Nodes:          sourceNodes,
@@ -70,10 +70,26 @@ func CommitBasicSingBoxProfile(
 	return result, nil
 }
 
+func MaterializeBasicProfileSnapshot(snapshot storage.ProfileSnapshot) ([]domain.Node, error) {
+	switch profile.SourceFormat(snapshot.SourceKind) {
+	case profile.SourceFormatSingBox, profile.SourceFormatURIList:
+	default:
+		return nil, fmt.Errorf(
+			"unsupported canonical profile snapshot source kind %q",
+			snapshot.SourceKind,
+		)
+	}
+	return materializeCanonicalSingBoxNodes(snapshot)
+}
+
 func MaterializeBasicSingBoxSnapshot(snapshot storage.ProfileSnapshot) ([]domain.Node, error) {
-	if snapshot.SourceKind != "sing-box" {
+	if snapshot.SourceKind != string(profile.SourceFormatSingBox) {
 		return nil, fmt.Errorf("profile snapshot source kind %q is not sing-box", snapshot.SourceKind)
 	}
+	return materializeCanonicalSingBoxNodes(snapshot)
+}
+
+func materializeCanonicalSingBoxNodes(snapshot storage.ProfileSnapshot) ([]domain.Node, error) {
 	nodes := make([]domain.Node, 0, len(snapshot.Nodes))
 	for index, stored := range snapshot.Nodes {
 		node, err := singboximport.DecodeBasicNode(stored.PayloadJSON, stored.Identity)
