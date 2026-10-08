@@ -80,6 +80,13 @@ type TrojanNodeOptions struct {
 	Network  ProxyNetwork
 }
 
+type OutboundTLSOptions struct {
+	Enabled    bool
+	DisableSNI bool
+	ServerName string
+	Insecure   bool
+}
+
 type Node struct {
 	ProfileID   string
 	NodeID      string
@@ -92,6 +99,7 @@ type Node struct {
 	VMess       *VMessNodeOptions
 	VLESS       *VLESSNodeOptions
 	Trojan      *TrojanNodeOptions
+	TLS         *OutboundTLSOptions
 }
 
 func (n Node) Validate() error {
@@ -153,6 +161,16 @@ func (n Node) Validate() error {
 		}
 	default:
 		return fmt.Errorf("%w: unsupported node kind %q", ErrInvalidNode, n.Kind)
+	}
+	if n.TLS != nil {
+		switch n.Kind {
+		case NodeVMess, NodeVLESS, NodeTrojan:
+		default:
+			return fmt.Errorf("%w: TLS is not supported for node kind %q", ErrInvalidNode, n.Kind)
+		}
+		if err := n.TLS.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -283,6 +301,21 @@ func (o VLESSNodeOptions) Validate() error {
 				ErrInvalidNode,
 				*o.PacketEncoding,
 			)
+		}
+	}
+	return nil
+}
+
+func (o OutboundTLSOptions) Validate() error {
+	if !o.Enabled {
+		return fmt.Errorf(
+			"%w: explicit TLS options must set enabled=true in the verified subset",
+			ErrInvalidNode,
+		)
+	}
+	if o.ServerName != "" {
+		if err := validateServerHost(o.ServerName); err != nil {
+			return fmt.Errorf("%w: TLS server_name: %v", ErrInvalidNode, err)
 		}
 	}
 	return nil
