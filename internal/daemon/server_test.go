@@ -136,6 +136,7 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["profile_source_state"] ||
 		!caps.Capabilities["profile_node_overlays"] ||
 		!caps.Capabilities["profile_overlay_runtime"] ||
+		!caps.Capabilities["profile_node_filter_state"] ||
 		caps.Capabilities["profile_node_filter"] ||
 		!caps.Capabilities["profile_refresh_fetch"] ||
 		!caps.Capabilities["profile_refresh_scheduler"] ||
