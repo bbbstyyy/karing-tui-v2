@@ -132,6 +132,47 @@ func TestReplaceProfileNodesV1RoundTripsShadowsocksFields(t *testing.T) {
 	}
 }
 
+func TestReplaceProfileNodesV1RoundTripsVMessFields(t *testing.T) {
+	replacement, err := ReplaceProfileNodesV1(minimalDeclaration(), "p2", []domain.Node{{
+		ProfileID: "p2",
+		NodeID:    "vmess-1",
+		Kind:      domain.NodeVMess,
+		Server:    "vmess.example.com",
+		Port:      10086,
+		VMess: &domain.VMessNodeOptions{
+			UUID:                "11111111-2222-3333-4444-555555555555",
+			Security:            "aes-128-gcm",
+			AlterID:             1,
+			GlobalPadding:       true,
+			AuthenticatedLength: true,
+			Network:             domain.ProxyNetworkUDP,
+			PacketEncoding:      "xudp",
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := ParseV1(replacement.Document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Nodes) != 2 {
+		t.Fatalf("nodes = %+v", model.Nodes)
+	}
+	node := model.Nodes[1]
+	if node.Kind != domain.NodeVMess ||
+		node.VMess == nil ||
+		node.VMess.UUID != "11111111-2222-3333-4444-555555555555" ||
+		node.VMess.Security != "aes-128-gcm" ||
+		node.VMess.AlterID != 1 ||
+		!node.VMess.GlobalPadding ||
+		!node.VMess.AuthenticatedLength ||
+		node.VMess.Network != domain.ProxyNetworkUDP ||
+		node.VMess.PacketEncoding != "xudp" {
+		t.Fatalf("VMess declaration node = %+v", node)
+	}
+}
+
 func TestReplaceProfileNodesV1RejectsCrossProfileReplacement(t *testing.T) {
 	_, err := ReplaceProfileNodesV1(minimalDeclaration(), "p1", []domain.Node{{
 		ProfileID: "p2",
