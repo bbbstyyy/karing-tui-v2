@@ -123,6 +123,7 @@ Implemented source/update-state foundation:
 - daemon-start recovery of interrupted update leases;
 - source configuration cannot change while its worker lease is active;
 - source identity edits clear stale validators/backoff/usage metadata while retaining the last accepted snapshot.
+- persisted Karing-shaped node filter state (all/include/exclude, keyword-or-regex, match-attribute) with revision/CAS; execution remains disabled pending verified vpn-service semantics.
 
 Implemented refresh/scheduling foundation:
 
@@ -143,5 +144,5 @@ Still not implemented:
 - Specific Node network fetch execution;
 - automatic snapshot -> declaration -> compile/apply policy after a refresh;
 - dedicated metadata-only/HEAD refresh API for traffic display;
-- source node filter persistence;
+- source node filter execution semantics (Karing UI state is persisted, but exact vpn-service matching behavior is not yet verified);
 - provider materialization.
