@@ -205,5 +205,13 @@ func nodeV1FromDomain(node domain.Node) (nodeV1, error) {
 	default:
 		return nodeV1{}, fmt.Errorf("unsupported node type %q", node.Kind)
 	}
+	if node.TLS != nil {
+		result.TLS = &tlsV1{
+			Enabled:    node.TLS.Enabled,
+			DisableSNI: node.TLS.DisableSNI,
+			ServerName: node.TLS.ServerName,
+			Insecure:   node.TLS.Insecure,
+		}
+	}
 	return result, nil
 }
