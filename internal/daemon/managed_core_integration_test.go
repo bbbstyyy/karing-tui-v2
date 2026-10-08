@@ -390,10 +390,25 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256
     "server":"127.0.0.1",
     "port":%d,
     "http":{}
+  },{
+    "profile_id":"integration-profile",
+    "node_id":"integration-vless",
+    "type":"vless",
+    "server":"vless.example.invalid",
+    "port":443,
+    "vless":{
+      "uuid":"11111111-2222-3333-4444-555555555555",
+      "encryption":"none",
+      "network":"udp",
+      "packet_encoding":""
+    }
   }],
   "selection":{
     "current":{
-      "members":[{"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-node"}],
+      "members":[
+        {"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-node"},
+        {"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-vless"}
+      ],
       "default":{"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-node"}
     },
     "custom":[]
