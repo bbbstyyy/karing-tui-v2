@@ -9,7 +9,7 @@ import (
 
 const (
 	MaxNodeAliasBytes = 512
-	MaxNodeSortRank    = int64(1<<62 - 1)
+	MaxNodeSortRank   = int64(1<<62 - 1)
 )
 
 var ErrInvalidNodeOverlay = errors.New("invalid profile node overlay")
