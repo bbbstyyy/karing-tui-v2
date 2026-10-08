@@ -134,6 +134,8 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["dns_fallback_lowerer"] ||
 		!caps.Capabilities["dns_runtime_paths_observed"] ||
 		!caps.Capabilities["profile_source_state"] ||
+		!caps.Capabilities["profile_source_api"] ||
+		!caps.Capabilities["profile_refresh_api"] ||
 		!caps.Capabilities["profile_node_overlays"] ||
 		!caps.Capabilities["profile_overlay_runtime"] ||
 		!caps.Capabilities["profile_node_filter_state"] ||
@@ -151,6 +153,44 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		caps.Capabilities["proxy_inbounds"] ||
 		caps.Capabilities["routing_ir"] {
 		t.Fatalf("unexpected capabilities: %+v", caps.Capabilities)
+	}
+
+	sources, err := api.ProfileSources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources.Profiles) != 0 {
+		t.Fatalf("fresh daemon profile sources = %+v", sources)
+	}
+	sourceSpec := apiv1.ProfileSourceSpec{
+		Format:       "sing-box",
+		LocationKind: "file",
+		Location:     filepath.Join(base, "subscription.json"),
+		Fetch:        apiv1.ProfileSourceFetchPolicy{Mode: "direct"},
+		Enabled:      true,
+	}
+	created, err := api.PutProfileSource(context.Background(), "source-a",
+		apiv1.ProfileSourcePutRequest{Source: sourceSpec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Revision != 1 || created.ProfileID != "source-a" {
+		t.Fatalf("created profile source = %+v", created)
+	}
+	retrieved, err := api.ProfileSource(context.Background(), "source-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retrieved.Source.Location != sourceSpec.Location ||
+		retrieved.Source.Fetch.Mode != "direct" {
+		t.Fatalf("retrieved profile source = %+v", retrieved)
+	}
+	sources, err = api.ProfileSources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources.Profiles) != 1 || sources.Profiles[0].ProfileID != "source-a" {
+		t.Fatalf("persisted profile source list = %+v", sources)
 	}
 
 	dbInfo, err := os.Stat(paths.Database)
