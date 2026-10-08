@@ -19,21 +19,21 @@ import (
 
 const maxConcurrentProfileMetadataRefreshes = 4
 
-type profileMetadataRefreshGate struct {
+type profileOperationGate struct {
 	slots chan struct{}
 
 	mu     sync.Mutex
 	active map[string]struct{}
 }
 
-func newProfileMetadataRefreshGate(limit int) *profileMetadataRefreshGate {
-	return &profileMetadataRefreshGate{
+func newProfileOperationGate(limit int) *profileOperationGate {
+	return &profileOperationGate{
 		slots:  make(chan struct{}, limit),
 		active: make(map[string]struct{}),
 	}
 }
 
-func (g *profileMetadataRefreshGate) TryAcquire(profileID string) bool {
+func (g *profileOperationGate) TryAcquire(profileID string) bool {
 	if g == nil {
 		return false
 	}
@@ -51,7 +51,7 @@ func (g *profileMetadataRefreshGate) TryAcquire(profileID string) bool {
 	}
 }
 
-func (g *profileMetadataRefreshGate) Release(profileID string) {
+func (g *profileOperationGate) Release(profileID string) {
 	if g == nil {
 		return
 	}
@@ -72,7 +72,7 @@ func registerProfileMetadataRoutes(
 		return false
 	}
 	fetcher, fetcherErr := profilefetch.NewSourceFetcher(profileFetchOptions(runtime))
-	gate := newProfileMetadataRefreshGate(maxConcurrentProfileMetadataRefreshes)
+	gate := newProfileOperationGate(maxConcurrentProfileMetadataRefreshes)
 
 	mux.HandleFunc("GET /v1/profiles/{profile_id}/metadata", func(w http.ResponseWriter, r *http.Request) {
 		state, err := store.ProfileSource(r.Context(), r.PathValue("profile_id"))
