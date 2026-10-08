@@ -133,6 +133,176 @@ func TestHTTPFetcherReportsMalformedSubscriptionUsageWithoutFailingFetch(t *test
 	}
 }
 
+func TestHTTPFetcherMetadataUsesHeadAndCapturesUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Errorf("metadata method = %q, want HEAD", r.Method)
+		}
+		if r.Header.Get("User-Agent") != "metadata-test" {
+			t.Errorf("metadata User-Agent = %q", r.Header.Get("User-Agent"))
+		}
+		w.Header().Set(
+			"Subscription-Userinfo",
+			"upload=11; download=22; total=33; expire=1798761600",
+		)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	fetcher, err := NewHTTPFetcher(DefaultHTTPOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := testURLSource(server.URL, profile.FetchPolicy{Mode: profile.FetchDirect})
+	spec.UserAgent = "metadata-test"
+	result, err := fetcher.FetchMetadata(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UsageMetadataObserved ||
+		result.UsageMetadataError != "" ||
+		result.SubscriptionUsage == nil ||
+		result.SubscriptionUsage.UploadBytes == nil ||
+		*result.SubscriptionUsage.UploadBytes != 11 ||
+		result.SubscriptionUsage.DownloadBytes == nil ||
+		*result.SubscriptionUsage.DownloadBytes != 22 ||
+		result.SubscriptionUsage.TotalBytes == nil ||
+		*result.SubscriptionUsage.TotalBytes != 33 {
+		t.Fatalf("metadata result = %+v", result)
+	}
+}
+
+func TestHTTPFetcherMetadataMalformedHeaderDoesNotBecomeNetworkFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=bad")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	fetcher, err := NewHTTPFetcher(DefaultHTTPOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fetcher.FetchMetadata(
+		context.Background(),
+		testURLSource(server.URL, profile.FetchPolicy{Mode: profile.FetchDirect}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UsageMetadataObserved ||
+		result.SubscriptionUsage != nil ||
+		result.UsageMetadataError == "" {
+		t.Fatalf("malformed metadata result = %+v", result)
+	}
+}
+
+func TestHTTPFetcherMetadataRequiresHTTP200AndCapturesRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	defer server.Close()
+
+	fetcher, err := NewHTTPFetcher(DefaultHTTPOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC().Add(119 * time.Second)
+	_, err = fetcher.FetchMetadata(
+		context.Background(),
+		testURLSource(server.URL, profile.FetchPolicy{Mode: profile.FetchDirect}),
+	)
+	after := time.Now().UTC().Add(121 * time.Second)
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("metadata status error = %v", err)
+	}
+	if statusErr.StatusCode != http.StatusMethodNotAllowed ||
+		statusErr.RetryAfter == nil ||
+		statusErr.RetryAfter.Before(before) ||
+		statusErr.RetryAfter.After(after) {
+		t.Fatalf("metadata Retry-After = %+v", statusErr)
+	}
+}
+
+func TestHTTPFetcherMetadataUsesSelectedProxyAndSpecificNodeFailsClosed(t *testing.T) {
+	proxyRequests := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Errorf("proxied metadata method = %q, want HEAD", r.Method)
+		}
+		proxyRequests <- r.URL.String()
+		w.Header().Set("Subscription-Userinfo", "total=4096")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+
+	addrPort, err := netip.ParseAddrPort(strings.TrimPrefix(proxyServer.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultHTTPOptions()
+	options.SelectedProxy = addrPort
+	fetcher, err := NewHTTPFetcher(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := testURLSource(
+		"http://origin.invalid/subscription?token=hidden",
+		profile.FetchPolicy{Mode: profile.FetchSelected},
+	)
+	result, err := fetcher.FetchMetadata(context.Background(), selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SubscriptionUsage == nil ||
+		result.SubscriptionUsage.TotalBytes == nil ||
+		*result.SubscriptionUsage.TotalBytes != 4096 {
+		t.Fatalf("selected metadata result = %+v", result)
+	}
+	select {
+	case target := <-proxyRequests:
+		if !strings.Contains(target, "origin.invalid/subscription") {
+			t.Fatalf("metadata proxy target = %q", target)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("selected proxy did not receive metadata request")
+	}
+
+	specific := selected
+	specific.Fetch = profile.FetchPolicy{
+		Mode:      profile.FetchSpecificNode,
+		ProfileID: "bootstrap",
+		NodeID:    "node-1",
+	}
+	if _, err := fetcher.FetchMetadata(context.Background(), specific); !errors.Is(err, ErrUnsupportedFetchMode) {
+		t.Fatalf("specific-node metadata error = %v", err)
+	}
+}
+
+func TestHTTPFetcherMetadataTimeoutIsCappedAtFiveSeconds(t *testing.T) {
+	options := DefaultHTTPOptions()
+	options.Timeout = 20 * time.Millisecond
+	fetcher, err := NewHTTPFetcher(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	_, err = fetcher.FetchMetadata(
+		context.Background(),
+		testURLSource(server.URL, profile.FetchPolicy{Mode: profile.FetchDirect}),
+	)
+	if !errors.Is(err, ErrFetchTimeout) {
+		t.Fatalf("metadata timeout error = %v", err)
+	}
+}
+
 func TestHTTPFetcherNeverUsesEnvironmentProxyForDirectMode(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
