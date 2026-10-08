@@ -173,6 +173,65 @@ func TestReplaceProfileNodesV1RoundTripsVMessFields(t *testing.T) {
 	}
 }
 
+func TestReplaceProfileNodesV1RoundTripsVLESSPacketEncodingPresence(t *testing.T) {
+	explicitNone := ""
+	replacement, err := ReplaceProfileNodesV1(minimalDeclaration(), "p2", []domain.Node{{
+		ProfileID: "p2",
+		NodeID:    "vless-1",
+		Kind:      domain.NodeVLESS,
+		Server:    "vless.example.com",
+		Port:      443,
+		VLESS: &domain.VLESSNodeOptions{
+			UUID:           "11111111-2222-3333-4444-555555555555",
+			Encryption:     "none",
+			Network:        domain.ProxyNetworkUDP,
+			PacketEncoding: &explicitNone,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := ParseV1(replacement.Document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Nodes) != 2 {
+		t.Fatalf("nodes = %+v", model.Nodes)
+	}
+	node := model.Nodes[1]
+	if node.Kind != domain.NodeVLESS ||
+		node.VLESS == nil ||
+		node.VLESS.UUID != "11111111-2222-3333-4444-555555555555" ||
+		node.VLESS.Encryption != "none" ||
+		node.VLESS.Network != domain.ProxyNetworkUDP ||
+		node.VLESS.PacketEncoding == nil ||
+		*node.VLESS.PacketEncoding != "" {
+		t.Fatalf("VLESS declaration node = %+v", node)
+	}
+
+	defaultEncoding, err := ReplaceProfileNodesV1(replacement.Document, "p2", []domain.Node{{
+		ProfileID: "p2",
+		NodeID:    "vless-1",
+		Kind:      domain.NodeVLESS,
+		Server:    "vless.example.com",
+		Port:      443,
+		VLESS: &domain.VLESSNodeOptions{
+			UUID:    "11111111-2222-3333-4444-555555555555",
+			Network: domain.ProxyNetworkBoth,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err = ParseV1(defaultEncoding.Document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.Nodes[1].VLESS == nil || model.Nodes[1].VLESS.PacketEncoding != nil {
+		t.Fatalf("VLESS omitted packet encoding was not preserved: %+v", model.Nodes[1])
+	}
+}
+
 func TestReplaceProfileNodesV1RejectsCrossProfileReplacement(t *testing.T) {
 	_, err := ReplaceProfileNodesV1(minimalDeclaration(), "p1", []domain.Node{{
 		ProfileID: "p2",
