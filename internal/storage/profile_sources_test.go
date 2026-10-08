@@ -379,6 +379,163 @@ func TestProfileUpdateSuccessPersistsUsageAndMalformedMetadataPreservesLastGoodU
 	}
 }
 
+func TestCommitProfileSubscriptionMetadataIsMonotonicAndPreservesLastGoodUsage(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	source, err := store.CommitProfileSource(
+		ctx,
+		0,
+		testRemoteProfileSource("profile-a", profile.FetchDirect),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload := int64(10)
+	download := int64(20)
+	total := int64(100)
+	firstObserved := time.Date(2026, 10, 8, 5, 0, 0, 0, time.UTC)
+	applied, err := store.CommitProfileSubscriptionMetadata(
+		ctx,
+		"profile-a",
+		source.Revision,
+		firstObserved,
+		true,
+		&profile.SubscriptionUsage{
+			UploadBytes:   &upload,
+			DownloadBytes: &download,
+			TotalBytes:    &total,
+		},
+		"",
+	)
+	if err != nil || !applied {
+		t.Fatalf("first metadata commit applied=%v err=%v", applied, err)
+	}
+	state, err := store.ProfileSource(ctx, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SubscriptionUsage == nil ||
+		state.SubscriptionUsage.UploadBytes == nil ||
+		*state.SubscriptionUsage.UploadBytes != upload ||
+		state.SubscriptionUsageUpdatedAt == nil ||
+		!state.SubscriptionUsageUpdatedAt.Equal(firstObserved) ||
+		state.SubscriptionMetadataObservedAt == nil ||
+		!state.SubscriptionMetadataObservedAt.Equal(firstObserved) ||
+		state.LastMetadataError != "" {
+		t.Fatalf("first metadata state = %+v", state)
+	}
+
+	staleObserved := firstObserved.Add(-time.Minute)
+	applied, err = store.CommitProfileSubscriptionMetadata(
+		ctx,
+		"profile-a",
+		source.Revision,
+		staleObserved,
+		true,
+		nil,
+		"stale malformed metadata",
+	)
+	if err != nil || applied {
+		t.Fatalf("stale metadata commit applied=%v err=%v", applied, err)
+	}
+	state, err = store.ProfileSource(ctx, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastMetadataError != "" ||
+		state.SubscriptionMetadataObservedAt == nil ||
+		!state.SubscriptionMetadataObservedAt.Equal(firstObserved) {
+		t.Fatalf("stale metadata changed state = %+v", state)
+	}
+
+	secondObserved := firstObserved.Add(time.Minute)
+	applied, err = store.CommitProfileSubscriptionMetadata(
+		ctx,
+		"profile-a",
+		source.Revision,
+		secondObserved,
+		true,
+		nil,
+		"invalid Subscription-Userinfo metadata",
+	)
+	if err != nil || !applied {
+		t.Fatalf("new malformed metadata applied=%v err=%v", applied, err)
+	}
+	state, err = store.ProfileSource(ctx, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SubscriptionUsage == nil ||
+		state.SubscriptionUsage.UploadBytes == nil ||
+		*state.SubscriptionUsage.UploadBytes != upload ||
+		state.SubscriptionUsageUpdatedAt == nil ||
+		!state.SubscriptionUsageUpdatedAt.Equal(firstObserved) ||
+		state.SubscriptionMetadataObservedAt == nil ||
+		!state.SubscriptionMetadataObservedAt.Equal(secondObserved) ||
+		state.LastMetadataError == "" {
+		t.Fatalf("malformed metadata overwrote last good usage = %+v", state)
+	}
+}
+
+func TestCommitProfileSubscriptionMetadataRejectsConcurrentUpdateAndOldRevision(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	source, err := store.CommitProfileSource(
+		ctx,
+		0,
+		testRemoteProfileSource("profile-a", profile.FetchDirect),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := store.BeginProfileUpdate(ctx, "profile-a", source.Revision, "full-refresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := int64(1)
+	_, err = store.CommitProfileSubscriptionMetadata(
+		ctx,
+		"profile-a",
+		source.Revision,
+		time.Now().UTC(),
+		true,
+		&profile.SubscriptionUsage{TotalBytes: &total},
+		"",
+	)
+	if !errors.Is(err, ErrProfileUpdateInProgress) {
+		t.Fatalf("concurrent metadata error = %v", err)
+	}
+	if err := store.FinishProfileUpdateFailure(ctx, lease, "test cleanup", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	changedSpec := source.Spec
+	changedSpec.Location = "https://example.net/new-subscription"
+	changed, err := store.CommitProfileSource(ctx, source.Revision, changedSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.SubscriptionMetadataObservedAt != nil {
+		t.Fatalf("source identity edit retained metadata observed time: %+v", changed)
+	}
+	_, err = store.CommitProfileSubscriptionMetadata(
+		ctx,
+		"profile-a",
+		source.Revision,
+		time.Now().UTC(),
+		true,
+		&profile.SubscriptionUsage{TotalBytes: &total},
+		"",
+	)
+	if !errors.Is(err, ErrProfileSourceRevisionConflict) {
+		t.Fatalf("old revision metadata error = %v", err)
+	}
+}
+
 func TestProfileUpdateSuccessRejectsInconsistentUsageMetadataState(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
