@@ -16,6 +16,7 @@ const (
 	NodeShadowsocks NodeKind = "shadowsocks"
 	NodeVMess       NodeKind = "vmess"
 	NodeVLESS       NodeKind = "vless"
+	NodeTrojan      NodeKind = "trojan"
 )
 
 type SOCKSVersion string
@@ -74,6 +75,11 @@ type VLESSNodeOptions struct {
 	PacketEncoding *string
 }
 
+type TrojanNodeOptions struct {
+	Password string
+	Network  ProxyNetwork
+}
+
 type Node struct {
 	ProfileID   string
 	NodeID      string
@@ -85,6 +91,7 @@ type Node struct {
 	Shadowsocks *ShadowsocksNodeOptions
 	VMess       *VMessNodeOptions
 	VLESS       *VLESSNodeOptions
+	Trojan      *TrojanNodeOptions
 }
 
 func (n Node) Validate() error {
@@ -103,38 +110,45 @@ func (n Node) Validate() error {
 
 	switch n.Kind {
 	case NodeSOCKS:
-		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil {
+		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil || n.Trojan != nil {
 			return fmt.Errorf("%w: SOCKS node must contain only SOCKS options", ErrInvalidNode)
 		}
 		if err := n.SOCKS.Validate(); err != nil {
 			return err
 		}
 	case NodeHTTP:
-		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil {
+		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil || n.Trojan != nil {
 			return fmt.Errorf("%w: HTTP node must contain only HTTP options", ErrInvalidNode)
 		}
 		if err := n.HTTP.Validate(); err != nil {
 			return err
 		}
 	case NodeShadowsocks:
-		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil || n.VMess != nil || n.VLESS != nil {
+		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil || n.VMess != nil || n.VLESS != nil || n.Trojan != nil {
 			return fmt.Errorf("%w: Shadowsocks node must contain only Shadowsocks options", ErrInvalidNode)
 		}
 		if err := n.Shadowsocks.Validate(); err != nil {
 			return err
 		}
 	case NodeVMess:
-		if n.VMess == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VLESS != nil {
+		if n.VMess == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VLESS != nil || n.Trojan != nil {
 			return fmt.Errorf("%w: VMess node must contain only VMess options", ErrInvalidNode)
 		}
 		if err := n.VMess.Validate(); err != nil {
 			return err
 		}
 	case NodeVLESS:
-		if n.VLESS == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil {
+		if n.VLESS == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.Trojan != nil {
 			return fmt.Errorf("%w: VLESS node must contain only VLESS options", ErrInvalidNode)
 		}
 		if err := n.VLESS.Validate(); err != nil {
+			return err
+		}
+	case NodeTrojan:
+		if n.Trojan == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil {
+			return fmt.Errorf("%w: Trojan node must contain only Trojan options", ErrInvalidNode)
+		}
+		if err := n.Trojan.Validate(); err != nil {
 			return err
 		}
 	default:
@@ -270,6 +284,21 @@ func (o VLESSNodeOptions) Validate() error {
 				*o.PacketEncoding,
 			)
 		}
+	}
+	return nil
+}
+
+func (o TrojanNodeOptions) Validate() error {
+	if err := validateCredential(o.Password); err != nil {
+		return fmt.Errorf("%w: Trojan password: %v", ErrInvalidNode, err)
+	}
+	if o.Password == "" {
+		return fmt.Errorf("%w: Trojan password must not be empty", ErrInvalidNode)
+	}
+	switch o.Network {
+	case ProxyNetworkBoth, ProxyNetworkTCP, ProxyNetworkUDP:
+	default:
+		return fmt.Errorf("%w: unsupported Trojan network %q", ErrInvalidNode, o.Network)
 	}
 	return nil
 }
