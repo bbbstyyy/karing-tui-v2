@@ -161,13 +161,13 @@ type ProfileDiagnosticResponse struct {
 }
 
 type ProfileRefreshResponse struct {
-	ProfileID          string                      `json:"profile_id"`
-	SourceRevision     uint64                      `json:"source_revision"`
-	AcceptedRevision   string                      `json:"accepted_source_revision,omitempty"`
-	NotModified        bool                        `json:"not_modified"`
-	CurrentSnapshotID  *int64                      `json:"current_snapshot_id,omitempty"`
-	NodeCount          int                         `json:"node_count,omitempty"`
-	Diagnostics        []ProfileDiagnosticResponse `json:"diagnostics,omitempty"`
+	ProfileID         string                      `json:"profile_id"`
+	SourceRevision    uint64                      `json:"source_revision"`
+	AcceptedRevision  string                      `json:"accepted_source_revision,omitempty"`
+	NotModified       bool                        `json:"not_modified"`
+	CurrentSnapshotID *int64                      `json:"current_snapshot_id,omitempty"`
+	NodeCount         int                         `json:"node_count,omitempty"`
+	Diagnostics       []ProfileDiagnosticResponse `json:"diagnostics,omitempty"`
 }
 
 type ProfileRefreshErrorResponse struct {
