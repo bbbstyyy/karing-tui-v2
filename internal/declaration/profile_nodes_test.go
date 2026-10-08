@@ -232,6 +232,37 @@ func TestReplaceProfileNodesV1RoundTripsVLESSPacketEncodingPresence(t *testing.T
 	}
 }
 
+func TestReplaceProfileNodesV1RoundTripsTrojanFields(t *testing.T) {
+	replacement, err := ReplaceProfileNodesV1(minimalDeclaration(), "p2", []domain.Node{{
+		ProfileID: "p2",
+		NodeID:    "trojan-1",
+		Kind:      domain.NodeTrojan,
+		Server:    "trojan.example.com",
+		Port:      443,
+		Trojan: &domain.TrojanNodeOptions{
+			Password: "secret",
+			Network:  domain.ProxyNetworkUDP,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := ParseV1(replacement.Document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Nodes) != 2 {
+		t.Fatalf("nodes = %+v", model.Nodes)
+	}
+	node := model.Nodes[1]
+	if node.Kind != domain.NodeTrojan ||
+		node.Trojan == nil ||
+		node.Trojan.Password != "secret" ||
+		node.Trojan.Network != domain.ProxyNetworkUDP {
+		t.Fatalf("Trojan declaration node = %+v", node)
+	}
+}
+
 func TestReplaceProfileNodesV1RejectsCrossProfileReplacement(t *testing.T) {
 	_, err := ReplaceProfileNodesV1(minimalDeclaration(), "p1", []domain.Node{{
 		ProfileID: "p2",
