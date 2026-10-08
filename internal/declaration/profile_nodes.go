@@ -184,6 +184,19 @@ func nodeV1FromDomain(node domain.Node) (nodeV1, error) {
 			Network:             node.VMess.Network,
 			PacketEncoding:      node.VMess.PacketEncoding,
 		}
+	case domain.NodeVLESS:
+		var packetEncoding *string
+		if node.VLESS.PacketEncoding != nil {
+			value := *node.VLESS.PacketEncoding
+			packetEncoding = &value
+		}
+		result.VLESS = &vlessV1{
+			UUID:           node.VLESS.UUID,
+			Flow:           node.VLESS.Flow,
+			Encryption:     node.VLESS.Encryption,
+			Network:        node.VLESS.Network,
+			PacketEncoding: packetEncoding,
+		}
 	default:
 		return nodeV1{}, fmt.Errorf("unsupported node type %q", node.Kind)
 	}
