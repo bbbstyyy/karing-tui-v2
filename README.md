@@ -161,3 +161,13 @@ After a profile refresh produces an accepted snapshot, the Unix-socket daemon ca
 The response reports a candidate SHA-256, stable overlay digest, counts of nodes added/removed/retained and whether the candidate was applied. Source keys, server passwords and complete candidate JSON are never included. Snapshot ID and base declaration revision must match current state; invalid selected-node references or unsupported formats fail closed.
 
 A successful response is **schema-level, read-only evidence**, explicitly `core_validated=false` and `applied=false`. No declaration revision, rule resource or core generation is changed, and no core check is performed. See [ADR 0070](docs/adr/0070-read-only-profile-declaration-preview.md).
+
+## Profile declaration preview CLI
+
+To review the impact of the **current accepted snapshot** before any declaration edit, use the snapshot ID from `profiles refresh` and the current declaration revision from `status --json`:
+
+```sh
+karing-tui profiles preview my-profile --snapshot-id=123 --expected-declaration-revision=1
+```
+
+This command only requests the daemon's read-only preview. It returns credential-safe counts and SHA-256 digests. Its `applied` and `core_validated` fields are always false for this operation. It **cannot** promote a subscription snapshot to an active configuration.

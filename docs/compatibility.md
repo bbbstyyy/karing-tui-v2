@@ -189,3 +189,5 @@ The local `profiles` CLI currently supports credential-safe profile summaries (`
 ## Profile snapshot proposal preview
 
 `POST /v1/profiles/{profile_id}/declaration/preview` provides a bounded, credential-free V1 declaration proposal summary for an exact current accepted snapshot. It supports only the implemented canonical basic-node subsets, preserves stable identities and runtime overlays, and refuses stale references and required disabled nodes. This is not proof that a candidate will pass the pinned core checker: it is not committed or applied, and subscription/ISP routing is still excluded.
+
+The same preview is accessible through `karing-tui profiles preview <id> --snapshot-id=N --expected-declaration-revision=N`. Both revision inputs are required and validated before making an RPC, and daemon errors are summarized without echoing potentially secret-bearing untrusted strings.
