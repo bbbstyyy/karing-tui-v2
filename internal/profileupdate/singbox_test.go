@@ -210,6 +210,65 @@ func TestCommitBasicSingBoxProfilePersistsVMessAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestCommitBasicSingBoxProfilePersistsVLESSPacketEncodingAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	store, path := newProfileUpdateStore(t, ctx)
+
+	result, err := CommitBasicSingBoxProfile(ctx, store, "profile-vless", "v1", []byte(`{
+  "outbounds":[{
+    "type":"vless",
+    "tag":"vless-a",
+    "server":"vless.example.com",
+    "server_port":443,
+    "uuid":"11111111-2222-3333-4444-555555555555",
+    "encryption":"none",
+    "network":"udp",
+    "packet_encoding":""
+  }]
+}`), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Nodes) != 1 ||
+		result.Nodes[0].Kind != domain.NodeVLESS ||
+		result.Nodes[0].VLESS == nil ||
+		result.Nodes[0].VLESS.PacketEncoding == nil ||
+		*result.Nodes[0].VLESS.PacketEncoding != "" {
+		t.Fatalf("committed VLESS nodes = %+v", result.Nodes)
+	}
+	nodeID := result.Nodes[0].NodeID
+	snapshotID := result.Commit.Snapshot.ID
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+
+	snapshot, err := reopened.ProfileSnapshotByID(ctx, "profile-vless", snapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := MaterializeBasicSingBoxSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 ||
+		nodes[0].NodeID != nodeID ||
+		nodes[0].Kind != domain.NodeVLESS ||
+		nodes[0].VLESS == nil ||
+		nodes[0].VLESS.UUID != "11111111-2222-3333-4444-555555555555" ||
+		nodes[0].VLESS.Encryption != "none" ||
+		nodes[0].VLESS.Network != domain.ProxyNetworkUDP ||
+		nodes[0].VLESS.PacketEncoding == nil ||
+		*nodes[0].VLESS.PacketEncoding != "" {
+		t.Fatalf("reopened VLESS nodes = %+v", nodes)
+	}
+}
+
 func TestCommitBasicSingBoxProfileBlocksUnsupportedProtocolWithoutAdvancingSnapshot(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newProfileUpdateStore(t, ctx)
@@ -225,7 +284,7 @@ func TestCommitBasicSingBoxProfileBlocksUnsupportedProtocolWithoutAdvancingSnaps
 	blocked, err := CommitBasicSingBoxProfile(ctx, store, "profile-a", "v2", []byte(`{
   "outbounds":[
     {"type":"http","tag":"proxy-a","server":"127.0.0.1","server_port":9090},
-    {"type":"vless","tag":"unsupported","server":"example.com","server_port":443,"uuid":"00000000-0000-0000-0000-000000000000"}
+    {"type":"trojan","tag":"unsupported","server":"example.com","server_port":443,"password":"secret"}
   ]
 }`), Options{})
 	if !errors.Is(err, ErrImportBlocked) {
