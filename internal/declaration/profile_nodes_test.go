@@ -263,6 +263,45 @@ func TestReplaceProfileNodesV1RoundTripsTrojanFields(t *testing.T) {
 	}
 }
 
+func TestReplaceProfileNodesV1RoundTripsVerifiedTLSSubset(t *testing.T) {
+	replacement, err := ReplaceProfileNodesV1(minimalDeclaration(), "p2", []domain.Node{{
+		ProfileID: "p2",
+		NodeID:    "trojan-tls",
+		Kind:      domain.NodeTrojan,
+		Server:    "trojan.example.com",
+		Port:      443,
+		Trojan: &domain.TrojanNodeOptions{
+			Password: "secret",
+			Network:  domain.ProxyNetworkBoth,
+		},
+		TLS: &domain.OutboundTLSOptions{
+			Enabled:    true,
+			DisableSNI: true,
+			ServerName: "edge.example.com",
+			Insecure:   true,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := ParseV1(replacement.Document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Nodes) != 2 {
+		t.Fatalf("nodes = %+v", model.Nodes)
+	}
+	node := model.Nodes[1]
+	if node.Kind != domain.NodeTrojan ||
+		node.TLS == nil ||
+		!node.TLS.Enabled ||
+		!node.TLS.DisableSNI ||
+		node.TLS.ServerName != "edge.example.com" ||
+		!node.TLS.Insecure {
+		t.Fatalf("TLS declaration node = %+v", node)
+	}
+}
+
 func TestReplaceProfileNodesV1RejectsCrossProfileReplacement(t *testing.T) {
 	_, err := ReplaceProfileNodesV1(minimalDeclaration(), "p1", []domain.Node{{
 		ProfileID: "p2",
