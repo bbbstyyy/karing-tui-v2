@@ -75,14 +75,42 @@ func (s *Store) CommitProfileSource(
 	defer tx.Rollback()
 
 	var (
-		currentRevision int64
-		activeUpdate    sql.NullString
+		currentRevision       int64
+		activeUpdate          sql.NullString
+		currentSpec           profile.SourceSpec
+		currentEnabled        int
+		currentUpdateInterval int64
 	)
 	err = tx.QueryRowContext(ctx, `
-		SELECT revision, active_update_id
+		SELECT
+			revision,
+			active_update_id,
+			source_format,
+			location_kind,
+			location,
+			user_agent,
+			fetch_mode,
+			fetch_profile_id,
+			fetch_node_id,
+			enabled,
+			update_interval_seconds
 		FROM profile_sources
 		WHERE profile_id = ?
-	`, spec.ProfileID).Scan(&currentRevision, &activeUpdate)
+	`, spec.ProfileID).Scan(
+		&currentRevision,
+		&activeUpdate,
+		&currentSpec.Format,
+		&currentSpec.LocationKind,
+		&currentSpec.Location,
+		&currentSpec.UserAgent,
+		&currentSpec.Fetch.Mode,
+		&currentSpec.Fetch.ProfileID,
+		&currentSpec.Fetch.NodeID,
+		&currentEnabled,
+		&currentUpdateInterval,
+	)
+	currentSpec.Enabled = currentEnabled != 0
+	currentSpec.UpdateInterval = time.Duration(currentUpdateInterval) * time.Second
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if expectedRevision != 0 {
@@ -179,12 +207,38 @@ func (s *Store) CommitProfileSource(
 		if affected != 1 {
 			return ProfileSourceState{}, ErrProfileSourceRevisionConflict
 		}
+		if sourceFetchIdentityChanged(currentSpec, spec) {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE profile_sources
+				SET last_attempt_at = NULL,
+					last_success_at = NULL,
+					last_error = '',
+					last_source_revision = '',
+					etag = '',
+					last_modified = '',
+					consecutive_failures = 0,
+					retry_after_at = NULL
+				WHERE profile_id = ? AND revision = ?
+			`, spec.ProfileID, currentRevision+1); err != nil {
+				return ProfileSourceState{}, fmt.Errorf("reset profile source fetch state: %w", err)
+			}
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return ProfileSourceState{}, fmt.Errorf("commit profile source: %w", err)
 	}
 	return s.ProfileSource(ctx, spec.ProfileID)
+}
+
+func sourceFetchIdentityChanged(before, after profile.SourceSpec) bool {
+	return before.Format != after.Format ||
+		before.LocationKind != after.LocationKind ||
+		before.Location != after.Location ||
+		before.UserAgent != after.UserAgent ||
+		before.Fetch.Mode != after.Fetch.Mode ||
+		before.Fetch.ProfileID != after.Fetch.ProfileID ||
+		before.Fetch.NodeID != after.Fetch.NodeID
 }
 
 func (s *Store) ProfileSource(ctx context.Context, profileID string) (ProfileSourceState, error) {
