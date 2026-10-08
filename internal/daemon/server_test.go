@@ -134,6 +134,9 @@ func TestServerStatusAndSingleInstance(t *testing.T) {
 		!caps.Capabilities["dns_fallback_lowerer"] ||
 		!caps.Capabilities["dns_runtime_paths_observed"] ||
 		!caps.Capabilities["profile_source_state"] ||
+		!caps.Capabilities["profile_node_overlays"] ||
+		!caps.Capabilities["profile_overlay_runtime"] ||
+		caps.Capabilities["profile_node_filter"] ||
 		!caps.Capabilities["profile_refresh_fetch"] ||
 		!caps.Capabilities["profile_refresh_scheduler"] ||
 		caps.Capabilities["profile_fetch_selected"] ||
