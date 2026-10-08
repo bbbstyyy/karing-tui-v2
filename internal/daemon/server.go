@@ -187,6 +187,7 @@ func newDaemonHTTPServer(handler http.Handler) *http.Server {
 
 func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Handler {
 	mux := http.NewServeMux()
+	profileMetadataRefresh := registerProfileMetadataRoutes(mux, store, runtime)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
 		selectionCore = runtime
@@ -352,6 +353,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"profile_node_filter":         false,
 				"profile_refresh_fetch":       true,
 				"profile_refresh_scheduler":   true,
+				"profile_metadata_api":        true,
+				"profile_metadata_refresh":    profileMetadataRefresh,
 				"profile_fetch_selected":      profileSelectedFetch,
 				"profile_fetch_specific_node": false,
 				"bounded_core_log_buffer":     true,
