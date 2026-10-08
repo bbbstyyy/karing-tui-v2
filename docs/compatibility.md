@@ -143,6 +143,7 @@ Implemented source/update-state foundation:
 - bounded Subscription-Userinfo upload/download/total/expiry metadata with last-known-good preservation;
 - independent metadata observation timestamp so stale HEAD results cannot overwrite newer usage/error state;
 - metadata-only HEAD refresh storage uses source-revision CAS and refuses to commit while a full profile update lease is active;
+- request-start timestamps prevent a late HEAD response from overwriting newer full-refresh usage/error metadata;
 - one crash-safe active update lease per profile;
 - daemon-start recovery of interrupted update leases;
 - source configuration cannot change while its worker lease is active;
@@ -163,7 +164,9 @@ Implemented refresh/scheduling foundation:
 - global scheduled-refresh concurrency budget plus same-profile non-reentry;
 - scheduler cancellation waits for active workers;
 - dedicated GET + bounded HEAD-refresh profile metadata API for traffic/quota/expiry display;
-- metadata HEAD requests reuse the explicit Direct/Selected fetch path, have a five-second upstream timeout ceiling, a four-request global budget and same-profile non-reentry;
+- versioned profile source management API: list/get, strict revision-CAS upsert and explicit full refresh for sing-box/decoded URI-list sources;
+- explicit manual full refresh returns node count, accepted snapshot ID and policy/compatibility diagnostics without automatically replacing the applied configuration;
+- metadata HEAD and manual full-refresh API share a four-operation budget and per-profile non-reentry; HEAD requests retain a five-second upstream timeout ceiling; manual full refresh has a 60-second request deadline;
 - metadata-only network failures do not mutate node snapshots or full-refresh failure/backoff health;
 - internal client methods consume the metadata API so future TUI code does not read SQLite directly.
 
