@@ -312,11 +312,17 @@ func writeProfileSourceAPIError(
 		status = http.StatusConflict
 	case errors.Is(err, profile.ErrInvalidProfileSource),
 		errors.Is(err, profile.ErrInvalidNodeFilter),
+		errors.Is(err, storage.ErrEmptyProfileSnapshot),
+		errors.Is(err, storage.ErrInvalidProfileSnapshot),
+		errors.Is(err, profile.ErrInvalidSourceNode),
+		errors.Is(err, profile.ErrDuplicateSourceKey),
 		errors.Is(err, profileupdate.ErrImportBlocked),
 		errors.Is(err, profilefetch.ErrUnsupportedSourceLocation),
 		errors.Is(err, profilefetch.ErrUnsupportedFetchMode),
 		errors.Is(err, profile.ErrInvalidProfileID):
 		status = http.StatusUnprocessableEntity
+	case errors.Is(err, profilefetch.ErrFetchTooLarge):
+		status = http.StatusRequestEntityTooLarge
 	case errors.Is(err, profilefetch.ErrSelectedProxyUnavailable):
 		status = http.StatusServiceUnavailable
 	case errors.Is(err, profilefetch.ErrFetchTimeout),
