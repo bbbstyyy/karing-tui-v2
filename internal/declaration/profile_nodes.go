@@ -174,6 +174,16 @@ func nodeV1FromDomain(node domain.Node) (nodeV1, error) {
 			PluginOptions: node.Shadowsocks.PluginOptions,
 			Network:       node.Shadowsocks.Network,
 		}
+	case domain.NodeVMess:
+		result.VMess = &vmessV1{
+			UUID:                node.VMess.UUID,
+			Security:            node.VMess.Security,
+			AlterID:             node.VMess.AlterID,
+			GlobalPadding:       node.VMess.GlobalPadding,
+			AuthenticatedLength: node.VMess.AuthenticatedLength,
+			Network:             node.VMess.Network,
+			PacketEncoding:      node.VMess.PacketEncoding,
+		}
 	default:
 		return nodeV1{}, fmt.Errorf("unsupported node type %q", node.Kind)
 	}
