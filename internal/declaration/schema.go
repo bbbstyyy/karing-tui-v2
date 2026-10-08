@@ -69,6 +69,7 @@ type nodeV1 struct {
 	VMess       *vmessV1        `json:"vmess,omitempty"`
 	VLESS       *vlessV1        `json:"vless,omitempty"`
 	Trojan      *trojanV1       `json:"trojan,omitempty"`
+	TLS         *tlsV1          `json:"tls,omitempty"`
 }
 
 type socksV1 struct {
@@ -112,6 +113,13 @@ type vlessV1 struct {
 type trojanV1 struct {
 	Password string              `json:"password"`
 	Network  domain.ProxyNetwork `json:"network"`
+}
+
+type tlsV1 struct {
+	Enabled    bool   `json:"enabled"`
+	DisableSNI bool   `json:"disable_sni,omitempty"`
+	ServerName string `json:"server_name,omitempty"`
+	Insecure   bool   `json:"insecure,omitempty"`
 }
 
 func (n nodeV1) toDomain() (domain.Node, error) {
@@ -188,6 +196,14 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 		}
 	default:
 		return domain.Node{}, fmt.Errorf("unsupported node type %q", n.Type)
+	}
+	if n.TLS != nil {
+		result.TLS = &domain.OutboundTLSOptions{
+			Enabled:    n.TLS.Enabled,
+			DisableSNI: n.TLS.DisableSNI,
+			ServerName: n.TLS.ServerName,
+			Insecure:   n.TLS.Insecure,
+		}
 	}
 	return result, nil
 }
