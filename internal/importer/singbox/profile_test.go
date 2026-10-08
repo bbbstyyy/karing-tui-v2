@@ -198,7 +198,8 @@ func TestAnalyzeBasicProfileVMessPreservesApprovedBasicFields(t *testing.T) {
 
 func TestAnalyzeBasicProfileBlocksUnsupportedVMessExtensions(t *testing.T) {
 	for _, field := range []string{
-		`"tls":{"enabled":true}`,
+		`"tls":{"enabled":false}`,
+		`"tls":{"enabled":true,"utls":{"enabled":true}}`,
 		`"transport":{"type":"ws","path":"/ws"}`,
 		`"multiplex":{"enabled":true}`,
 		`"detour":"bootstrap"`,
@@ -229,6 +230,77 @@ func TestAnalyzeBasicProfileBlocksUnsupportedVMessExtensions(t *testing.T) {
 		) {
 			t.Fatalf("VMess extension diagnostic for %s = %+v", field, analysis.Diagnostics)
 		}
+	}
+}
+
+func TestAnalyzeBasicProfilePreservesVerifiedTLSSubset(t *testing.T) {
+	data := []byte(`{
+  "outbounds":[
+    {
+      "type":"vmess",
+      "tag":"vmess-tls",
+      "server":"vmess.example.com",
+      "server_port":443,
+      "uuid":"11111111-2222-3333-4444-555555555555",
+      "security":"auto",
+      "tls":{"enabled":true,"server_name":"edge.example.com"}
+    },
+    {
+      "type":"vless",
+      "tag":"vless-tls",
+      "server":"vless.example.com",
+      "server_port":443,
+      "uuid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      "tls":{"enabled":true,"insecure":true}
+    },
+    {
+      "type":"trojan",
+      "tag":"trojan-tls",
+      "server":"trojan.example.com",
+      "server_port":443,
+      "password":"secret",
+      "tls":{"enabled":true,"disable_sni":true,"server_name":"verify.example.com"}
+    }
+  ]
+}`)
+	analysis, err := AnalyzeBasicProfile(data, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !analysis.CanCommit() || len(analysis.Nodes) != 3 {
+		t.Fatalf("TLS analysis = %+v", analysis)
+	}
+	if analysis.Nodes[0].TLS == nil ||
+		!analysis.Nodes[0].TLS.Enabled ||
+		analysis.Nodes[0].TLS.ServerName != "edge.example.com" {
+		t.Fatalf("VMess TLS = %+v", analysis.Nodes[0].TLS)
+	}
+	if analysis.Nodes[1].TLS == nil ||
+		!analysis.Nodes[1].TLS.Enabled ||
+		!analysis.Nodes[1].TLS.Insecure {
+		t.Fatalf("VLESS TLS = %+v", analysis.Nodes[1].TLS)
+	}
+	if analysis.Nodes[2].TLS == nil ||
+		!analysis.Nodes[2].TLS.Enabled ||
+		!analysis.Nodes[2].TLS.DisableSNI ||
+		analysis.Nodes[2].TLS.ServerName != "verify.example.com" {
+		t.Fatalf("Trojan TLS = %+v", analysis.Nodes[2].TLS)
+	}
+
+	node, err := DecodeBasicNode(analysis.Nodes[2].Source.PayloadJSON, profile.NodeIdentity{
+		ProfileID:  "profile-a",
+		NodeID:     "stable-trojan-tls",
+		SourceKey:  "trojan-tls",
+		SourceName: "trojan-tls",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.TLS == nil ||
+		!node.TLS.Enabled ||
+		!node.TLS.DisableSNI ||
+		node.TLS.ServerName != "verify.example.com" {
+		t.Fatalf("decoded Trojan TLS = %+v", node.TLS)
 	}
 }
 
@@ -277,7 +349,8 @@ func TestAnalyzeBasicProfileTrojanPreservesSupportedFields(t *testing.T) {
 
 func TestAnalyzeBasicProfileBlocksUnsupportedTrojanExtensions(t *testing.T) {
 	for _, field := range []string{
-		`"tls":{"enabled":true}`,
+		`"tls":{"enabled":false}`,
+		`"tls":{"enabled":true,"utls":{"enabled":true}}`,
 		`"transport":{"type":"ws","path":"/ws"}`,
 		`"multiplex":{"enabled":true}`,
 		`"detour":"bootstrap"`,
@@ -377,7 +450,8 @@ func TestAnalyzeBasicProfileVLESSPreservesPacketEncodingPresence(t *testing.T) {
 
 func TestAnalyzeBasicProfileBlocksUnsupportedVLESSExtensions(t *testing.T) {
 	for _, field := range []string{
-		`"tls":{"enabled":true}`,
+		`"tls":{"enabled":false}`,
+		`"tls":{"enabled":true,"utls":{"enabled":true}}`,
 		`"transport":{"type":"ws","path":"/ws"}`,
 		`"multiplex":{"enabled":true}`,
 		`"detour":"bootstrap"`,
