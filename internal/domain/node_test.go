@@ -218,6 +218,77 @@ func TestVMessNodeRejectsMixedProtocolOptions(t *testing.T) {
 	}
 }
 
+func TestVLESSOptionsPreservePacketEncodingPresence(t *testing.T) {
+	explicitNone := ""
+	xudp := "xudp"
+	valid := []VLESSNodeOptions{
+		{
+			UUID:    "11111111-2222-3333-4444-555555555555",
+			Network: ProxyNetworkBoth,
+		},
+		{
+			UUID:           "11111111222233334444555555555555",
+			Encryption:     "none",
+			Network:        ProxyNetworkTCP,
+			PacketEncoding: &explicitNone,
+		},
+		{
+			UUID:           "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+			Network:        ProxyNetworkUDP,
+			PacketEncoding: &xudp,
+		},
+	}
+	for _, options := range valid {
+		if err := options.Validate(); err != nil {
+			t.Fatalf("valid VLESS options %+v: %v", options, err)
+		}
+	}
+
+	unknownPacket := "unknown"
+	invalid := []VLESSNodeOptions{
+		{},
+		{UUID: "not-a-uuid", Network: ProxyNetworkBoth},
+		{UUID: "11111111-2222-3333-4444-555555555555", Flow: "xtls-rprx-vision", Network: ProxyNetworkBoth},
+		{UUID: "11111111-2222-3333-4444-555555555555", Encryption: "mlkem768x25519plus.native.1rtt.key", Network: ProxyNetworkBoth},
+		{UUID: "11111111-2222-3333-4444-555555555555", Network: ProxyNetwork("icmp")},
+		{UUID: "11111111-2222-3333-4444-555555555555", Network: ProxyNetworkBoth, PacketEncoding: &unknownPacket},
+	}
+	for i, options := range invalid {
+		if err := options.Validate(); !errors.Is(err, ErrInvalidNode) {
+			t.Fatalf("invalid VLESS case %d error = %v", i, err)
+		}
+	}
+}
+
+func TestVLESSNodeRejectsMixedProtocolOptions(t *testing.T) {
+	packetEncoding := "packetaddr"
+	vless := &VLESSNodeOptions{
+		UUID:           "11111111-2222-3333-4444-555555555555",
+		Network:        ProxyNetworkBoth,
+		PacketEncoding: &packetEncoding,
+	}
+	valid := Node{
+		ProfileID: "profile-vless",
+		NodeID:    "vless-a",
+		Kind:      NodeVLESS,
+		Server:    "vless.example.com",
+		Port:      443,
+		VLESS:     vless,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	mixed := valid
+	mixed.VMess = &VMessNodeOptions{
+		UUID:     "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+		Security: "auto",
+		Network:  ProxyNetworkBoth,
+	}
+	if err := mixed.Validate(); !errors.Is(err, ErrInvalidNode) {
+		t.Fatalf("mixed VLESS options error = %v", err)
+	}
+}
+
 func TestNodeServerMustBeBareHost(t *testing.T) {
 	base := Node{
 		ProfileID: "profile-a",
