@@ -269,6 +269,60 @@ func TestCommitBasicSingBoxProfilePersistsVLESSPacketEncodingAcrossReopen(t *tes
 	}
 }
 
+func TestCommitBasicSingBoxProfilePersistsTrojanAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	store, path := newProfileUpdateStore(t, ctx)
+
+	result, err := CommitBasicSingBoxProfile(ctx, store, "profile-trojan", "v1", []byte(`{
+  "outbounds":[{
+    "type":"trojan",
+    "tag":"trojan-a",
+    "server":"trojan.example.com",
+    "server_port":443,
+    "password":"secret",
+    "network":"tcp"
+  }]
+}`), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Nodes) != 1 ||
+		result.Nodes[0].Kind != domain.NodeTrojan ||
+		result.Nodes[0].Trojan == nil ||
+		result.Nodes[0].Trojan.Password != "secret" ||
+		result.Nodes[0].Trojan.Network != domain.ProxyNetworkTCP {
+		t.Fatalf("committed Trojan nodes = %+v", result.Nodes)
+	}
+	nodeID := result.Nodes[0].NodeID
+	snapshotID := result.Commit.Snapshot.ID
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+
+	snapshot, err := reopened.ProfileSnapshotByID(ctx, "profile-trojan", snapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := MaterializeBasicSingBoxSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 ||
+		nodes[0].NodeID != nodeID ||
+		nodes[0].Kind != domain.NodeTrojan ||
+		nodes[0].Trojan == nil ||
+		nodes[0].Trojan.Password != "secret" ||
+		nodes[0].Trojan.Network != domain.ProxyNetworkTCP {
+		t.Fatalf("reopened Trojan nodes = %+v", nodes)
+	}
+}
+
 func TestCommitBasicSingBoxProfileBlocksUnsupportedProtocolWithoutAdvancingSnapshot(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newProfileUpdateStore(t, ctx)
@@ -284,7 +338,7 @@ func TestCommitBasicSingBoxProfileBlocksUnsupportedProtocolWithoutAdvancingSnaps
 	blocked, err := CommitBasicSingBoxProfile(ctx, store, "profile-a", "v2", []byte(`{
   "outbounds":[
     {"type":"http","tag":"proxy-a","server":"127.0.0.1","server_port":9090},
-    {"type":"trojan","tag":"unsupported","server":"example.com","server_port":443,"password":"secret"}
+    {"type":"hysteria2","tag":"unsupported","server":"example.com","server_port":443,"password":"secret"}
   ]
 }`), Options{})
 	if !errors.Is(err, ErrImportBlocked) {
