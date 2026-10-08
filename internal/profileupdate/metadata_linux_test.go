@@ -192,3 +192,66 @@ func TestRefreshProfileSourceMetadataFailsClosedOnSourceRevisionChange(t *testin
 		t.Fatalf("stale metadata touched changed source: %+v", after)
 	}
 }
+
+func TestRefreshProfileSourceMetadataLateHEADDoesNotOverrideNewerFullRefresh(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newProfileUpdateStore(t, ctx)
+	defer store.Close()
+
+	source, err := store.CommitProfileSource(ctx, 0, profile.SourceSpec{
+		ProfileID:    "profile-a",
+		Format:       profile.SourceFormatSingBox,
+		LocationKind: profile.SourceLocationURL,
+		Location:     "https://example.com/subscription",
+		Fetch:        profile.FetchPolicy{Mode: profile.FetchDirect},
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullTotal := int64(200)
+	headTotal := int64(100)
+	fetcher := metadataFetcherFunc(func(
+		ctx context.Context,
+		_ profile.SourceSpec,
+	) (profilefetch.MetadataResult, error) {
+		// Simulate a scheduled full refresh completing while an earlier HEAD
+		// request is still pending. The full refresh's result is authoritative.
+		lease, err := store.BeginProfileUpdate(
+			ctx, source.Spec.ProfileID, source.Revision, "concurrent-full-refresh",
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = store.FinishProfileUpdateSuccess(ctx, lease, storage.ProfileUpdateSuccess{
+			SourceRevision:        "full-v2",
+			UsageMetadataObserved: true,
+			SubscriptionUsage:     &profile.SubscriptionUsage{TotalBytes: &fullTotal},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return profilefetch.MetadataResult{
+			SubscriptionUsage:     &profile.SubscriptionUsage{TotalBytes: &headTotal},
+			UsageMetadataObserved: true,
+		}, nil
+	})
+
+	result, err := RefreshProfileSourceMetadata(
+		ctx, store, fetcher, source.Spec.ProfileID, source.Revision,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Applied {
+		t.Fatal("late HEAD response overwrote a newer full-refresh observation")
+	}
+	if result.SourceAfter.SubscriptionUsage == nil ||
+		result.SourceAfter.SubscriptionUsage.TotalBytes == nil ||
+		*result.SourceAfter.SubscriptionUsage.TotalBytes != fullTotal ||
+		result.SourceAfter.SubscriptionMetadataObservedAt == nil ||
+		!result.SourceAfter.SubscriptionMetadataObservedAt.After(result.ObservedAt) ||
+		result.SourceAfter.LastSourceRevision != "full-v2" {
+		t.Fatalf("late HEAD metadata state = %+v", result.SourceAfter)
+	}
+}
