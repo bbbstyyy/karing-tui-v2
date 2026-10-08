@@ -402,12 +402,23 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256
       "network":"udp",
       "packet_encoding":""
     }
+  },{
+    "profile_id":"integration-profile",
+    "node_id":"integration-trojan",
+    "type":"trojan",
+    "server":"trojan.example.invalid",
+    "port":443,
+    "trojan":{
+      "password":"secret",
+      "network":"tcp"
+    }
   }],
   "selection":{
     "current":{
       "members":[
         {"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-node"},
-        {"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-vless"}
+        {"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-vless"},
+        {"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-trojan"}
       ],
       "default":{"kind":"specific_node","profile_id":"integration-profile","node_id":"integration-node"}
     },
