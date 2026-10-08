@@ -156,6 +156,47 @@ func TestProfileSourceAPICRUDAndManualRefreshPreservesLastGoodSnapshot(t *testin
 	}
 }
 
+func TestProfileSourceAPIRejectsMalformedBase64AsInvalidImport(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("%%%invalid-base64"))
+	}))
+	defer upstream.Close()
+
+	ctx := context.Background()
+	store := newDaemonProfileMetadataStore(t, ctx)
+	defer store.Close()
+	api := httptest.NewServer((&Server{started: time.Now().UTC()}).handler(store, nil))
+	defer api.Close()
+
+	spec := apiv1.ProfileSourceSpec{
+		Format:       "uri-list-base64",
+		LocationKind: "url",
+		Location:     upstream.URL,
+		Enabled:      true,
+		Fetch:        apiv1.ProfileSourceFetchPolicy{Mode: "direct"},
+	}
+	status, body := requestProfileAPI(t, api.URL, http.MethodPut, "/v1/profiles/profile-b64",
+		apiv1.ProfileSourcePutRequest{Source: spec})
+	if status != http.StatusOK {
+		t.Fatalf("create base64 source = %d %s", status, body)
+	}
+	status, body = requestProfileAPI(t, api.URL, http.MethodPost,
+		"/v1/profiles/profile-b64/refresh",
+		apiv1.ProfileRefreshRequest{ExpectedSourceRevision: 1})
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("malformed base64 status = %d, want 422, body=%s", status, body)
+	}
+	source, err := store.ProfileSource(ctx, "profile-b64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.CurrentSnapshotID != nil ||
+		source.ConsecutiveFailures != 1 ||
+		source.LastError == "" {
+		t.Fatalf("malformed base64 advanced snapshot: %+v", source)
+	}
+}
+
 func TestProfileSourceAPISharesGateWithMetadataRefresh(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
