@@ -4,6 +4,7 @@ package profileupdate
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -549,6 +550,118 @@ func TestRefreshProfileSourceURIListPreservesIdentityAndBlocksPartialUpdate(t *t
 	}
 	if state.ConsecutiveFailures != 1 {
 		t.Fatalf("blocked URI-list refresh failure state = %+v", state)
+	}
+}
+
+func TestRefreshProfileSourceBase64URIListPersistsCanonicalNodeAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	store, path := newProfileUpdateStore(t, ctx)
+	source, err := store.CommitProfileSource(ctx, 0, profile.SourceSpec{
+		ProfileID:    "profile-base64",
+		Format:       profile.SourceFormatBase64URIList,
+		LocationKind: profile.SourceLocationURL,
+		Location:     "https://example.com/base64-subscription",
+		Fetch:        profile.FetchPolicy{Mode: profile.FetchDirect},
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := "ss://YWVzLTI1Ni1nY206c2VjcmV0@ss.example.com:8388#Before"
+	renamed := "ss://YWVzLTI1Ni1nY206c2VjcmV0@ss.example.com:8388#After"
+	first, err := RefreshProfileSource(
+		ctx,
+		store,
+		staticFetcher{result: profilefetch.Result{
+			Body: []byte(base64.StdEncoding.EncodeToString([]byte(original))),
+		}},
+		source.Spec.ProfileID,
+		source.Revision,
+		"base64-refresh-1",
+		Options{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Nodes) != 1 ||
+		first.Nodes[0].Shadowsocks == nil ||
+		first.Nodes[0].Shadowsocks.Password != "secret" ||
+		first.Commit.Snapshot.SourceKind != string(profile.SourceFormatBase64URIList) ||
+		first.Commit.Snapshot.Nodes[0].Identity.SourceName != "Before" {
+		t.Fatalf("first base64 refresh = %+v", first)
+	}
+	nodeID := first.Nodes[0].NodeID
+	if !strings.Contains(
+		string(first.Commit.Snapshot.Nodes[0].PayloadJSON),
+		`"type":"shadowsocks"`,
+	) {
+		t.Fatalf("base64 snapshot did not retain canonical node payload")
+	}
+
+	second, err := RefreshProfileSource(
+		ctx,
+		store,
+		staticFetcher{result: profilefetch.Result{
+			Body: []byte(base64.RawURLEncoding.EncodeToString([]byte(renamed))),
+		}},
+		source.Spec.ProfileID,
+		source.Revision,
+		"base64-refresh-2",
+		Options{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Nodes) != 1 ||
+		second.Nodes[0].NodeID != nodeID ||
+		second.Commit.Snapshot.Nodes[0].Identity.SourceName != "After" {
+		t.Fatalf("base64 re-encoded profile lost node identity: %+v", second)
+	}
+	snapshotID := second.Commit.Snapshot.ID
+
+	unsupported := renamed + "\nvmess://unsupported"
+	blocked, err := RefreshProfileSource(
+		ctx,
+		store,
+		staticFetcher{result: profilefetch.Result{
+			Body: []byte(base64.StdEncoding.EncodeToString([]byte(unsupported))),
+		}},
+		source.Spec.ProfileID,
+		source.Revision,
+		"base64-refresh-3",
+		Options{},
+	)
+	if !errors.Is(err, ErrImportBlocked) ||
+		!blocked.Analysis.HasBlockingDiagnostics() {
+		t.Fatalf("unsupported base64 URI-list error=%v diagnostics=%+v",
+			err, blocked.Analysis.Diagnostics)
+	}
+	current, ok, err := store.CurrentProfileSnapshot(ctx, source.Spec.ProfileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || current.ID != snapshotID {
+		t.Fatalf("blocked base64 subscription changed snapshot: %+v ok=%v", current, ok)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	retained, err := reopened.ProfileSnapshotByID(ctx, source.Spec.ProfileID, snapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := MaterializeBasicProfileSnapshot(retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].NodeID != nodeID ||
+		nodes[0].Shadowsocks == nil || nodes[0].Shadowsocks.Password != "secret" {
+		t.Fatalf("reopened base64 snapshot nodes = %+v", nodes)
 	}
 }
 
