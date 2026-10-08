@@ -227,6 +227,18 @@ func (c *Client) sendJSON(
 	payload any,
 	target any,
 ) error {
+	return c.sendJSONWithStatus(ctx, httpClient, method, path, payload, target, http.StatusOK)
+}
+
+func (c *Client) sendJSONWithStatus(
+	ctx context.Context,
+	httpClient *http.Client,
+	method string,
+	path string,
+	payload any,
+	target any,
+	expectedStatus int,
+) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -243,7 +255,7 @@ func (c *Client) sendJSON(
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != expectedStatus {
 		return responseError(resp)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
@@ -401,6 +413,21 @@ func (c *Client) PreviewProfileDeclaration(
 	path := "/v1/profiles/" + url.PathEscape(profileID) + "/declaration/preview"
 	if err := c.sendJSON(ctx, c.refreshClient, http.MethodPost, path, request, &response); err != nil {
 		return apiv1.ProfileDeclarationPreviewResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) StageProfileDeclaration(
+	ctx context.Context,
+	profileID string,
+	request apiv1.ProfileDeclarationStageRequest,
+) (apiv1.ProfileDeclarationStageResponse, error) {
+	var response apiv1.ProfileDeclarationStageResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID) + "/declaration/stage"
+	if err := c.sendJSONWithStatus(
+		ctx, c.refreshClient, http.MethodPost, path, request, &response, http.StatusCreated,
+	); err != nil {
+		return apiv1.ProfileDeclarationStageResponse{}, err
 	}
 	return response, nil
 }

@@ -53,6 +53,7 @@ func registerProfileSnapshotPreviewRoutes(mux *http.ServeMux, store *storage.Sto
 			ProfileID:               preview.ProfileID,
 			SnapshotID:              preview.SnapshotID,
 			BaseDeclarationRevision: preview.BaseDeclarationRevision,
+			SourceRevision:          preview.SourceRevision,
 			SnapshotNodeCount:       preview.SnapshotNodeCount,
 			EffectiveNodeCount:      preview.EffectiveNodeCount,
 			AddedNodeCount:          len(preview.Impact.AddedNodeIDs),
@@ -76,9 +77,11 @@ func writeProfileSnapshotPreviewError(w http.ResponseWriter, err error) {
 	case errors.Is(err, profileupdate.ErrNoBaseDeclaration),
 		errors.Is(err, profileupdate.ErrPreviewSnapshotNotCurrent),
 		errors.Is(err, profileupdate.ErrPreviewDeclarationStale),
-		errors.Is(err, profileupdate.ErrPreviewDeclarationIntegrity):
+		errors.Is(err, profileupdate.ErrPreviewDeclarationIntegrity),
+		errors.Is(err, profileupdate.ErrPreviewOverlayStale),
+		errors.Is(err, profileupdate.ErrPreviewSourceDisabled):
 		status = http.StatusConflict
-		message = "current snapshot or base declaration revision does not match preview request"
+		message = "current enabled source, accepted snapshot, overlay or base declaration revision changed"
 	case errors.Is(err, context.DeadlineExceeded):
 		status = http.StatusGatewayTimeout
 		message = "declaration preview timed out"

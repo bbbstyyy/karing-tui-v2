@@ -78,6 +78,7 @@ func (s *Store) CommitProfileDeclarationGuarded(
 		}
 		if index >= len(expectedOverlays) ||
 			expectedOverlays[index].Overlay.NodeID != nodeID ||
+			expectedOverlays[index].Overlay.ProfileID != profileID ||
 			revision <= 0 || expectedOverlays[index].Revision != uint64(revision) {
 			rows.Close()
 			return DeclarationRevision{}, ErrProfileDeclarationGuardConflict

@@ -23,22 +23,19 @@ type DeclarationStageResult struct {
 // transactional source/snapshot/overlay guards. This never applies the core.
 func StageProfileSnapshotDeclaration(
 	ctx context.Context, store *storage.Store, profileID string,
-	snapshotID int64, expectedDeclarationRevision uint64,
+	snapshotID int64, expectedSourceRevision uint64, expectedDeclarationRevision uint64,
 	expectedCandidateSHA256 string, expectedOverlaySHA256 string,
 ) (DeclarationStageResult, error) {
-	if len(expectedCandidateSHA256) != 64 || len(expectedOverlaySHA256) != 64 {
+	if expectedSourceRevision == 0 || len(expectedCandidateSHA256) != 64 || len(expectedOverlaySHA256) != 64 {
 		return DeclarationStageResult{}, ErrProfileStagePreviewMismatch
 	}
 	preview, err := PreviewProfileSnapshotDeclaration(ctx, store, profileID, snapshotID, expectedDeclarationRevision)
 	if err != nil {
 		return DeclarationStageResult{}, err
 	}
-	if preview.CandidateSHA256 != expectedCandidateSHA256 || preview.RuntimeOverlaySHA256 != expectedOverlaySHA256 {
+	if preview.SourceRevision != expectedSourceRevision ||
+		preview.CandidateSHA256 != expectedCandidateSHA256 || preview.RuntimeOverlaySHA256 != expectedOverlaySHA256 {
 		return DeclarationStageResult{}, ErrProfileStagePreviewMismatch
-	}
-	source, err := store.ProfileSource(ctx, profileID)
-	if err != nil {
-		return DeclarationStageResult{}, err
 	}
 	base, err := store.CurrentDeclaration(ctx)
 	if err != nil {
@@ -72,7 +69,7 @@ func StageProfileSnapshotDeclaration(
 		return DeclarationStageResult{}, ErrProfileStagePreviewMismatch
 	}
 	revision, err := store.CommitProfileDeclarationGuarded(ctx, profileID, snapshotID,
-		source.Revision, overlays, expectedDeclarationRevision, replacement.Document,
+		preview.SourceRevision, overlays, expectedDeclarationRevision, replacement.Document,
 		fmt.Sprintf("profile-snapshot/%d/overlay/%s", snapshotID, overlayHash))
 	if err != nil {
 		return DeclarationStageResult{}, err

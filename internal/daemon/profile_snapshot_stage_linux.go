@@ -21,9 +21,9 @@ func registerProfileDeclarationStageRoutes(mux *http.ServeMux, store *storage.St
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid declaration stage request"})
 			return
 		}
-		if request.SnapshotID <= 0 || request.ExpectedDeclarationRevision == 0 ||
-			len(request.CandidateSHA256) != 64 || len(request.RuntimeOverlaySHA256) != 64 {
-			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "snapshot, revision and 64-character preview digests required"})
+		if request.SnapshotID <= 0 || request.ExpectedSourceRevision == 0 || request.ExpectedDeclarationRevision == 0 ||
+			!validStageDigest(request.CandidateSHA256) || !validStageDigest(request.RuntimeOverlaySHA256) {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "snapshot, source revision, declaration revision and canonical 64-character preview digests required"})
 			return
 		}
 		id := r.PathValue("profile_id")
@@ -39,7 +39,7 @@ func registerProfileDeclarationStageRoutes(mux *http.ServeMux, store *storage.St
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 		defer cancel()
 		result, err := profileupdate.StageProfileSnapshotDeclaration(ctx, store, id, request.SnapshotID,
-			request.ExpectedDeclarationRevision, request.CandidateSHA256, request.RuntimeOverlaySHA256)
+			request.ExpectedSourceRevision, request.ExpectedDeclarationRevision, request.CandidateSHA256, request.RuntimeOverlaySHA256)
 		if err != nil {
 			if errors.Is(err, profileupdate.ErrProfileStagePreviewMismatch) ||
 				errors.Is(err, storage.ErrProfileDeclarationGuardConflict) ||
@@ -51,8 +51,21 @@ func registerProfileDeclarationStageRoutes(mux *http.ServeMux, store *storage.St
 			return
 		}
 		writeJSON(w, http.StatusCreated, apiv1.ProfileDeclarationStageResponse{
-			ProfileID: id, SnapshotID: request.SnapshotID, DeclarationRevision: result.Revision.Revision,
+			ProfileID: id, SnapshotID: request.SnapshotID, SourceRevision: result.Preview.SourceRevision,
+			DeclarationRevision: result.Revision.Revision,
 			DeclarationSHA256: result.Revision.SHA256, CoreValidated: false, Applied: false,
 		})
 	})
+}
+
+func validStageDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
+			return false
+		}
+	}
+	return true
 }

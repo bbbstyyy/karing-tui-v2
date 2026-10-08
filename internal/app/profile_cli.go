@@ -51,6 +51,9 @@ func runProfiles(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "preview" {
 		return runProfilePreviewCommand(context.Background(), api, args, stdout, stderr)
 	}
+	if args[0] == "stage" {
+		return runProfileStageCommand(context.Background(), api, args, stdout, stderr)
+	}
 	return runProfileCommand(context.Background(), api, args, stdout, stderr)
 }
 
@@ -197,13 +200,15 @@ func printProfilesUsage(w io.Writer) {
   karing-tui profiles put <profile-id> --expected-revision=N --stdin
   karing-tui profiles refresh <profile-id> --expected-revision=N [--allow-empty]
   karing-tui profiles preview <profile-id> --snapshot-id=N --expected-declaration-revision=N
+  karing-tui profiles stage <profile-id> --snapshot-id=N --expected-source-revision=N --expected-declaration-revision=N --candidate-sha256=HASH --runtime-overlay-sha256=HASH --confirm
 
 Overlay replacement requires every state flag and the known CAS revision so omitted flags cannot silently reset a previous favorite, alias or sort rank.
 An overlay change does not update the declaration or apply/restart the core.
 Profile lists and node pages exclude source locations, source keys, and proxy credentials.
 Profile put consumes one strict, bounded JSON object from stdin; do not place token-bearing URLs in shell arguments.
 Refresh accepts and snapshots supported nodes only; it never implicitly applies a core configuration.
-Preview verifies a candidate declaration without committing it, core-checking it or changing any applied generation.`)
+Preview verifies a candidate declaration without committing it, core-checking it or changing any applied generation.
+Stage requires both preview digests and explicit --confirm. It commits only a declaration revision; it does not check, apply, or restart the core.`)
 }
 
 var _ profileCLIClient = (*client.Client)(nil)

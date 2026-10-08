@@ -32,7 +32,7 @@ func TestProfileDeclarationStageRequiresAcknowledgedPreviewAndNeverApplies(t *te
 	if err := json.Unmarshal(body, &preview); err != nil {
 		t.Fatal(err)
 	}
-	req := apiv1.ProfileDeclarationStageRequest{SnapshotID: snapshotID, ExpectedDeclarationRevision: rev,
+	req := apiv1.ProfileDeclarationStageRequest{SnapshotID: snapshotID, ExpectedSourceRevision: preview.SourceRevision, ExpectedDeclarationRevision: rev,
 		CandidateSHA256: preview.CandidateSHA256, RuntimeOverlaySHA256: preview.RuntimeOverlaySHA256}
 	bad := req
 	bad.CandidateSHA256 = strings.Repeat("0", 64)
@@ -87,7 +87,7 @@ func TestProfileDeclarationStageRejectsChangedOverlayAndSnapshot(t *testing.T) {
 	if err := json.Unmarshal(body, &preview); err != nil {
 		t.Fatal(err)
 	}
-	req := apiv1.ProfileDeclarationStageRequest{SnapshotID: snapshotID, ExpectedDeclarationRevision: rev,
+	req := apiv1.ProfileDeclarationStageRequest{SnapshotID: snapshotID, ExpectedSourceRevision: preview.SourceRevision, ExpectedDeclarationRevision: rev,
 		CandidateSHA256: preview.CandidateSHA256, RuntimeOverlaySHA256: preview.RuntimeOverlaySHA256}
 	if _, err := store.CommitProfileNodeOverlay(context.Background(), 0, profile.NodeOverlay{
 		ProfileID: "profile-a", NodeID: nodeID, Disabled: true,
@@ -112,5 +112,54 @@ func TestProfileDeclarationStageRejectsChangedOverlayAndSnapshot(t *testing.T) {
 	status, _ = requestProfileAPI(t, api.URL, http.MethodPost, path+"stage", req)
 	if status != http.StatusConflict {
 		t.Fatalf("stale snapshot stage status=%d", status)
+	}
+}
+
+func TestProfileDeclarationStageRejectsDisabledSourceAndMalformedDigest(t *testing.T) {
+	store, snapshotID, rev, _ := previewFixture(t, false)
+	defer store.Close()
+	api := httptest.NewServer((&Server{started: time.Now().UTC()}).handler(store, nil))
+	defer api.Close()
+	path := "/v1/profiles/profile-a/declaration/"
+	status, body := requestProfileAPI(t, api.URL, http.MethodPost, path+"preview",
+		apiv1.ProfileDeclarationPreviewRequest{SnapshotID: snapshotID, ExpectedDeclarationRevision: rev})
+	if status != http.StatusOK {
+		t.Fatalf("preview status=%d %s", status, body)
+	}
+	var preview apiv1.ProfileDeclarationPreviewResponse
+	if err := json.Unmarshal(body, &preview); err != nil {
+		t.Fatal(err)
+	}
+	request := apiv1.ProfileDeclarationStageRequest{
+		SnapshotID: snapshotID, ExpectedSourceRevision: preview.SourceRevision, ExpectedDeclarationRevision: rev,
+		CandidateSHA256: preview.CandidateSHA256, RuntimeOverlaySHA256: preview.RuntimeOverlaySHA256,
+	}
+	request.CandidateSHA256 = strings.ToUpper(request.CandidateSHA256)
+	status, _ = requestProfileAPI(t, api.URL, http.MethodPost, path+"stage", request)
+	if status != http.StatusBadRequest {
+		t.Fatalf("uppercase digest should be bad request; got %d", status)
+	}
+	request.CandidateSHA256 = preview.CandidateSHA256
+	source, err := store.ProfileSource(context.Background(), "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := source.Spec
+	updated.Enabled = false
+	if _, err := store.CommitProfileSource(context.Background(), source.Revision, updated); err != nil {
+		t.Fatal(err)
+	}
+	status, _ = requestProfileAPI(t, api.URL, http.MethodPost, path+"preview",
+		apiv1.ProfileDeclarationPreviewRequest{SnapshotID: snapshotID, ExpectedDeclarationRevision: rev})
+	if status != http.StatusConflict {
+		t.Fatalf("disabled source preview status=%d", status)
+	}
+	status, _ = requestProfileAPI(t, api.URL, http.MethodPost, path+"stage", request)
+	if status != http.StatusConflict {
+		t.Fatalf("disabled source stage status=%d", status)
+	}
+	declaration, err := store.CurrentDeclaration(context.Background())
+	if err != nil || declaration.Revision != rev {
+		t.Fatalf("disabled source changed declaration: %+v %v", declaration, err)
 	}
 }

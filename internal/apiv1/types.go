@@ -377,6 +377,7 @@ type ProfileDeclarationPreviewResponse struct {
 	ProfileID               string `json:"profile_id"`
 	SnapshotID              int64  `json:"snapshot_id"`
 	BaseDeclarationRevision uint64 `json:"base_declaration_revision"`
+	SourceRevision          uint64 `json:"source_revision"`
 	SnapshotNodeCount       int    `json:"snapshot_node_count"`
 	EffectiveNodeCount      int    `json:"effective_node_count"`
 	AddedNodeCount          int    `json:"added_node_count"`
@@ -390,12 +391,14 @@ type ProfileDeclarationPreviewResponse struct {
 
 type ProfileDeclarationStageRequest struct {
 	SnapshotID                  int64  `json:"snapshot_id"`
+	ExpectedSourceRevision      uint64 `json:"expected_source_revision"`
 	ExpectedDeclarationRevision uint64 `json:"expected_declaration_revision"`
 	CandidateSHA256             string `json:"candidate_sha256"`
 	RuntimeOverlaySHA256        string `json:"runtime_overlay_sha256"`
 }
 type ProfileDeclarationStageResponse struct {
 	ProfileID           string `json:"profile_id"`
+	SourceRevision      uint64 `json:"source_revision"`
 	SnapshotID          int64  `json:"snapshot_id"`
 	DeclarationRevision uint64 `json:"declaration_revision"`
 	DeclarationSHA256   string `json:"declaration_sha256"`

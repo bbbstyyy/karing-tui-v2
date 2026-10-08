@@ -15,12 +15,15 @@ var (
 	ErrPreviewSnapshotNotCurrent   = errors.New("profile snapshot preview requires current accepted snapshot")
 	ErrPreviewDeclarationStale     = errors.New("profile snapshot preview declaration revision changed")
 	ErrPreviewDeclarationIntegrity = errors.New("profile snapshot preview base declaration integrity mismatch")
+	ErrPreviewOverlayStale         = errors.New("profile snapshot preview overlay revisions changed")
+	ErrPreviewSourceDisabled      = errors.New("profile declaration preview requires an enabled source")
 )
 
 type DeclarationSnapshotPreview struct {
 	ProfileID               string
 	SnapshotID              int64
 	BaseDeclarationRevision uint64
+	SourceRevision          uint64
 	SnapshotNodeCount       int
 	EffectiveNodeCount      int
 	RuntimeOverlaySHA256    string
@@ -48,6 +51,9 @@ func PreviewProfileSnapshotDeclaration(
 	if err != nil {
 		return DeclarationSnapshotPreview{}, err
 	}
+	if !source.Spec.Enabled {
+		return DeclarationSnapshotPreview{}, ErrPreviewSourceDisabled
+	}
 	if source.CurrentSnapshotID == nil || *source.CurrentSnapshotID != snapshotID || snapshotID <= 0 {
 		return DeclarationSnapshotPreview{}, ErrPreviewSnapshotNotCurrent
 	}
@@ -71,7 +77,7 @@ func PreviewProfileSnapshotDeclaration(
 	}
 	preview := DeclarationSnapshotPreview{
 		ProfileID: profileID, SnapshotID: snapshotID, BaseDeclarationRevision: base.Revision,
-		SnapshotNodeCount: len(snapshot.Nodes),
+		SnapshotNodeCount: len(snapshot.Nodes), SourceRevision: source.Revision,
 	}
 	nodes, err := MaterializeBasicProfileSnapshot(snapshot)
 	if err != nil {
@@ -111,5 +117,25 @@ func PreviewProfileSnapshotDeclaration(
 	if current.Revision != expectedDeclarationRevision || current.SHA256 != base.SHA256 {
 		return preview, ErrPreviewDeclarationStale
 	}
+	latestOverlays, err := store.ProfileNodeOverlays(ctx, profileID)
+	if err != nil {
+		return preview, err
+	}
+	if !sameProfileOverlayRevisions(overlays, latestOverlays) {
+		return preview, ErrPreviewOverlayStale
+	}
 	return preview, nil
+}
+
+func sameProfileOverlayRevisions(before, after []storage.ProfileNodeOverlayState) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	for i := range before {
+		if before[i].Overlay.NodeID != after[i].Overlay.NodeID ||
+			before[i].Revision != after[i].Revision {
+			return false
+		}
+	}
+	return true
 }
