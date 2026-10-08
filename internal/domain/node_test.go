@@ -196,7 +196,7 @@ func TestVMessOptionsMatchApprovedCoreBasicFields(t *testing.T) {
 
 func TestVMessNodeRejectsMixedProtocolOptions(t *testing.T) {
 	vmess := &VMessNodeOptions{
-		UUID:    "11111111-2222-3333-4444-555555555555",
+		UUID:     "11111111-2222-3333-4444-555555555555",
 		Security: "auto",
 		Network:  ProxyNetworkBoth,
 	}
