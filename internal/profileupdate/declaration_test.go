@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/declaration"
+	"github.com/bbbstyyy/karing-tui-v2/internal/profile"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
@@ -60,7 +61,14 @@ func TestCommitSingBoxSnapshotToDeclarationUpdatesExactProfileRevision(t *testin
 	if updated.Revision.Revision != 2 {
 		t.Fatalf("updated declaration revision = %d", updated.Revision.Revision)
 	}
-	wantSource := fmt.Sprintf("profile-snapshot/%d", second.Commit.Snapshot.ID)
+	if len(updated.RuntimeOverlaySHA256) != 64 {
+		t.Fatalf("runtime overlay hash = %q", updated.RuntimeOverlaySHA256)
+	}
+	wantSource := fmt.Sprintf(
+		"profile-snapshot/%d/overlay/%s",
+		second.Commit.Snapshot.ID,
+		updated.RuntimeOverlaySHA256,
+	)
 	if updated.Revision.Source != wantSource {
 		t.Fatalf("declaration source = %q, want %q", updated.Revision.Source, wantSource)
 	}
@@ -128,6 +136,130 @@ func TestCommitSingBoxSnapshotToDeclarationRefusesRemovedReferencedNode(t *testi
 	}
 	if current.Revision != base.Revision || current.SHA256 != base.SHA256 {
 		t.Fatalf("blocked profile replacement advanced declaration: %+v", current)
+	}
+}
+
+func TestCommitSingBoxSnapshotToDeclarationFailsClosedWhenOverlayDisablesReferencedNode(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newDeclarationUpdateStore(t, ctx)
+	defer store.Close()
+
+	imported, err := CommitBasicSingBoxProfile(ctx, store, "profile-a", "source-1", []byte(`{
+  "outbounds":[{"type":"http","tag":"proxy-a","server":"127.0.0.1","server_port":8080}]
+}`), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeID := imported.Nodes[0].NodeID
+	base, err := store.CommitDeclaration(
+		ctx,
+		0,
+		declarationForProfileNode("profile-a", nodeID, 8080),
+		"test",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CommitProfileNodeOverlay(ctx, 0, profile.NodeOverlay{
+		ProfileID: "profile-a",
+		NodeID:    nodeID,
+		Disabled:  true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CommitSingBoxSnapshotToDeclaration(
+		ctx,
+		store,
+		"profile-a",
+		imported.Commit.Snapshot.ID,
+		base.Revision,
+	)
+	if !errors.Is(err, declaration.ErrProfileNodeReplacementInvalid) {
+		t.Fatalf("disabled referenced node error = %v", err)
+	}
+	if len(result.RuntimeOverlaySHA256) != 64 {
+		t.Fatalf("runtime overlay hash = %q", result.RuntimeOverlaySHA256)
+	}
+	if len(result.Replacement.Impact.RemovedNodeIDs) != 1 ||
+		result.Replacement.Impact.RemovedNodeIDs[0] != nodeID {
+		t.Fatalf("disabled node impact = %+v", result.Replacement.Impact)
+	}
+	current, err := store.CurrentDeclaration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Revision != base.Revision {
+		t.Fatalf("disabled referenced node advanced declaration: %+v", current)
+	}
+}
+
+func TestCommitSingBoxSnapshotToDeclarationAppliesStableSortRanks(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newDeclarationUpdateStore(t, ctx)
+	defer store.Close()
+
+	imported, err := CommitBasicSingBoxProfile(ctx, store, "profile-a", "source-1", []byte(`{
+  "outbounds":[
+    {"type":"http","tag":"proxy-a","server":"127.0.0.1","server_port":8080},
+    {"type":"http","tag":"proxy-b","server":"127.0.0.1","server_port":8081}
+  ]
+}`), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Nodes) != 2 {
+		t.Fatalf("imported nodes = %+v", imported.Nodes)
+	}
+	baseCandidate, err := declaration.ReplaceProfileNodesV1(
+		declarationForProfileNode("profile-a", imported.Nodes[0].NodeID, 8080),
+		"profile-a",
+		imported.Nodes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := store.CommitDeclaration(ctx, 0, baseCandidate.Document, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rankA := int64(20)
+	rankB := int64(10)
+	for _, item := range []struct {
+		nodeID string
+		rank   *int64
+	}{
+		{nodeID: imported.Nodes[0].NodeID, rank: &rankA},
+		{nodeID: imported.Nodes[1].NodeID, rank: &rankB},
+	} {
+		if _, err := store.CommitProfileNodeOverlay(ctx, 0, profile.NodeOverlay{
+			ProfileID: "profile-a",
+			NodeID:    item.nodeID,
+			SortRank:  item.rank,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	updated, err := CommitSingBoxSnapshotToDeclaration(
+		ctx,
+		store,
+		"profile-a",
+		imported.Commit.Snapshot.ID,
+		base.Revision,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := declaration.ParseV1(updated.Revision.DocumentJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Nodes) != 2 ||
+		model.Nodes[0].NodeID != imported.Nodes[1].NodeID ||
+		model.Nodes[1].NodeID != imported.Nodes[0].NodeID {
+		t.Fatalf("overlay-sorted declaration nodes = %+v", model.Nodes)
 	}
 }
 
