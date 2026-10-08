@@ -59,7 +59,10 @@ func AnalyzeBase64Profile(
 		)
 	}
 
-	var decoded []byte
+	var (
+		decoded   []byte
+		decodedOK bool
+	)
 	for _, encoding := range []*base64.Encoding{
 		base64.StdEncoding.Strict(),
 		base64.RawStdEncoding.Strict(),
@@ -69,10 +72,11 @@ func AnalyzeBase64Profile(
 		var err error
 		decoded, err = encoding.DecodeString(string(encoded))
 		if err == nil {
+			decodedOK = true
 			break
 		}
 	}
-	if len(decoded) == 0 {
+	if !decodedOK || len(decoded) == 0 {
 		return singboximport.ProfileAnalysis{}, fmt.Errorf(
 			"%w: base64 decoding failed or produced no content",
 			ErrInvalidBase64URIList,
