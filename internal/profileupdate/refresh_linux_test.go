@@ -237,7 +237,7 @@ func TestRefreshProfileSourceImportFailurePreservesAcceptedSnapshot(t *testing.T
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if invalid.Load() {
 			_, _ = w.Write([]byte(`{
-  "outbounds":[{"type":"vmess","tag":"unsupported","server":"example.com","server_port":443,"uuid":"00000000-0000-0000-0000-000000000000"}]
+  "outbounds":[{"type":"trojan","tag":"unsupported","server":"example.com","server_port":443,"password":"secret"}]
 }`))
 			return
 		}
