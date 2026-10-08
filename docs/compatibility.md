@@ -107,7 +107,10 @@ Implemented profile foundation:
 - failed/unsupported imports do not advance current snapshot;
 - exact retained snapshot ID can be materialized into a declaration-v1 candidate;
 - profile node replacement reports added/removed/retained NodeIDs and fails closed when a removed node is still referenced;
-- successful snapshot-to-declaration updates use declaration revision CAS and record `profile-snapshot/<id>` provenance.
+- successful snapshot-to-declaration updates use declaration revision CAS and bind runtime-relevant node overlay state into `profile-snapshot/<id>/overlay/<sha256>` provenance;
+- per-node Disabled/Favorite/Alias/SortRank overlays are persisted by stable (ProfileID, NodeID) with independent CAS;
+- Disabled and SortRank overlays are applied deterministically at snapshot-to-declaration materialization; Favorite/Alias remain non-runtime user metadata;
+- dormant overlay rows survive temporary source-node removal so stable NodeID reappearance restores user state; retained rows are bounded per profile.
 
 Implemented source/update-state foundation:
 
@@ -140,5 +143,5 @@ Still not implemented:
 - Specific Node network fetch execution;
 - automatic snapshot -> declaration -> compile/apply policy after a refresh;
 - dedicated metadata-only/HEAD refresh API for traffic display;
-- source node filter/user overlay persistence;
+- source node filter persistence;
 - provider materialization.
