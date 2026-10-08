@@ -99,6 +99,54 @@ func TestListProfileSourcesIsStableAndCarriesSchedule(t *testing.T) {
 	}
 }
 
+func TestProfileSourcePersistsFilterStateAcrossUpdateAndReopen(t *testing.T) {
+	ctx := context.Background()
+	store, path := newTestStore(t, ctx)
+
+	spec := testRemoteProfileSource("profile-a", profile.FetchDirect)
+	spec.Filter = profile.NodeFilterSpec{
+		Method:         profile.NodeFilterInclude,
+		KeywordOrRegex: "HK|Hong Kong",
+		MatchAttribute: true,
+	}
+	created, err := store.CommitProfileSource(ctx, 0, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Spec.Filter != spec.Filter {
+		t.Fatalf("created filter = %+v, want %+v", created.Spec.Filter, spec.Filter)
+	}
+
+	updatedSpec := spec
+	updatedSpec.Filter = profile.NodeFilterSpec{
+		Method:         profile.NodeFilterExclude,
+		KeywordOrRegex: "expired|traffic",
+	}
+	updated, err := store.CommitProfileSource(ctx, created.Revision, updatedSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Revision != created.Revision+1 || updated.Spec.Filter != updatedSpec.Filter {
+		t.Fatalf("updated filter state = %+v", updated)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	persisted, err := reopened.ProfileSource(ctx, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Revision != updated.Revision || persisted.Spec.Filter != updatedSpec.Filter {
+		t.Fatalf("reopened filter state = %+v", persisted)
+	}
+}
+
 func TestProfileSourceIdentityChangeResetsFetchStateButKeepsSnapshot(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
