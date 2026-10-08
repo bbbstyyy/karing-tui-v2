@@ -281,6 +281,15 @@ func TestHTTPFetcherMetadataUsesSelectedProxyAndSpecificNodeFailsClosed(t *testi
 	}
 }
 
+func TestMetadataFetchTimeoutCapsAtKaringConfirmedFiveSeconds(t *testing.T) {
+	if got := metadataFetchTimeout(30 * time.Second); got != DefaultMetadataTimeout {
+		t.Fatalf("metadata timeout = %v, want %v", got, DefaultMetadataTimeout)
+	}
+	if got := metadataFetchTimeout(2 * time.Second); got != 2*time.Second {
+		t.Fatalf("short configured metadata timeout = %v, want 2s", got)
+	}
+}
+
 func TestHTTPFetcherMetadataTimeoutIsCappedAtFiveSeconds(t *testing.T) {
 	options := DefaultHTTPOptions()
 	options.Timeout = 20 * time.Millisecond
