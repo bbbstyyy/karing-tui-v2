@@ -440,6 +440,118 @@ func TestRefreshProfileSourceCancellationReleasesDurableLease(t *testing.T) {
 	}
 }
 
+func TestRefreshProfileSourceURIListPreservesIdentityAndBlocksPartialUpdate(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newProfileUpdateStore(t, ctx)
+	defer store.Close()
+
+	var version atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch version.Load() {
+		case 0:
+			_, _ = w.Write([]byte(
+				"ss://YWVzLTI1Ni1nY206c2VjcmV0@ss.example.com:8388#Before",
+			))
+		case 1:
+			_, _ = w.Write([]byte(
+				"ss://YWVzLTI1Ni1nY206c2VjcmV0@ss.example.com:8388#After",
+			))
+		default:
+			_, _ = w.Write([]byte(strings.Join([]string{
+				"ss://YWVzLTI1Ni1nY206c2VjcmV0@ss.example.com:8388#After",
+				"vmess://unsupported",
+			}, "\n")))
+		}
+	}))
+	defer server.Close()
+
+	source, err := store.CommitProfileSource(
+		ctx,
+		0,
+		remoteURIListSource("profile-uri", server.URL),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher, err := profilefetch.NewSourceFetcher(profilefetch.DefaultHTTPOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := RefreshProfileSource(
+		ctx,
+		store,
+		fetcher,
+		"profile-uri",
+		source.Revision,
+		"uri-refresh-1",
+		Options{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Nodes) != 1 ||
+		first.Nodes[0].Shadowsocks == nil ||
+		first.Nodes[0].Shadowsocks.Method != "aes-256-gcm" ||
+		first.Nodes[0].Shadowsocks.Password != "secret" ||
+		first.Commit.Snapshot.SourceKind != string(profile.SourceFormatURIList) ||
+		first.Commit.Snapshot.Nodes[0].Identity.SourceName != "Before" {
+		t.Fatalf("first URI-list refresh = %+v", first)
+	}
+	nodeID := first.Nodes[0].NodeID
+
+	version.Store(1)
+	second, err := RefreshProfileSource(
+		ctx,
+		store,
+		fetcher,
+		"profile-uri",
+		source.Revision,
+		"uri-refresh-2",
+		Options{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Nodes) != 1 ||
+		second.Nodes[0].NodeID != nodeID ||
+		second.Commit.Snapshot.Nodes[0].Identity.SourceName != "After" {
+		t.Fatalf("renamed URI-list refresh = %+v", second)
+	}
+	secondSnapshotID := second.Commit.Snapshot.ID
+
+	version.Store(2)
+	blocked, err := RefreshProfileSource(
+		ctx,
+		store,
+		fetcher,
+		"profile-uri",
+		source.Revision,
+		"uri-refresh-3",
+		Options{},
+	)
+	if !errors.Is(err, ErrImportBlocked) {
+		t.Fatalf("partial URI-list refresh error = %v", err)
+	}
+	if !blocked.Analysis.HasBlockingDiagnostics() {
+		t.Fatalf("partial URI-list refresh diagnostics = %+v", blocked.Analysis.Diagnostics)
+	}
+	current, ok, err := store.CurrentProfileSnapshot(ctx, "profile-uri")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || current.ID != secondSnapshotID {
+		t.Fatalf("blocked URI-list refresh changed snapshot: %+v ok=%v", current, ok)
+	}
+	state, err := store.ProfileSource(ctx, "profile-uri")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ConsecutiveFailures != 1 {
+		t.Fatalf("blocked URI-list refresh failure state = %+v", state)
+	}
+}
+
 func TestRefreshProfileSourceRejectsConcurrentSameProfileUpdate(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newProfileUpdateStore(t, ctx)
@@ -529,6 +641,17 @@ func remoteSingBoxSource(profileID, location string) profile.SourceSpec {
 	return profile.SourceSpec{
 		ProfileID:    profileID,
 		Format:       profile.SourceFormatSingBox,
+		LocationKind: profile.SourceLocationURL,
+		Location:     location,
+		Fetch:        profile.FetchPolicy{Mode: profile.FetchDirect},
+		Enabled:      true,
+	}
+}
+
+func remoteURIListSource(profileID, location string) profile.SourceSpec {
+	return profile.SourceSpec{
+		ProfileID:    profileID,
+		Format:       profile.SourceFormatURIList,
 		LocationKind: profile.SourceLocationURL,
 		Location:     location,
 		Fetch:        profile.FetchPolicy{Mode: profile.FetchDirect},
