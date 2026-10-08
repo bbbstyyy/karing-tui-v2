@@ -13,15 +13,15 @@ import (
 )
 
 type fakeAPI struct {
-	status apiv1.StatusResponse
-	profiles []apiv1.ProfileSourceResponse
-	nodes map[string]apiv1.ProfileNodeListResponse
-	statusErr error
-	profilesErr error
-	nodesErr error
-	statusCalls int
-	profileCalls int
-	nodeCalls int
+	status           apiv1.StatusResponse
+	profiles         []apiv1.ProfileSourceResponse
+	nodes            map[string]apiv1.ProfileNodeListResponse
+	statusErr        error
+	profilesErr      error
+	nodesErr         error
+	statusCalls      int
+	profileCalls     int
+	nodeCalls        int
 	observedDeadline bool
 }
 

@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	nodePageSize = 20
+	nodePageSize     = 20
 	maxProfilesShown = 200
-	maxNodeOffset = 10000
+	maxNodeOffset    = 10000
 )
 
 type API interface {
@@ -33,30 +33,30 @@ const (
 )
 
 type Model struct {
-	ctx context.Context
-	api API
-	page page
-	width int
+	ctx    context.Context
+	api    API
+	page   page
+	width  int
 	height int
 
-	status apiv1.StatusResponse
-	statusReady bool
-	statusError bool
+	status        apiv1.StatusResponse
+	statusReady   bool
+	statusError   bool
 	statusRequest uint64
 
-	profiles []apiv1.ProfileSourceResponse
-	profilesReady bool
-	profilesError bool
+	profiles          []apiv1.ProfileSourceResponse
+	profilesReady     bool
+	profilesError     bool
 	profilesTruncated bool
-	profilesRequest uint64
-	selected int
+	profilesRequest   uint64
+	selected          int
 
-	nodes apiv1.ProfileNodeListResponse
-	nodesReady bool
-	nodesError bool
+	nodes        apiv1.ProfileNodeListResponse
+	nodesReady   bool
+	nodesError   bool
 	nodesProfile string
-	nodesOffset int
-	nodesScroll int
+	nodesOffset  int
+	nodesScroll  int
 	nodesRequest uint64
 
 	quitting bool
@@ -64,22 +64,22 @@ type Model struct {
 
 type statusLoaded struct {
 	request uint64
-	value apiv1.StatusResponse
-	err error
+	value   apiv1.StatusResponse
+	err     error
 }
 
 type profilesLoaded struct {
 	request uint64
-	value apiv1.ProfileSourceListResponse
-	err error
+	value   apiv1.ProfileSourceListResponse
+	err     error
 }
 
 type nodesLoaded struct {
-	request uint64
+	request   uint64
 	profileID string
-	offset int
-	value apiv1.ProfileNodeListResponse
-	err error
+	offset    int
+	value     apiv1.ProfileNodeListResponse
+	err       error
 }
 
 func NewModel(ctx context.Context, api API) Model {
@@ -243,11 +243,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			if m.page == nodesPage && m.nodesReady && m.nodesOffset+nodePageSize < m.nodes.Total &&
 				m.nodesOffset+nodePageSize <= maxNodeOffset {
-				return m, m.requestNodes(m.nodesOffset+nodePageSize)
+				return m, m.requestNodes(m.nodesOffset + nodePageSize)
 			}
 		case "p":
 			if m.page == nodesPage && m.nodesOffset > 0 {
-				previous := m.nodesOffset-nodePageSize
+				previous := m.nodesOffset - nodePageSize
 				if previous < 0 {
 					previous = 0
 				}
@@ -267,7 +267,7 @@ func (m *Model) selectedProfileID() string {
 
 func (m *Model) switchPage(to page) tea.Cmd {
 	m.page = to
-	if to == nodesPage && m.selectedProfileID() != "" && 
+	if to == nodesPage && m.selectedProfileID() != "" &&
 		(m.nodesProfile != m.selectedProfileID() || !m.nodesReady) {
 		return m.requestNodes(0)
 	}
@@ -308,7 +308,7 @@ func (m Model) View() string {
 				headings = 2
 			}
 			if m.profilesReady && headings < limit && len(body) > headings {
-				visible := limit-headings
+				visible := limit - headings
 				start := max(0, m.selected-visible/2)
 				start = min(start, max(0, len(body)-headings-visible))
 				sliced := append([]string(nil), body[:headings]...)
@@ -319,7 +319,7 @@ func (m Model) View() string {
 		case nodesPage:
 			if m.nodesReady && limit > 1 && len(body) > 1 {
 				start := min(m.nodesScroll, len(body)-2)
-				body = append([]string{body[0]}, body[1+start:min(len(body),1+start+limit-1)]...)
+				body = append([]string{body[0]}, body[1+start:min(len(body), 1+start+limit-1)]...)
 			} else {
 				body = body[:limit]
 			}
@@ -449,7 +449,7 @@ func safeText(value string, columns int) string {
 			continue
 		}
 		width := runeColumns(r)
-		if used + width > columns {
+		if used+width > columns {
 			if columns > 1 {
 				// Truncation itself may not exceed the terminal width.
 				if used >= columns {
