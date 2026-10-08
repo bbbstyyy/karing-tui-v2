@@ -22,9 +22,15 @@ type NodeOutboundConfig struct {
 	Password       string `json:"password,omitempty"`
 	Method         string `json:"method,omitempty"`
 	Plugin         string `json:"plugin,omitempty"`
-	PluginOptions  string `json:"plugin_opts,omitempty"`
-	Network        string `json:"network,omitempty"`
-	DomainResolver string `json:"domain_resolver,omitempty"`
+	PluginOptions        string  `json:"plugin_opts,omitempty"`
+	Network              string  `json:"network,omitempty"`
+	UUID                 string  `json:"uuid,omitempty"`
+	Security             *string `json:"security,omitempty"`
+	AlterID              uint16  `json:"alter_id,omitempty"`
+	GlobalPadding        bool    `json:"global_padding,omitempty"`
+	AuthenticatedLength  bool    `json:"authenticated_length,omitempty"`
+	PacketEncoding       string  `json:"packet_encoding,omitempty"`
+	DomainResolver       string  `json:"domain_resolver,omitempty"`
 }
 
 type CompiledNodes struct {
@@ -140,6 +146,35 @@ func compileBasicNode(node domain.Node, tag string) (NodeOutboundConfig, error) 
 			Plugin:        node.Shadowsocks.Plugin,
 			PluginOptions: node.Shadowsocks.PluginOptions,
 			Network:       network,
+		}, nil
+	case domain.NodeVMess:
+		network := ""
+		switch node.VMess.Network {
+		case domain.ProxyNetworkBoth:
+		case domain.ProxyNetworkTCP:
+			network = "tcp"
+		case domain.ProxyNetworkUDP:
+			network = "udp"
+		default:
+			return NodeOutboundConfig{}, fmt.Errorf(
+				"%w: unsupported VMess network %q",
+				domain.ErrInvalidNode,
+				node.VMess.Network,
+			)
+		}
+		security := node.VMess.Security
+		return NodeOutboundConfig{
+			Type:                "vmess",
+			Tag:                 tag,
+			Server:              node.Server,
+			ServerPort:          node.Port,
+			Network:             network,
+			UUID:                node.VMess.UUID,
+			Security:            &security,
+			AlterID:             node.VMess.AlterID,
+			GlobalPadding:       node.VMess.GlobalPadding,
+			AuthenticatedLength: node.VMess.AuthenticatedLength,
+			PacketEncoding:      node.VMess.PacketEncoding,
 		}, nil
 	default:
 		return NodeOutboundConfig{}, fmt.Errorf("%w: unsupported basic node kind %q", domain.ErrInvalidNode, node.Kind)
