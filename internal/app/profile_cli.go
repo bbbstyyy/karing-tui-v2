@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"time"
 
@@ -43,7 +44,11 @@ func runProfiles(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "runtime paths: %v\n", err)
 		return 1
 	}
-	return runProfileCommand(context.Background(), client.New(paths.Socket), args, stdout, stderr)
+	api := client.New(paths.Socket)
+	if args[0] == "put" || args[0] == "refresh" {
+		return runProfileSourceCommand(context.Background(), api, args, os.Stdin, stdout, stderr)
+	}
+	return runProfileCommand(context.Background(), api, args, stdout, stderr)
 }
 
 func runProfileCommand(ctx context.Context, api profileCLIClient, args []string, stdout, stderr io.Writer) int {
@@ -186,10 +191,14 @@ func printProfilesUsage(w io.Writer) {
   karing-tui profiles list [--json]
   karing-tui profiles nodes <profile-id> [--offset=N] [--limit=N] [--json]
   karing-tui profiles replace-overlay <profile-id> <node-id> --expected-revision=N --disabled=true|false --favorite=true|false --alias=NAME --sort-rank=N|none
+  karing-tui profiles put <profile-id> --expected-revision=N --stdin
+  karing-tui profiles refresh <profile-id> --expected-revision=N [--allow-empty]
 
 Overlay replacement requires every state flag and the known CAS revision so omitted flags cannot silently reset a previous favorite, alias or sort rank.
 An overlay change does not update the declaration or apply/restart the core.
-Profile lists and node pages exclude source locations, source keys, and proxy credentials.`)
+Profile lists and node pages exclude source locations, source keys, and proxy credentials.
+Profile put consumes one strict, bounded JSON object from stdin; do not place token-bearing URLs in shell arguments.
+Refresh accepts and snapshots supported nodes only; it never implicitly applies a core configuration.`)
 }
 
 var _ profileCLIClient = (*client.Client)(nil)

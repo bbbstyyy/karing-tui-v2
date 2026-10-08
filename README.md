@@ -123,3 +123,31 @@ karing-tui profiles replace-overlay my-profile node-id \
 ```
 
 Listing commands exclude source locations, import source keys and proxy credentials. `replace-overlay` uses **full replacement**, not an implicit patch: all five state flags (revision, disabled, favorite, alias and sort-rank) must be explicitly provided to prevent accidentally resetting an existing preference. Read the node's current overlay revision with `profiles nodes` before editing. A stale revision or removed node is rejected; this does not auto-apply the declaration or restart the core. See [ADR 0067](docs/adr/0067-profile-node-management-api.md) and [ADR 0068](docs/adr/0068-profiles-cli.md).
+
+## Source management CLI (incremental M3)
+
+A source is configured through one strict JSON object piped on standard input (maximum 16 KiB). Do not pass token-bearing subscription URLs as command-line arguments.
+
+```sh
+# Prepare a private profile-source.json file with an editor, then:
+karing-tui profiles put my-profile --expected-revision=0 --stdin < profile-source.json
+
+# Observe the revision returned by put/list before triggering an explicit fetch:
+karing-tui profiles refresh my-profile --expected-revision=1
+karing-tui profiles nodes my-profile --json
+```
+
+Example source specification (placeholder URI, **not** an operational subscription):
+
+```json
+{
+  "format": "sing-box",
+  "location_kind": "url",
+  "location": "https://example.invalid/my-subscription",
+  "fetch": {"mode": "direct"},
+  "enabled": true,
+  "update_interval_seconds": 0
+}
+```
+
+Use `uri-list` or `uri-list-base64` only for the implemented compatible subsets; unsupported protocol/transport fields reject the complete imported update. `--allow-empty` must be explicitly supplied before an empty accepted snapshot can replace a nonempty one. Refresh output omits imported credentials and raw untrusted diagnostic text. Refresh **does not** compile/apply a core config or change the active routing generation. See [ADR 0069](docs/adr/0069-profile-source-cli.md) and [compatibility matrix](docs/compatibility.md).
