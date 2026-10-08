@@ -68,6 +68,7 @@ type nodeV1 struct {
 	Shadowsocks *shadowsocksV1  `json:"shadowsocks,omitempty"`
 	VMess       *vmessV1        `json:"vmess,omitempty"`
 	VLESS       *vlessV1        `json:"vless,omitempty"`
+	Trojan      *trojanV1       `json:"trojan,omitempty"`
 }
 
 type socksV1 struct {
@@ -108,6 +109,11 @@ type vlessV1 struct {
 	PacketEncoding *string             `json:"packet_encoding,omitempty"`
 }
 
+type trojanV1 struct {
+	Password string              `json:"password"`
+	Network  domain.ProxyNetwork `json:"network"`
+}
+
 func (n nodeV1) toDomain() (domain.Node, error) {
 	result := domain.Node{
 		ProfileID: n.ProfileID,
@@ -118,7 +124,7 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 	}
 	switch n.Type {
 	case domain.NodeSOCKS:
-		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil {
+		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil || n.Trojan != nil {
 			return domain.Node{}, errors.New("SOCKS node requires socks options and forbids other protocol options")
 		}
 		result.SOCKS = &domain.SOCKSNodeOptions{
@@ -128,12 +134,12 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 			Network:  n.SOCKS.Network,
 		}
 	case domain.NodeHTTP:
-		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil {
+		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil || n.Trojan != nil {
 			return domain.Node{}, errors.New("HTTP node requires http options and forbids other protocol options")
 		}
 		result.HTTP = &domain.HTTPNodeOptions{Username: n.HTTP.Username, Password: n.HTTP.Password}
 	case domain.NodeShadowsocks:
-		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil || n.VMess != nil || n.VLESS != nil {
+		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil || n.VMess != nil || n.VLESS != nil || n.Trojan != nil {
 			return domain.Node{}, errors.New("Shadowsocks node requires shadowsocks options and forbids other protocol options")
 		}
 		result.Shadowsocks = &domain.ShadowsocksNodeOptions{
@@ -144,7 +150,7 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 			Network:       n.Shadowsocks.Network,
 		}
 	case domain.NodeVMess:
-		if n.VMess == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VLESS != nil {
+		if n.VMess == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VLESS != nil || n.Trojan != nil {
 			return domain.Node{}, errors.New("VMess node requires vmess options and forbids other protocol options")
 		}
 		result.VMess = &domain.VMessNodeOptions{
@@ -157,7 +163,7 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 			PacketEncoding:      n.VMess.PacketEncoding,
 		}
 	case domain.NodeVLESS:
-		if n.VLESS == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil {
+		if n.VLESS == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.Trojan != nil {
 			return domain.Node{}, errors.New("VLESS node requires vless options and forbids other protocol options")
 		}
 		var packetEncoding *string
@@ -171,6 +177,14 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 			Encryption:     n.VLESS.Encryption,
 			Network:        n.VLESS.Network,
 			PacketEncoding: packetEncoding,
+		}
+	case domain.NodeTrojan:
+		if n.Trojan == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil || n.VLESS != nil {
+			return domain.Node{}, errors.New("Trojan node requires trojan options and forbids other protocol options")
+		}
+		result.Trojan = &domain.TrojanNodeOptions{
+			Password: n.Trojan.Password,
+			Network:  n.Trojan.Network,
 		}
 	default:
 		return domain.Node{}, fmt.Errorf("unsupported node type %q", n.Type)
