@@ -305,12 +305,17 @@ func writeProfileSourceAPIError(
 	switch {
 	case errors.Is(err, storage.ErrProfileSourceNotFound):
 		status = http.StatusNotFound
-	case errors.Is(err, storage.ErrProfileSourceRevisionConflict),
+	case errors.Is(err, storage.ErrProfileNodeOverlayRevisionConflict),
+		errors.Is(err, storage.ErrProfileNodeOverlayNodeUnavailable),
+		errors.Is(err, storage.ErrProfileNodeOverlayLimit),
+		errors.Is(err, storage.ErrProfileSourceRevisionConflict),
 		errors.Is(err, storage.ErrProfileUpdateInProgress),
 		errors.Is(err, storage.ErrProfileSourceDisabled),
 		errors.Is(err, profileupdate.ErrNotModifiedWithoutSnapshot):
 		status = http.StatusConflict
-	case errors.Is(err, profile.ErrInvalidProfileSource),
+	case errors.Is(err, profile.ErrInvalidNodeOverlay),
+		errors.Is(err, storage.ErrInvalidProfileNodePage),
+		errors.Is(err, profile.ErrInvalidProfileSource),
 		errors.Is(err, profile.ErrInvalidNodeFilter),
 		errors.Is(err, storage.ErrEmptyProfileSnapshot),
 		errors.Is(err, storage.ErrInvalidProfileSnapshot),

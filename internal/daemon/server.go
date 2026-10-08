@@ -190,6 +190,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	profileOperations := newProfileOperationGate(maxConcurrentProfileMetadataRefreshes)
 	profileMetadataRefresh := registerProfileMetadataRoutes(mux, store, runtime, profileOperations)
 	profileFullRefresh := registerProfileSourceRoutes(mux, store, runtime, profileOperations)
+	registerProfileNodeRoutes(mux, store, profileOperations)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
 		selectionCore = runtime
@@ -352,6 +353,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"profile_source_api":          true,
 				"profile_refresh_api":         profileFullRefresh,
 				"profile_node_overlays":       true,
+				"profile_node_overlay_api":     true,
 				"profile_overlay_runtime":     true,
 				"profile_node_filter_state":   true,
 				"profile_node_filter":         false,
