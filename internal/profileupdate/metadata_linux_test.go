@@ -45,7 +45,7 @@ func TestRefreshProfileSourceMetadataPersistsUsageWithoutTouchingRefreshHealth(t
 			t.Fatalf("metadata source = %+v", spec)
 		}
 		return profilefetch.MetadataResult{
-			SubscriptionUsage: &profile.SubscriptionUsage{
+			SubscriptionUsage:     &profile.SubscriptionUsage{
 				UploadBytes:   &upload,
 				DownloadBytes: &download,
 				TotalBytes:    &total,
@@ -167,7 +167,7 @@ func TestRefreshProfileSourceMetadataFailsClosedOnSourceRevisionChange(t *testin
 			t.Fatal(err)
 		}
 		return profilefetch.MetadataResult{
-			SubscriptionUsage: &profile.SubscriptionUsage{TotalBytes: &total},
+			SubscriptionUsage:     &profile.SubscriptionUsage{TotalBytes: &total},
 			UsageMetadataObserved: true,
 		}, nil
 	})
