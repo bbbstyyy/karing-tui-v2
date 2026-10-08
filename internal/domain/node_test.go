@@ -335,6 +335,64 @@ func TestTrojanNodeRejectsMixedProtocolOptions(t *testing.T) {
 	}
 }
 
+func TestOutboundTLSOptionsAreExplicitAndProtocolBound(t *testing.T) {
+	valid := []OutboundTLSOptions{
+		{Enabled: true},
+		{Enabled: true, ServerName: "tls.example.com"},
+		{Enabled: true, ServerName: "192.0.2.20", Insecure: true, DisableSNI: true},
+	}
+	for _, options := range valid {
+		if err := options.Validate(); err != nil {
+			t.Fatalf("valid TLS options %+v: %v", options, err)
+		}
+	}
+
+	invalid := []OutboundTLSOptions{
+		{},
+		{ServerName: "tls.example.com"},
+		{Enabled: true, ServerName: " https://tls.example.com "},
+	}
+	for i, options := range invalid {
+		if err := options.Validate(); !errors.Is(err, ErrInvalidNode) {
+			t.Fatalf("invalid TLS case %d error = %v", i, err)
+		}
+	}
+
+	vmess := Node{
+		ProfileID: "profile-tls",
+		NodeID:    "vmess-tls",
+		Kind:      NodeVMess,
+		Server:    "vmess.example.com",
+		Port:      443,
+		VMess: &VMessNodeOptions{
+			UUID:     "11111111-2222-3333-4444-555555555555",
+			Security: "auto",
+			Network:  ProxyNetworkBoth,
+		},
+		TLS: &OutboundTLSOptions{
+			Enabled:    true,
+			ServerName: "edge.example.com",
+			Insecure:   true,
+		},
+	}
+	if err := vmess.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	httpNode := Node{
+		ProfileID: "profile-tls",
+		NodeID:    "http-tls",
+		Kind:      NodeHTTP,
+		Server:    "proxy.example.com",
+		Port:      443,
+		HTTP:      &HTTPNodeOptions{},
+		TLS:       &OutboundTLSOptions{Enabled: true},
+	}
+	if err := httpNode.Validate(); !errors.Is(err, ErrInvalidNode) {
+		t.Fatalf("unsupported HTTP TLS error = %v", err)
+	}
+}
+
 func TestNodeServerMustBeBareHost(t *testing.T) {
 	base := Node{
 		ProfileID: "profile-a",
