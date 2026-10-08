@@ -58,8 +58,7 @@ func TestParseSubscriptionUserinfoRejectsMalformedRecognizedFields(t *testing.T)
 		"expire=999999999999999999",
 		"upload=1; upload=2",
 		"feature=true",
-		"upload=1
-expire=2",
+		"upload=1\nexpire=2",
 		strings.Repeat("x", MaxSubscriptionUserinfoBytes+1),
 	}
 	for _, value := range cases {
