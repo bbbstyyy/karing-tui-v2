@@ -271,6 +271,45 @@ func TestCompileBasicNodeOutboundsPreservesVLESSPacketEncodingPresence(t *testin
 	}
 }
 
+func TestCompileBasicNodeOutboundsEmitsBasicTrojanFields(t *testing.T) {
+	node := domain.Node{
+		ProfileID: "profile-trojan",
+		NodeID:    "trojan-a",
+		Kind:      domain.NodeTrojan,
+		Server:    "trojan.example.com",
+		Port:      443,
+		Trojan: &domain.TrojanNodeOptions{
+			Password: "secret",
+			Network:  domain.ProxyNetworkTCP,
+		},
+	}
+	key := NodeTargetKey{ProfileID: node.ProfileID, NodeID: node.NodeID}
+	catalog, err := NewTargetCatalog(nil, []NodeTargetKey{key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := CompileBasicNodeOutbounds(
+		[]domain.Node{node},
+		catalog,
+		[]domain.TargetRef{{
+			Kind:      domain.TargetSpecificNode,
+			ProfileID: node.ProfileID,
+			NodeID:    node.NodeID,
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(compiled.Outbounds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"trojan","tag":"` + catalog.NodeTags[key] + `","server":"trojan.example.com","server_port":443,"password":"secret","network":"tcp"}`
+	if string(encoded) != want {
+		t.Fatalf("Trojan JSON = %s, want %s", encoded, want)
+	}
+}
+
 func TestCompileBasicNodeOutboundsRejectsMissingAndDuplicateNodes(t *testing.T) {
 	node := domain.Node{
 		ProfileID: "profile-a",
