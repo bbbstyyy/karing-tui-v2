@@ -333,37 +333,37 @@ type RoutingModeResponse struct {
 }
 
 type ProfileNodeSummary struct {
- NodeID string `json:"node_id"`
- SourceName string `json:"source_name"`
- DisplayName string `json:"display_name"`
- OverlayRevision uint64 `json:"overlay_revision"`
- Disabled bool `json:"disabled"`
- Favorite bool `json:"favorite"`
- Alias string `json:"alias,omitempty"`
- SortRank *int64 `json:"sort_rank,omitempty"`
+	NodeID          string `json:"node_id"`
+	SourceName      string `json:"source_name"`
+	DisplayName     string `json:"display_name"`
+	OverlayRevision uint64 `json:"overlay_revision"`
+	Disabled        bool   `json:"disabled"`
+	Favorite        bool   `json:"favorite"`
+	Alias           string `json:"alias,omitempty"`
+	SortRank        *int64 `json:"sort_rank,omitempty"`
 }
 type ProfileNodeListResponse struct {
- ProfileID string `json:"profile_id"`
- SnapshotID *int64 `json:"snapshot_id,omitempty"`
- Total int `json:"total"`
- Offset int `json:"offset"`
- Limit int `json:"limit"`
- Nodes []ProfileNodeSummary `json:"nodes"`
+	ProfileID  string               `json:"profile_id"`
+	SnapshotID *int64               `json:"snapshot_id,omitempty"`
+	Total      int                  `json:"total"`
+	Offset     int                  `json:"offset"`
+	Limit      int                  `json:"limit"`
+	Nodes      []ProfileNodeSummary `json:"nodes"`
 }
 type ProfileNodeOverlaySpec struct {
- Disabled bool `json:"disabled"`
- Favorite bool `json:"favorite"`
- Alias string `json:"alias,omitempty"`
- SortRank *int64 `json:"sort_rank,omitempty"`
+	Disabled bool   `json:"disabled"`
+	Favorite bool   `json:"favorite"`
+	Alias    string `json:"alias,omitempty"`
+	SortRank *int64 `json:"sort_rank,omitempty"`
 }
 type ProfileNodeOverlayPutRequest struct {
- ExpectedRevision uint64 `json:"expected_revision"`
- Overlay ProfileNodeOverlaySpec `json:"overlay"`
+	ExpectedRevision uint64                 `json:"expected_revision"`
+	Overlay          ProfileNodeOverlaySpec `json:"overlay"`
 }
 type ProfileNodeOverlayResponse struct {
- ProfileID string `json:"profile_id"`
- NodeID string `json:"node_id"`
- Revision uint64 `json:"revision"`
- UpdatedAt string `json:"updated_at"`
- Overlay ProfileNodeOverlaySpec `json:"overlay"`
+	ProfileID string                 `json:"profile_id"`
+	NodeID    string                 `json:"node_id"`
+	Revision  uint64                 `json:"revision"`
+	UpdatedAt string                 `json:"updated_at"`
+	Overlay   ProfileNodeOverlaySpec `json:"overlay"`
 }

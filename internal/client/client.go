@@ -376,16 +376,18 @@ func responseError(resp *http.Response) error {
 }
 
 func (c *Client) ProfileNodes(ctx context.Context, profileID string, offset, limit int) (apiv1.ProfileNodeListResponse, error) {
- var response apiv1.ProfileNodeListResponse
- path := fmt.Sprintf("/v1/profiles/%s/nodes?offset=%d&limit=%d", url.PathEscape(profileID), offset, limit)
- if err := c.get(ctx, path, &response); err != nil { return apiv1.ProfileNodeListResponse{}, err }
- return response, nil
+	var response apiv1.ProfileNodeListResponse
+	path := fmt.Sprintf("/v1/profiles/%s/nodes?offset=%d&limit=%d", url.PathEscape(profileID), offset, limit)
+	if err := c.get(ctx, path, &response); err != nil {
+		return apiv1.ProfileNodeListResponse{}, err
+	}
+	return response, nil
 }
 func (c *Client) PutProfileNodeOverlay(ctx context.Context, profileID, nodeID string, request apiv1.ProfileNodeOverlayPutRequest) (apiv1.ProfileNodeOverlayResponse, error) {
- var response apiv1.ProfileNodeOverlayResponse
- path := "/v1/profiles/" + url.PathEscape(profileID) + "/nodes/" + url.PathEscape(nodeID) + "/overlay"
- if err := c.sendJSON(ctx, c.controlClient, http.MethodPut, path, request, &response); err != nil {
-  return apiv1.ProfileNodeOverlayResponse{}, err
- }
- return response, nil
+	var response apiv1.ProfileNodeOverlayResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID) + "/nodes/" + url.PathEscape(nodeID) + "/overlay"
+	if err := c.sendJSON(ctx, c.controlClient, http.MethodPut, path, request, &response); err != nil {
+		return apiv1.ProfileNodeOverlayResponse{}, err
+	}
+	return response, nil
 }
