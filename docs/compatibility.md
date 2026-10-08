@@ -115,9 +115,11 @@ Implemented source/update-state foundation:
 - HTTP/HTTPS URL and absolute local-file source modelling;
 - Direct / CurrentSelected / Specific Node fetch-policy modelling;
 - persisted ETag, Last-Modified, Retry-After and consecutive-failure metadata;
+- bounded Subscription-Userinfo upload/download/total/expiry metadata with last-known-good preservation;
 - one crash-safe active update lease per profile;
 - daemon-start recovery of interrupted update leases;
-- source configuration cannot change while its worker lease is active.
+- source configuration cannot change while its worker lease is active;
+- source identity edits clear stale validators/backoff/usage metadata while retaining the last accepted snapshot.
 
 Implemented refresh/scheduling foundation:
 
@@ -137,6 +139,6 @@ Still not implemented:
 
 - Specific Node network fetch execution;
 - automatic snapshot -> declaration -> compile/apply policy after a refresh;
-- traffic quota/expiry metadata;
+- dedicated metadata-only/HEAD refresh API for traffic display;
 - source node filter/user overlay persistence;
 - provider materialization.
