@@ -20,7 +20,10 @@ import (
 
 const refreshFinalizeTimeout = 5 * time.Second
 
-var ErrNotModifiedWithoutSnapshot = errors.New("profile source returned not modified without an accepted snapshot")
+var (
+	ErrNotModifiedWithoutSnapshot = errors.New("profile source returned not modified without an accepted snapshot")
+	ErrSourceAnalysisFailed       = errors.New("profile source analysis failed")
+)
 
 type Fetcher interface {
 	Fetch(
@@ -131,7 +134,9 @@ func RefreshProfileSource(
 	}
 	result.Analysis = analysis
 	if err != nil {
-		return result, finishRefreshFailure(ctx, store, lease, err)
+		return result, finishRefreshFailure(
+			ctx, store, lease, fmt.Errorf("%w: %w", ErrSourceAnalysisFailed, err),
+		)
 	}
 	if analysis.HasBlockingDiagnostics() {
 		return result, finishRefreshFailure(ctx, store, lease, ErrImportBlocked)
