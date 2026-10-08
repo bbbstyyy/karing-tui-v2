@@ -258,6 +258,112 @@ func TestProfileUpdateLeaseFailureThenSuccess(t *testing.T) {
 	}
 }
 
+func TestProfileUpdateSuccessPersistsUsageAndMalformedMetadataPreservesLastGoodUsage(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	source, err := store.CommitProfileSource(ctx, 0, testRemoteProfileSource("profile-a", profile.FetchDirect))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload := int64(1024)
+	download := int64(2048)
+	total := int64(4096)
+	expires := time.Unix(1798761600, 0).UTC()
+
+	first, err := store.BeginProfileUpdate(ctx, "profile-a", source.Revision, "usage-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishProfileUpdateSuccess(ctx, first, ProfileUpdateSuccess{
+		SourceRevision:        "usage-v1",
+		UsageMetadataObserved: true,
+		SubscriptionUsage: &profile.SubscriptionUsage{
+			UploadBytes:   &upload,
+			DownloadBytes: &download,
+			TotalBytes:    &total,
+			ExpiresAt:     &expires,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := store.ProfileSource(ctx, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SubscriptionUsage == nil ||
+		state.SubscriptionUsage.UploadBytes == nil || *state.SubscriptionUsage.UploadBytes != upload ||
+		state.SubscriptionUsage.DownloadBytes == nil || *state.SubscriptionUsage.DownloadBytes != download ||
+		state.SubscriptionUsage.TotalBytes == nil || *state.SubscriptionUsage.TotalBytes != total ||
+		state.SubscriptionUsage.ExpiresAt == nil || !state.SubscriptionUsage.ExpiresAt.Equal(expires) ||
+		state.SubscriptionUsageUpdatedAt == nil ||
+		state.LastMetadataError != "" {
+		t.Fatalf("persisted subscription usage = %+v", state)
+	}
+	firstUpdatedAt := *state.SubscriptionUsageUpdatedAt
+
+	second, err := store.BeginProfileUpdate(ctx, "profile-a", source.Revision, "usage-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishProfileUpdateSuccess(ctx, second, ProfileUpdateSuccess{
+		SourceRevision:        "usage-v2",
+		UsageMetadataObserved: true,
+		UsageMetadataError:    "invalid Subscription-Userinfo metadata: upload field must be a non-negative decimal integer",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err = store.ProfileSource(ctx, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SubscriptionUsage == nil ||
+		state.SubscriptionUsage.UploadBytes == nil || *state.SubscriptionUsage.UploadBytes != upload ||
+		state.SubscriptionUsage.DownloadBytes == nil || *state.SubscriptionUsage.DownloadBytes != download ||
+		state.SubscriptionUsage.TotalBytes == nil || *state.SubscriptionUsage.TotalBytes != total ||
+		state.SubscriptionUsage.ExpiresAt == nil || !state.SubscriptionUsage.ExpiresAt.Equal(expires) ||
+		state.SubscriptionUsageUpdatedAt == nil || !state.SubscriptionUsageUpdatedAt.Equal(firstUpdatedAt) ||
+		state.LastMetadataError == "" {
+		t.Fatalf("malformed metadata overwrote last good usage: %+v", state)
+	}
+}
+
+func TestProfileUpdateSuccessRejectsInconsistentUsageMetadataState(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	source, err := store.CommitProfileSource(ctx, 0, testRemoteProfileSource("profile-a", profile.FetchDirect))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := store.BeginProfileUpdate(ctx, "profile-a", source.Revision, "usage-invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := int64(1)
+	err = store.FinishProfileUpdateSuccess(ctx, lease, ProfileUpdateSuccess{
+		SourceRevision:    "usage-invalid",
+		SubscriptionUsage: &profile.SubscriptionUsage{TotalBytes: &total},
+	})
+	if !errors.Is(err, ErrInvalidProfileUpdateStatus) {
+		t.Fatalf("inconsistent usage metadata error = %v", err)
+	}
+	state, err := store.ProfileSource(ctx, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ActiveUpdateID != lease.ID {
+		t.Fatalf("rejected usage metadata unexpectedly completed lease: %+v", state)
+	}
+	if err := store.FinishProfileUpdateFailure(ctx, lease, "cleanup invalid usage test", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProfileUpdateRejectsDisabledAndStaleSource(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
