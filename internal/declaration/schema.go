@@ -66,6 +66,7 @@ type nodeV1 struct {
 	SOCKS       *socksV1        `json:"socks,omitempty"`
 	HTTP        *httpV1         `json:"http,omitempty"`
 	Shadowsocks *shadowsocksV1  `json:"shadowsocks,omitempty"`
+	VMess       *vmessV1        `json:"vmess,omitempty"`
 }
 
 type socksV1 struct {
@@ -88,6 +89,17 @@ type shadowsocksV1 struct {
 	Network       domain.ProxyNetwork `json:"network"`
 }
 
+type vmessV1 struct {
+	UUID                string              `json:"uuid"`
+	Security            string              `json:"security"`
+	AlterID             uint16              `json:"alter_id,omitempty"`
+	GlobalPadding       bool                `json:"global_padding,omitempty"`
+	AuthenticatedLength bool                `json:"authenticated_length,omitempty"`
+	Network             domain.ProxyNetwork `json:"network"`
+	PacketEncoding      string              `json:"packet_encoding,omitempty"`
+}
+
+
 func (n nodeV1) toDomain() (domain.Node, error) {
 	result := domain.Node{
 		ProfileID: n.ProfileID,
@@ -98,7 +110,7 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 	}
 	switch n.Type {
 	case domain.NodeSOCKS:
-		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil {
+		if n.SOCKS == nil || n.HTTP != nil || n.Shadowsocks != nil || n.VMess != nil {
 			return domain.Node{}, errors.New("SOCKS node requires socks options and forbids other protocol options")
 		}
 		result.SOCKS = &domain.SOCKSNodeOptions{
@@ -108,12 +120,12 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 			Network:  n.SOCKS.Network,
 		}
 	case domain.NodeHTTP:
-		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil {
+		if n.HTTP == nil || n.SOCKS != nil || n.Shadowsocks != nil || n.VMess != nil {
 			return domain.Node{}, errors.New("HTTP node requires http options and forbids other protocol options")
 		}
 		result.HTTP = &domain.HTTPNodeOptions{Username: n.HTTP.Username, Password: n.HTTP.Password}
 	case domain.NodeShadowsocks:
-		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil {
+		if n.Shadowsocks == nil || n.SOCKS != nil || n.HTTP != nil || n.VMess != nil {
 			return domain.Node{}, errors.New("Shadowsocks node requires shadowsocks options and forbids other protocol options")
 		}
 		result.Shadowsocks = &domain.ShadowsocksNodeOptions{
@@ -122,6 +134,19 @@ func (n nodeV1) toDomain() (domain.Node, error) {
 			Plugin:        n.Shadowsocks.Plugin,
 			PluginOptions: n.Shadowsocks.PluginOptions,
 			Network:       n.Shadowsocks.Network,
+		}
+	case domain.NodeVMess:
+		if n.VMess == nil || n.SOCKS != nil || n.HTTP != nil || n.Shadowsocks != nil {
+			return domain.Node{}, errors.New("VMess node requires vmess options and forbids other protocol options")
+		}
+		result.VMess = &domain.VMessNodeOptions{
+			UUID:                n.VMess.UUID,
+			Security:            n.VMess.Security,
+			AlterID:             n.VMess.AlterID,
+			GlobalPadding:       n.VMess.GlobalPadding,
+			AuthenticatedLength: n.VMess.AuthenticatedLength,
+			Network:             n.VMess.Network,
+			PacketEncoding:      n.VMess.PacketEncoding,
 		}
 	default:
 		return domain.Node{}, fmt.Errorf("unsupported node type %q", n.Type)
