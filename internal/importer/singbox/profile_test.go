@@ -143,6 +143,95 @@ func TestAnalyzeBasicProfileBlocksUnsupportedShadowsocksExtensions(t *testing.T)
 	}
 }
 
+func TestAnalyzeBasicProfileVMessPreservesApprovedBasicFields(t *testing.T) {
+	data := []byte(`{
+  "outbounds":[{
+    "type":"vmess",
+    "tag":"vmess-a",
+    "server":"vmess.example.com",
+    "server_port":10086,
+    "uuid":"11111111-2222-3333-4444-555555555555",
+    "security":"aes-128-gcm",
+    "alter_id":1,
+    "global_padding":true,
+    "authenticated_length":true,
+    "network":["tcp","udp"],
+    "packet_encoding":"xudp"
+  }]
+}`)
+	analysis, err := AnalyzeBasicProfile(data, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !analysis.CanCommit() || len(analysis.Nodes) != 1 {
+		t.Fatalf("VMess analysis = %+v", analysis)
+	}
+	imported := analysis.Nodes[0]
+	if imported.Kind != domain.NodeVMess ||
+		imported.VMess == nil ||
+		imported.VMess.UUID != "11111111-2222-3333-4444-555555555555" ||
+		imported.VMess.Security != "aes-128-gcm" ||
+		imported.VMess.AlterID != 1 ||
+		!imported.VMess.GlobalPadding ||
+		!imported.VMess.AuthenticatedLength ||
+		imported.VMess.Network != domain.ProxyNetworkBoth ||
+		imported.VMess.PacketEncoding != "xudp" {
+		t.Fatalf("VMess node = %+v", imported)
+	}
+
+	node, err := DecodeBasicNode(imported.Source.PayloadJSON, profile.NodeIdentity{
+		ProfileID:  "profile-a",
+		NodeID:     "stable-vmess",
+		SourceKey:  "vmess-a",
+		SourceName: "vmess-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.NodeID != "stable-vmess" ||
+		node.Kind != domain.NodeVMess ||
+		node.VMess == nil ||
+		node.VMess.PacketEncoding != "xudp" {
+		t.Fatalf("decoded VMess node = %+v", node)
+	}
+}
+
+func TestAnalyzeBasicProfileBlocksUnsupportedVMessExtensions(t *testing.T) {
+	for _, field := range []string{
+		`"tls":{"enabled":true}`,
+		`"transport":{"type":"ws","path":"/ws"}`,
+		`"multiplex":{"enabled":true}`,
+		`"detour":"bootstrap"`,
+	} {
+		data := []byte(`{
+  "outbounds":[{
+    "type":"vmess",
+    "tag":"vmess-a",
+    "server":"vmess.example.com",
+    "server_port":10086,
+    "uuid":"11111111-2222-3333-4444-555555555555",
+    "security":"auto",
+    ` + field + `
+  }]
+}`)
+		analysis, err := AnalyzeBasicProfile(data, "profile-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if analysis.CanCommit() || len(analysis.Nodes) != 0 {
+			t.Fatalf("VMess extension %s was silently accepted: %+v", field, analysis)
+		}
+		if !hasDiagnostic(
+			analysis.Diagnostics,
+			DiagnosticError,
+			"outbounds[0]",
+			"unsupported_or_invalid_node",
+		) {
+			t.Fatalf("VMess extension diagnostic for %s = %+v", field, analysis.Diagnostics)
+		}
+	}
+}
+
 func TestAnalyzeBasicProfileAcceptsCoreNetworkListArray(t *testing.T) {
 	data := []byte(`{
   "outbounds":[{
@@ -196,7 +285,7 @@ func TestAnalyzeBasicProfileBlocksUnknownProxyProtocolEvenWithSupportedNodes(t *
 	data := []byte(`{
   "outbounds":[
     {"type":"http","tag":"http-a","server":"127.0.0.1","server_port":8080},
-    {"type":"vmess","tag":"vmess-b","server":"example.com","server_port":443,"uuid":"00000000-0000-0000-0000-000000000000"}
+    {"type":"vless","tag":"vless-b","server":"example.com","server_port":443,"uuid":"00000000-0000-0000-0000-000000000000"}
   ]
 }`)
 	analysis, err := AnalyzeBasicProfile(data, "profile-a")
