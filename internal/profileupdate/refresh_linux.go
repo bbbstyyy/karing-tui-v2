@@ -95,9 +95,12 @@ func RefreshProfileSource(
 			sourceRevision = snapshot.SourceRevision
 		}
 		if err := store.FinishProfileUpdateSuccess(ctx, lease, storage.ProfileUpdateSuccess{
-			SourceRevision: sourceRevision,
-			ETag:           fetched.ETag,
-			LastModified:   fetched.LastModified,
+			SourceRevision:        sourceRevision,
+			ETag:                  fetched.ETag,
+			LastModified:          fetched.LastModified,
+			UsageMetadataObserved: fetched.UsageMetadataObserved,
+			SubscriptionUsage:     fetched.SubscriptionUsage,
+			UsageMetadataError:    fetched.UsageMetadataError,
 		}); err != nil {
 			return result, finishRefreshFailure(ctx, store, lease, err)
 		}
@@ -139,9 +142,12 @@ func RefreshProfileSource(
 			},
 			storage.ProfileSnapshotCommitOptions{AllowEmpty: options.AllowEmpty},
 			storage.ProfileUpdateSuccess{
-				SourceRevision: sourceRevision,
-				ETag:           fetched.ETag,
-				LastModified:   fetched.LastModified,
+				SourceRevision:        sourceRevision,
+				ETag:                  fetched.ETag,
+				LastModified:          fetched.LastModified,
+				UsageMetadataObserved: fetched.UsageMetadataObserved,
+				SubscriptionUsage:     fetched.SubscriptionUsage,
+				UsageMetadataError:    fetched.UsageMetadataError,
 			},
 		)
 		result.Commit = commit
