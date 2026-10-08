@@ -799,7 +799,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 13
+const currentSchemaVersion = 14
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1131,6 +1131,22 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(13, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 13: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 14 {
+		statements := []string{
+			`ALTER TABLE profile_sources ADD COLUMN filter_method TEXT NOT NULL DEFAULT '' CHECK(filter_method IN ('', 'include', 'exclude'))`,
+			`ALTER TABLE profile_sources ADD COLUMN filter_expression TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE profile_sources ADD COLUMN filter_match_attribute INTEGER NOT NULL DEFAULT 0 CHECK(filter_match_attribute IN (0, 1))`,
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply sqlite migration 14: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(14, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 14: %w", err)
 		}
 	}
 
