@@ -401,6 +401,11 @@ func integrationDeclarationDocument(logLevel, ruleSetSHA256, regionGeoSiteSHA256
       "encryption":"none",
       "network":"udp",
       "packet_encoding":""
+    },
+    "tls":{
+      "enabled":true,
+      "server_name":"edge.example.invalid",
+      "insecure":true
     }
   },{
     "profile_id":"integration-profile",
