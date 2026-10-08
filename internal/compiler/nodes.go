@@ -13,24 +13,24 @@ var (
 )
 
 type NodeOutboundConfig struct {
-	Type           string `json:"type"`
-	Tag            string `json:"tag"`
-	Server         string `json:"server"`
-	ServerPort     uint16 `json:"server_port"`
-	Version        string `json:"version,omitempty"`
-	Username       string `json:"username,omitempty"`
-	Password       string `json:"password,omitempty"`
-	Method         string `json:"method,omitempty"`
-	Plugin         string `json:"plugin,omitempty"`
-	PluginOptions        string  `json:"plugin_opts,omitempty"`
-	Network              string  `json:"network,omitempty"`
-	UUID                 string  `json:"uuid,omitempty"`
-	Security             *string `json:"security,omitempty"`
-	AlterID              uint16  `json:"alter_id,omitempty"`
-	GlobalPadding        bool    `json:"global_padding,omitempty"`
-	AuthenticatedLength  bool    `json:"authenticated_length,omitempty"`
-	PacketEncoding       string  `json:"packet_encoding,omitempty"`
-	DomainResolver       string  `json:"domain_resolver,omitempty"`
+	Type                string  `json:"type"`
+	Tag                 string  `json:"tag"`
+	Server              string  `json:"server"`
+	ServerPort          uint16  `json:"server_port"`
+	Version             string  `json:"version,omitempty"`
+	Username            string  `json:"username,omitempty"`
+	Password            string  `json:"password,omitempty"`
+	Method              string  `json:"method,omitempty"`
+	Plugin              string  `json:"plugin,omitempty"`
+	PluginOptions       string  `json:"plugin_opts,omitempty"`
+	Network             string  `json:"network,omitempty"`
+	UUID                string  `json:"uuid,omitempty"`
+	Security            *string `json:"security,omitempty"`
+	AlterID             uint16  `json:"alter_id,omitempty"`
+	GlobalPadding       bool    `json:"global_padding,omitempty"`
+	AuthenticatedLength bool    `json:"authenticated_length,omitempty"`
+	PacketEncoding      string  `json:"packet_encoding,omitempty"`
+	DomainResolver      string  `json:"domain_resolver,omitempty"`
 }
 
 type CompiledNodes struct {
