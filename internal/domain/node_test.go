@@ -154,7 +154,7 @@ func TestShadowsocksOptionsAreBoundedAndExplicit(t *testing.T) {
 func TestVMessOptionsMatchApprovedCoreBasicFields(t *testing.T) {
 	valid := []VMessNodeOptions{
 		{
-			UUID:    "11111111-2222-3333-4444-555555555555",
+			UUID:     "11111111-2222-3333-4444-555555555555",
 			Security: "auto",
 			Network:  ProxyNetworkBoth,
 		},
