@@ -104,6 +104,68 @@ func TestRefreshProfileSourceHTTPCommitThenNotModified(t *testing.T) {
 	}
 }
 
+func TestRefreshProfileSourcePersistsUsageAndKeepsLastGoodUsageOnMalformedHeader(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newProfileUpdateStore(t, ctx)
+	defer store.Close()
+
+	var malformed atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if malformed.Load() {
+			w.Header().Set("Subscription-Userinfo", "upload=invalid")
+			_, _ = w.Write([]byte(validHTTPProfile(9090)))
+			return
+		}
+		w.Header().Set(
+			"Subscription-Userinfo",
+			"upload=1024; download=2048; total=4096; expire=1798761600",
+		)
+		_, _ = w.Write([]byte(validHTTPProfile(8080)))
+	}))
+	defer server.Close()
+
+	source, err := store.CommitProfileSource(ctx, 0, remoteSingBoxSource("profile-a", server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher, err := profilefetch.NewSourceFetcher(profilefetch.DefaultHTTPOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := RefreshProfileSource(ctx, store, fetcher, "profile-a", source.Revision, "usage-1", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Nodes) != 1 || first.Nodes[0].Port != 8080 ||
+		first.SourceAfter.SubscriptionUsage == nil ||
+		first.SourceAfter.SubscriptionUsage.TotalBytes == nil ||
+		*first.SourceAfter.SubscriptionUsage.TotalBytes != 4096 ||
+		first.SourceAfter.LastMetadataError != "" {
+		t.Fatalf("first usage refresh = %+v", first)
+	}
+	firstUsageUpdated := first.SourceAfter.SubscriptionUsageUpdatedAt
+	if firstUsageUpdated == nil {
+		t.Fatal("first usage refresh did not record metadata timestamp")
+	}
+
+	malformed.Store(true)
+	second, err := RefreshProfileSource(ctx, store, fetcher, "profile-a", source.Revision, "usage-2", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Nodes) != 1 || second.Nodes[0].Port != 9090 {
+		t.Fatalf("malformed metadata blocked node refresh: %+v", second.Nodes)
+	}
+	if second.SourceAfter.SubscriptionUsage == nil ||
+		second.SourceAfter.SubscriptionUsage.TotalBytes == nil ||
+		*second.SourceAfter.SubscriptionUsage.TotalBytes != 4096 ||
+		second.SourceAfter.SubscriptionUsageUpdatedAt == nil ||
+		!second.SourceAfter.SubscriptionUsageUpdatedAt.Equal(*firstUsageUpdated) ||
+		second.SourceAfter.LastMetadataError == "" {
+		t.Fatalf("malformed metadata replaced last good usage: %+v", second.SourceAfter)
+	}
+}
+
 func TestRefreshProfileSourceHTTPFailurePreservesSnapshotAndRetryAfter(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newProfileUpdateStore(t, ctx)
