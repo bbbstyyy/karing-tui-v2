@@ -64,12 +64,14 @@ func RefreshProfileSourceMetadata(
 		)
 	}
 
+	// Record the request-start instant. A HEAD response that returns after a
+	// newer full refresh must not overwrite that refresh's metadata.
+	result.ObservedAt = time.Now().UTC()
 	fetched, err := fetcher.FetchMetadata(ctx, source.Spec)
 	result.Fetch = fetched
 	if err != nil {
 		return result, err
 	}
-	result.ObservedAt = time.Now().UTC()
 
 	applied, err := store.CommitProfileSubscriptionMetadata(
 		ctx,
