@@ -25,6 +25,19 @@ func NewSourceFetcher(options HTTPOptions) (*SourceFetcher, error) {
 	}, nil
 }
 
+func (f *SourceFetcher) FetchMetadata(
+	ctx context.Context,
+	spec profile.SourceSpec,
+) (MetadataResult, error) {
+	if f == nil || f.http == nil {
+		return MetadataResult{}, errors.New("profile source fetcher is nil")
+	}
+	if spec.LocationKind != profile.SourceLocationURL {
+		return MetadataResult{}, ErrUnsupportedSourceLocation
+	}
+	return f.http.FetchMetadata(ctx, spec)
+}
+
 func (f *SourceFetcher) Fetch(
 	ctx context.Context,
 	spec profile.SourceSpec,
