@@ -98,6 +98,84 @@ type RuleSetUploadResponse struct {
 	Bytes  int64  `json:"bytes"`
 }
 
+type ProfileSourceFetchPolicy struct {
+	Mode      string `json:"mode"`
+	ProfileID string `json:"profile_id,omitempty"`
+	NodeID    string `json:"node_id,omitempty"`
+}
+
+type ProfileSourceFilter struct {
+	Method         string `json:"method,omitempty"`
+	KeywordOrRegex string `json:"keyword_or_regex,omitempty"`
+	MatchAttribute bool   `json:"match_attribute,omitempty"`
+}
+
+type ProfileSourceSpec struct {
+	Format                string                   `json:"format"`
+	LocationKind          string                   `json:"location_kind"`
+	Location              string                   `json:"location"`
+	UserAgent             string                   `json:"user_agent,omitempty"`
+	Fetch                 ProfileSourceFetchPolicy `json:"fetch"`
+	Filter                ProfileSourceFilter      `json:"filter,omitempty"`
+	UpdateIntervalSeconds int64                    `json:"update_interval_seconds"`
+	Enabled               bool                     `json:"enabled"`
+}
+
+type ProfileSourcePutRequest struct {
+	ExpectedRevision uint64            `json:"expected_revision"`
+	Source           ProfileSourceSpec `json:"source"`
+}
+
+type ProfileSourceResponse struct {
+	ProfileID              string            `json:"profile_id"`
+	Revision               uint64            `json:"revision"`
+	Source                 ProfileSourceSpec `json:"source"`
+	CreatedAt              string            `json:"created_at"`
+	UpdatedAt              string            `json:"updated_at"`
+	LastAttemptAt          string            `json:"last_attempt_at,omitempty"`
+	LastSuccessAt          string            `json:"last_success_at,omitempty"`
+	LastError              string            `json:"last_error,omitempty"`
+	LastSourceRevision     string            `json:"last_source_revision,omitempty"`
+	ETag                   string            `json:"etag,omitempty"`
+	LastModified           string            `json:"last_modified,omitempty"`
+	ConsecutiveFailures    uint32            `json:"consecutive_failures"`
+	RetryAfterAt           string            `json:"retry_after_at,omitempty"`
+	ActiveUpdateID         string            `json:"active_update_id,omitempty"`
+	ActiveUpdateStartedAt  string            `json:"active_update_started_at,omitempty"`
+	CurrentSnapshotID      *int64            `json:"current_snapshot_id,omitempty"`
+}
+
+type ProfileSourceListResponse struct {
+	Profiles []ProfileSourceResponse `json:"profiles"`
+}
+
+type ProfileRefreshRequest struct {
+	ExpectedSourceRevision uint64 `json:"expected_source_revision"`
+	AllowEmpty             bool   `json:"allow_empty,omitempty"`
+}
+
+type ProfileDiagnosticResponse struct {
+	Level   string `json:"level"`
+	Path    string `json:"path,omitempty"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type ProfileRefreshResponse struct {
+	ProfileID          string                      `json:"profile_id"`
+	SourceRevision     uint64                      `json:"source_revision"`
+	AcceptedRevision   string                      `json:"accepted_source_revision,omitempty"`
+	NotModified        bool                        `json:"not_modified"`
+	CurrentSnapshotID  *int64                      `json:"current_snapshot_id,omitempty"`
+	NodeCount          int                         `json:"node_count,omitempty"`
+	Diagnostics        []ProfileDiagnosticResponse `json:"diagnostics,omitempty"`
+}
+
+type ProfileRefreshErrorResponse struct {
+	Error       string                      `json:"error"`
+	Diagnostics []ProfileDiagnosticResponse `json:"diagnostics,omitempty"`
+}
+
 type ProfileMetadataRefreshRequest struct {
 	ExpectedSourceRevision uint64 `json:"expected_source_revision"`
 }
