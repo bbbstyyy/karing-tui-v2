@@ -214,6 +214,29 @@ func compileBasicNode(node domain.Node, tag string) (NodeOutboundConfig, error) 
 			Encryption:     node.VLESS.Encryption,
 			PacketEncoding: packetEncoding,
 		}, nil
+	case domain.NodeTrojan:
+		network := ""
+		switch node.Trojan.Network {
+		case domain.ProxyNetworkBoth:
+		case domain.ProxyNetworkTCP:
+			network = "tcp"
+		case domain.ProxyNetworkUDP:
+			network = "udp"
+		default:
+			return NodeOutboundConfig{}, fmt.Errorf(
+				"%w: unsupported Trojan network %q",
+				domain.ErrInvalidNode,
+				node.Trojan.Network,
+			)
+		}
+		return NodeOutboundConfig{
+			Type:       "trojan",
+			Tag:        tag,
+			Server:     node.Server,
+			ServerPort: node.Port,
+			Password:   node.Trojan.Password,
+			Network:    network,
+		}, nil
 	default:
 		return NodeOutboundConfig{}, fmt.Errorf("%w: unsupported basic node kind %q", domain.ErrInvalidNode, node.Kind)
 	}
