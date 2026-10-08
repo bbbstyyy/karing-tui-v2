@@ -197,6 +197,11 @@ func nodeV1FromDomain(node domain.Node) (nodeV1, error) {
 			Network:        node.VLESS.Network,
 			PacketEncoding: packetEncoding,
 		}
+	case domain.NodeTrojan:
+		result.Trojan = &trojanV1{
+			Password: node.Trojan.Password,
+			Network:  node.Trojan.Network,
+		}
 	default:
 		return nodeV1{}, fmt.Errorf("unsupported node type %q", node.Kind)
 	}
