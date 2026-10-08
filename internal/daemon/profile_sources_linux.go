@@ -198,12 +198,12 @@ func profileSourceFromAPI(
 		UserAgent:      source.UserAgent,
 		UpdateInterval: time.Duration(source.UpdateIntervalSeconds) * time.Second,
 		Enabled:        source.Enabled,
-		Fetch: profile.FetchPolicy{
+		Fetch:          profile.FetchPolicy{
 			Mode:      profile.FetchMode(source.Fetch.Mode),
 			ProfileID: source.Fetch.ProfileID,
 			NodeID:    source.Fetch.NodeID,
 		},
-		Filter: profile.NodeFilterSpec{
+		Filter:         profile.NodeFilterSpec{
 			Method:         profile.NodeFilterMethod(source.Filter.Method),
 			KeywordOrRegex: source.Filter.KeywordOrRegex,
 			MatchAttribute: source.Filter.MatchAttribute,
@@ -236,12 +236,12 @@ func profileSourceResponse(state storage.ProfileSourceState) apiv1.ProfileSource
 			UserAgent:             spec.UserAgent,
 			UpdateIntervalSeconds: int64(spec.UpdateInterval / time.Second),
 			Enabled:               spec.Enabled,
-			Fetch: apiv1.ProfileSourceFetchPolicy{
+			Fetch:                 apiv1.ProfileSourceFetchPolicy{
 				Mode:      string(spec.Fetch.Mode),
 				ProfileID: spec.Fetch.ProfileID,
 				NodeID:    spec.Fetch.NodeID,
 			},
-			Filter: apiv1.ProfileSourceFilter{
+			Filter:                apiv1.ProfileSourceFilter{
 				Method:         string(spec.Filter.Method),
 				KeywordOrRegex: spec.Filter.KeywordOrRegex,
 				MatchAttribute: spec.Filter.MatchAttribute,
