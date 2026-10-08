@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
@@ -139,6 +140,78 @@ func TestCompileBasicNodeOutboundsEmitsSupportedProtocolFields(t *testing.T) {
 	wantThird := `{"type":"shadowsocks","tag":"` + catalog.NodeTags[keySS] + `","server":"ss.example.com","server_port":8388,"password":"ss-secret","method":"aes-256-gcm","plugin":"obfs-local","plugin_opts":"obfs=http","network":"tcp"}`
 	if string(third) != wantThird {
 		t.Fatalf("Shadowsocks JSON = %s, want %s", third, wantThird)
+	}
+}
+
+func TestCompileBasicNodeOutboundsEmitsBasicVMessFields(t *testing.T) {
+	node := domain.Node{
+		ProfileID: "profile-v",
+		NodeID:    "vmess-a",
+		Kind:      domain.NodeVMess,
+		Server:    "vmess.example.com",
+		Port:      10086,
+		VMess: &domain.VMessNodeOptions{
+			UUID:                "11111111-2222-3333-4444-555555555555",
+			Security:            "aes-128-gcm",
+			AlterID:             1,
+			GlobalPadding:       true,
+			AuthenticatedLength: true,
+			Network:             domain.ProxyNetworkUDP,
+			PacketEncoding:      "xudp",
+		},
+	}
+	key := NodeTargetKey{ProfileID: node.ProfileID, NodeID: node.NodeID}
+	catalog, err := NewTargetCatalog(nil, []NodeTargetKey{key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := CompileBasicNodeOutbounds(
+		[]domain.Node{node},
+		catalog,
+		[]domain.TargetRef{{
+			Kind:      domain.TargetSpecificNode,
+			ProfileID: node.ProfileID,
+			NodeID:    node.NodeID,
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled.Outbounds) != 1 {
+		t.Fatalf("VMess outbounds = %+v", compiled.Outbounds)
+	}
+	encoded, err := json.Marshal(compiled.Outbounds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"vmess","tag":"` + catalog.NodeTags[key] + `","server":"vmess.example.com","server_port":10086,"network":"udp","uuid":"11111111-2222-3333-4444-555555555555","security":"aes-128-gcm","alter_id":1,"global_padding":true,"authenticated_length":true,"packet_encoding":"xudp"}`
+	if string(encoded) != want {
+		t.Fatalf("VMess JSON = %s, want %s", encoded, want)
+	}
+
+	defaultSecurity := node
+	defaultSecurity.VMess = &domain.VMessNodeOptions{
+		UUID:    node.VMess.UUID,
+		Network: domain.ProxyNetworkBoth,
+	}
+	compiled, err = CompileBasicNodeOutbounds(
+		[]domain.Node{defaultSecurity},
+		catalog,
+		[]domain.TargetRef{{
+			Kind:      domain.TargetSpecificNode,
+			ProfileID: node.ProfileID,
+			NodeID:    node.NodeID,
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(compiled.Outbounds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"security":""`) {
+		t.Fatalf("VMess empty security default was omitted: %s", encoded)
 	}
 }
 
