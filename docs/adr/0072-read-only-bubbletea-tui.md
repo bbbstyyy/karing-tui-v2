@@ -14,7 +14,7 @@ Pin the **v1** Bubble Tea API at `github.com/charmbracelet/bubbletea@v1.3.10` (M
 
 The model issues bounded asynchronous commands, never performs I/O in `Update`/`View`, and cancels pending requests when the TUI exits. Manual `r` initiates reload; no background polling or unbounded event queue is introduced. Each response is tagged with a monotonically increasing request sequence so late replies cannot overwrite newer state.
 
-The UI caps the displayed profile list at 200 and the node API page size at 20, with a bounded offset. It renders only allowlisted fields; neither profile source locations nor raw daemon/core failure strings may enter the screen. Every displayed line strips control, bidi formatting and line separator characters, then truncates to the terminal viewport. The UI is ASCII by default and tolerates Chinese and narrow terminals.
+The UI caps the displayed profile list at 200 and the node API page size at 20, with a bounded offset. It projects source records into a small allowlisted metadata model and explicitly discards raw core-error strings; neither profile source locations nor raw daemon/core failure strings may be retained as display state or enter the screen. Every displayed line strips control, bidi formatting and line separator characters, then truncates to the terminal viewport. The UI is ASCII by default and tolerates Chinese and narrow terminals.
 
 `q` and Ctrl-C close only the terminal client. The UI exposes **no mutating API** and cannot stop the daemon/core, commit a declaration, or mutate routing/DNS. It does not add a subscription/ISP routing layer or any privileged/TUN feature.
 

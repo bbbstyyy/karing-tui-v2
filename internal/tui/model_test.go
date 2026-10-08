@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -243,6 +244,31 @@ func TestSafeTextControlAndChineseWidth(t *testing.T) {
 	}
 	if runeWidthOfLine(got) > 9 || !strings.Contains(got, "你好") {
 		t.Fatalf("width truncation incorrect: %q", got)
+	}
+}
+
+func TestProfileModelStoresOnlyAllowlistedMetadata(t *testing.T) {
+	input := apiv1.ProfileSourceResponse{
+		ProfileID: "work", Revision: 4,
+		Source: apiv1.ProfileSourceSpec{
+			Format: "sing-box", Location: "https://host.invalid/path?token=SECRET_TEST_TOKEN",
+			UserAgent: "Bearer SECRET_TEST_TOKEN", Enabled: true,
+		},
+		LastError: "SECRET_TEST_TOKEN",
+		LastSourceRevision: "SECRET_TEST_TOKEN",
+	}
+	m := NewModel(context.Background(), &fakeAPI{})
+	m, _ = updated(t, m, profilesLoaded{request: 1, value: apiv1.ProfileSourceListResponse{
+		Profiles: []apiv1.ProfileSourceResponse{input},
+	}})
+	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if len(m.profiles) != 1 || m.profiles[0].Revision != 4 ||
+		!m.profiles[0].Enabled || m.profiles[0].Format != "sing-box" {
+		t.Fatalf("profile state projection incorrect: %+v", m.profiles)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", m.profiles), "SECRET_TEST_TOKEN") ||
+		strings.Contains(m.View(), "SECRET_TEST_TOKEN") {
+		t.Fatal("TUI retained subscription secrets or untrusted error contents")
 	}
 }
 

@@ -1,0 +1,30 @@
+name: temporary TUI viewport formatter
+on:
+  push:
+    branches: [feat/m0-m1-foundation]
+    paths:
+      - .github/workflows/temporary-tui-viewport-gofmt.yml
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: gofmt TUI viewport fixes
+        run: |
+          gofmt -w internal/tui/model.go internal/tui/model_test.go
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add internal/tui/model.go internal/tui/model_test.go
+          if ! git diff --cached --quiet; then
+            git commit -m 'style: gofmt TUI viewport and credential-safety tests'
+            git push origin HEAD:feat/m0-m1-foundation
+          fi

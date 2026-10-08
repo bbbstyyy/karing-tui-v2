@@ -32,6 +32,16 @@ const (
 	nodesPage
 )
 
+// profileView contains only fields explicitly safe for a terminal to retain.
+type profileView struct {
+	ProfileID           string
+	Format              string
+	Enabled             bool
+	Revision            uint64
+	CurrentSnapshotID   *int64
+	ConsecutiveFailures uint32
+}
+
 type Model struct {
 	ctx    context.Context
 	api    API
@@ -43,8 +53,9 @@ type Model struct {
 	statusReady   bool
 	statusError   bool
 	statusRequest uint64
+	hasCoreError  bool
 
-	profiles          []apiv1.ProfileSourceResponse
+	profiles          []profileView
 	profilesReady     bool
 	profilesError     bool
 	profilesTruncated bool
@@ -149,6 +160,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusReady = msg.err == nil
 		m.statusError = msg.err != nil
 		if m.statusReady {
+			m.hasCoreError = msg.value.CoreLastError != ""
+			msg.value.CoreLastError = "" // The raw error can contain credentials.
 			m.status = msg.value
 		}
 		return m, nil
@@ -167,7 +180,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if len(items) > maxProfilesShown {
 			items = items[:maxProfilesShown]
 		}
-		m.profiles = append([]apiv1.ProfileSourceResponse(nil), items...)
+		m.profiles = make([]profileView, 0, len(items))
+		for _, item := range items {
+			var snapshot *int64
+			if item.CurrentSnapshotID != nil {
+				id := *item.CurrentSnapshotID
+				snapshot = &id
+			}
+			m.profiles = append(m.profiles, profileView{
+				ProfileID: item.ProfileID, Format: string(item.Source.Format),
+				Enabled: item.Source.Enabled, Revision: item.Revision,
+				CurrentSnapshotID: snapshot, ConsecutiveFailures: item.ConsecutiveFailures,
+			})
+		}
 		m.profilesReady, m.profilesError = true, false
 		m.selected = 0
 		for i, item := range m.profiles {
@@ -293,10 +318,10 @@ func (m Model) View() string {
 	}
 	width, height := m.width, m.height
 	if width < 32 || height < 7 {
-		return safeText("karing-tui: terminal too small (min 32x7). q: quit", max(1, width)) + "\n"
+		return safeText("too small: resize to 32x7; q quits", max(1, width)) + "\n"
 	}
 	body := m.pageLines()
-	limit := height - 4
+	limit := height - 5
 	if limit < 0 {
 		limit = 0
 	}
@@ -365,7 +390,7 @@ func (m Model) pageLines() []string {
 		if s.ActiveOperation != "" {
 			result = append(result, "Active operation: "+s.ActiveOperation)
 		}
-		if s.CoreLastError != "" {
+		if m.hasCoreError {
 			// Core errors can include upstream URLs and credentials. Never render them.
 			result = append(result, "Core reports an error (details suppressed; use controlled diagnostics).")
 		}
@@ -391,7 +416,7 @@ func (m Model) pageLines() []string {
 			}
 			snapshot := generationLabel(item.CurrentSnapshotID)
 			result = append(result, fmt.Sprintf("%s%s  [%s] enabled=%t rev=%d snapshot=%s failures=%d",
-				prefix, item.ProfileID, item.Source.Format, item.Source.Enabled,
+				prefix, item.ProfileID, item.Format, item.Enabled,
 				item.Revision, snapshot, item.ConsecutiveFailures))
 		}
 		return result
