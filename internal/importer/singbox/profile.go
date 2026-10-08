@@ -38,6 +38,7 @@ type BasicNode struct {
 	HTTP        *domain.HTTPNodeOptions
 	Shadowsocks *domain.ShadowsocksNodeOptions
 	VMess       *domain.VMessNodeOptions
+	VLESS       *domain.VLESSNodeOptions
 }
 
 func (n BasicNode) Materialize(identity profile.NodeIdentity) (domain.Node, error) {
@@ -69,6 +70,14 @@ func (n BasicNode) Materialize(identity profile.NodeIdentity) (domain.Node, erro
 	if n.VMess != nil {
 		value := *n.VMess
 		node.VMess = &value
+	}
+	if n.VLESS != nil {
+		value := *n.VLESS
+		if n.VLESS.PacketEncoding != nil {
+			packetEncoding := *n.VLESS.PacketEncoding
+			value.PacketEncoding = &packetEncoding
+		}
+		node.VLESS = &value
 	}
 	if err := node.Validate(); err != nil {
 		return domain.Node{}, err
@@ -219,6 +228,8 @@ func AnalyzeBasicProfile(data []byte, profileID string) (ProfileAnalysis, error)
 			node, err = parseBasicShadowsocksOutbound(raw, base.Tag)
 		case "vmess":
 			node, err = parseBasicVMessOutbound(raw, base.Tag)
+		case "vless":
+			node, err = parseBasicVLESSOutbound(raw, base.Tag)
 		default:
 			analysis.Diagnostics = append(analysis.Diagnostics, Diagnostic{
 				Level: DiagnosticError, Path: path + ".type", Code: "unsupported_proxy_protocol",
@@ -265,6 +276,8 @@ func DecodeBasicNode(payload []byte, identity profile.NodeIdentity) (domain.Node
 		node, err = parseBasicShadowsocksOutbound(payload, base.Tag)
 	case "vmess":
 		node, err = parseBasicVMessOutbound(payload, base.Tag)
+	case "vless":
+		node, err = parseBasicVLESSOutbound(payload, base.Tag)
 	default:
 		return domain.Node{}, fmt.Errorf("basic node payload type %q is unsupported", base.Type)
 	}
@@ -479,6 +492,74 @@ func parseBasicVMessOutbound(raw []byte, tag string) (BasicNode, error) {
 			AuthenticatedLength: wire.AuthenticatedLength,
 			Network:             network,
 			PacketEncoding:      wire.PacketEncoding,
+		},
+	}
+	identity, err := profile.StableNodeID("validation-profile", tag)
+	if err != nil {
+		return BasicNode{}, err
+	}
+	if _, err := node.Materialize(profile.NodeIdentity{
+		ProfileID:  "validation-profile",
+		NodeID:     identity,
+		SourceKey:  tag,
+		SourceName: tag,
+	}); err != nil {
+		return BasicNode{}, err
+	}
+	return node, nil
+}
+
+func parseBasicVLESSOutbound(raw []byte, tag string) (BasicNode, error) {
+	allowed := map[string]struct{}{
+		"type": {}, "tag": {}, "server": {}, "server_port": {},
+		"uuid": {}, "flow": {}, "encryption": {}, "network": {}, "packet_encoding": {},
+	}
+	if extras, err := unsupportedObjectFields(raw, allowed); err != nil {
+		return BasicNode{}, err
+	} else if len(extras) != 0 {
+		return BasicNode{}, fmt.Errorf(
+			"unsupported VLESS fields: %s",
+			strings.Join(extras, ", "),
+		)
+	}
+	var wire struct {
+		Type           string          `json:"type"`
+		Tag            string          `json:"tag"`
+		Server         string          `json:"server"`
+		Port           uint16          `json:"server_port"`
+		UUID           string          `json:"uuid"`
+		Flow           string          `json:"flow"`
+		Encryption     string          `json:"encryption"`
+		Network        networkListJSON `json:"network"`
+		PacketEncoding *string         `json:"packet_encoding"`
+	}
+	if err := decodeStrictObject(raw, &wire); err != nil {
+		return BasicNode{}, err
+	}
+	network, err := wire.Network.ProxyNetwork()
+	if err != nil {
+		return BasicNode{}, err
+	}
+	var packetEncoding *string
+	if wire.PacketEncoding != nil {
+		value := *wire.PacketEncoding
+		packetEncoding = &value
+	}
+	node := BasicNode{
+		Source: profile.SourceNode{
+			SourceKey:   tag,
+			SourceName:  tag,
+			PayloadJSON: append([]byte(nil), raw...),
+		},
+		Kind:   domain.NodeVLESS,
+		Server: wire.Server,
+		Port:   wire.Port,
+		VLESS: &domain.VLESSNodeOptions{
+			UUID:           wire.UUID,
+			Flow:           wire.Flow,
+			Encryption:     wire.Encryption,
+			Network:        network,
+			PacketEncoding: packetEncoding,
 		},
 	}
 	identity, err := profile.StableNodeID("validation-profile", tag)
