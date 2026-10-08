@@ -799,7 +799,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1112,6 +1112,25 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(12, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 12: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 13 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE profile_node_overlays (
+			profile_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			revision INTEGER NOT NULL CHECK(revision > 0),
+			disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0, 1)),
+			favorite INTEGER NOT NULL DEFAULT 0 CHECK(favorite IN (0, 1)),
+			alias TEXT NOT NULL DEFAULT '',
+			sort_rank INTEGER CHECK(sort_rank IS NULL OR (sort_rank >= 0 AND sort_rank <= 4611686018427387903)),
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(profile_id, node_id)
+		)`); err != nil {
+			return fmt.Errorf("apply sqlite migration 13: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(13, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 13: %w", err)
 		}
 	}
 
