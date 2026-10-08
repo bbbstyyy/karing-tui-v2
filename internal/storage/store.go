@@ -799,7 +799,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 11
+const currentSchemaVersion = 12
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1093,6 +1093,25 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(11, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 11: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 12 {
+		statements := []string{
+			`ALTER TABLE profile_sources ADD COLUMN subscription_upload_bytes INTEGER CHECK(subscription_upload_bytes IS NULL OR subscription_upload_bytes >= 0)`,
+			`ALTER TABLE profile_sources ADD COLUMN subscription_download_bytes INTEGER CHECK(subscription_download_bytes IS NULL OR subscription_download_bytes >= 0)`,
+			`ALTER TABLE profile_sources ADD COLUMN subscription_total_bytes INTEGER CHECK(subscription_total_bytes IS NULL OR subscription_total_bytes >= 0)`,
+			`ALTER TABLE profile_sources ADD COLUMN subscription_expires_at TEXT`,
+			`ALTER TABLE profile_sources ADD COLUMN subscription_usage_updated_at TEXT`,
+			`ALTER TABLE profile_sources ADD COLUMN subscription_metadata_error TEXT NOT NULL DEFAULT ''`,
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply sqlite migration 12: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(12, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 12: %w", err)
 		}
 	}
 
