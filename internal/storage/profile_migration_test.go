@@ -60,8 +60,8 @@ func TestSchemaV9AddsProfileSnapshotsToV8Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 12 {
-		t.Fatalf("schema version = %d, want 12", version)
+	if version != 13 {
+		t.Fatalf("schema version = %d, want 13", version)
 	}
 
 	committed, err := store.CommitProfileSnapshot(ctx, ProfileSnapshotCandidate{
