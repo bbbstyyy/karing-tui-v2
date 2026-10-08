@@ -272,11 +272,7 @@ func (f *HTTPFetcher) FetchMetadata(
 		},
 	}
 
-	timeout := f.options.Timeout
-	if timeout > DefaultMetadataTimeout {
-		timeout = DefaultMetadataTimeout
-	}
-	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	fetchCtx, cancel := context.WithTimeout(ctx, metadataFetchTimeout(f.options.Timeout))
 	defer cancel()
 
 	request, err := http.NewRequestWithContext(fetchCtx, http.MethodHead, spec.Location, nil)
@@ -409,6 +405,13 @@ func validateHeaderValue(label, value string) error {
 		}
 	}
 	return nil
+}
+
+func metadataFetchTimeout(configured time.Duration) time.Duration {
+	if configured > DefaultMetadataTimeout {
+		return DefaultMetadataTimeout
+	}
+	return configured
 }
 
 func parseRetryAfter(value string, now time.Time) *time.Time {
