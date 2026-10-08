@@ -65,7 +65,6 @@ type VMessNodeOptions struct {
 	PacketEncoding      string
 }
 
-
 type Node struct {
 	ProfileID   string
 	NodeID      string
