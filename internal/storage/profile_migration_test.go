@@ -60,8 +60,20 @@ func TestSchemaV9AddsProfileSnapshotsToV8Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 14 {
-		t.Fatalf("schema version = %d, want 14", version)
+	if version != 15 {
+		t.Fatalf("schema version = %d, want 15", version)
+	}
+
+	var metadataObservedColumn string
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT name
+		FROM pragma_table_info('profile_sources')
+		WHERE name = 'subscription_metadata_observed_at'
+	`).Scan(&metadataObservedColumn); err != nil {
+		t.Fatal(err)
+	}
+	if metadataObservedColumn != "subscription_metadata_observed_at" {
+		t.Fatalf("metadata observed column = %q", metadataObservedColumn)
 	}
 
 	committed, err := store.CommitProfileSnapshot(ctx, ProfileSnapshotCandidate{
