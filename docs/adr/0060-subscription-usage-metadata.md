@@ -70,6 +70,8 @@ SQLite schema v12 adds bounded nullable columns on the single `profile_sources` 
 - usage metadata update timestamp;
 - latest metadata diagnostic.
 
+Schema v15 adds `subscription_metadata_observed_at`. This timestamp advances for either a valid usage header or a malformed observed header, while `subscription_usage_updated_at` advances only when a new valid usage value is committed. The separation lets metadata-only refreshes reject stale observations without erasing the last-known-good usage value.
+
 There is no per-refresh usage history table, so this feature does not introduce unbounded storage growth.
 
 ## Validation
@@ -85,10 +87,15 @@ Tests cover:
 - persistence of valid usage and expiry;
 - preservation of last-good usage after malformed metadata;
 - end-to-end node refresh succeeding while a malformed usage header is recorded;
-- source identity edits clearing validators/usage while retaining the last usable snapshot.
+- source identity edits clearing validators/usage while retaining the last usable snapshot;
+- dedicated HEAD-only refresh preserving full-refresh health and snapshot state;
+- stale/revision-conflicting metadata observations being refused;
+- malformed HEAD metadata advancing only the observation/error state while preserving last-good usage.
+
+The metadata-only endpoint and its concurrency/transaction boundary are specified in ADR 0064.
 
 ## Consequences
 
 M3 now has a durable traffic/quota/expiry foundation without coupling optional provider metadata to node availability.
 
-A dedicated manual HEAD-only traffic refresh endpoint may be added later if the TUI needs Karing-like metadata refresh without downloading the full subscription body. That feature must reuse the same explicit Direct/Selected network path and metadata parser rather than creating another hidden HTTP stack.
+A dedicated manual HEAD-only traffic refresh endpoint is now available through the daemon API and reuses the same explicit Direct/Selected network path and metadata parser. Specific Node fetch execution remains unsupported and therefore fails closed.
