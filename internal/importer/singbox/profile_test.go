@@ -232,6 +232,84 @@ func TestAnalyzeBasicProfileBlocksUnsupportedVMessExtensions(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBasicProfileTrojanPreservesSupportedFields(t *testing.T) {
+	data := []byte(`{
+  "outbounds":[{
+    "type":"trojan",
+    "tag":"trojan-a",
+    "server":"trojan.example.com",
+    "server_port":443,
+    "password":"secret",
+    "network":["tcp","udp"]
+  }]
+}`)
+	analysis, err := AnalyzeBasicProfile(data, "profile-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !analysis.CanCommit() || len(analysis.Nodes) != 1 {
+		t.Fatalf("Trojan analysis = %+v", analysis)
+	}
+	imported := analysis.Nodes[0]
+	if imported.Kind != domain.NodeTrojan ||
+		imported.Trojan == nil ||
+		imported.Trojan.Password != "secret" ||
+		imported.Trojan.Network != domain.ProxyNetworkBoth {
+		t.Fatalf("Trojan node = %+v", imported)
+	}
+
+	node, err := DecodeBasicNode(imported.Source.PayloadJSON, profile.NodeIdentity{
+		ProfileID:  "profile-a",
+		NodeID:     "stable-trojan",
+		SourceKey:  "trojan-a",
+		SourceName: "trojan-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.NodeID != "stable-trojan" ||
+		node.Kind != domain.NodeTrojan ||
+		node.Trojan == nil ||
+		node.Trojan.Password != "secret" {
+		t.Fatalf("decoded Trojan node = %+v", node)
+	}
+}
+
+func TestAnalyzeBasicProfileBlocksUnsupportedTrojanExtensions(t *testing.T) {
+	for _, field := range []string{
+		`"tls":{"enabled":true}`,
+		`"transport":{"type":"ws","path":"/ws"}`,
+		`"multiplex":{"enabled":true}`,
+		`"detour":"bootstrap"`,
+	} {
+		data := []byte(`{
+  "outbounds":[{
+    "type":"trojan",
+    "tag":"trojan-a",
+    "server":"trojan.example.com",
+    "server_port":443,
+    "password":"secret",
+    ` + field + `
+  }]
+}`)
+		analysis, err := AnalyzeBasicProfile(data, "profile-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if analysis.CanCommit() || len(analysis.Nodes) != 0 {
+			t.Fatalf("Trojan extension %s was silently accepted: %+v", field, analysis)
+		}
+		if !hasDiagnostic(
+			analysis.Diagnostics,
+			DiagnosticError,
+			"outbounds[0]",
+			"unsupported_or_invalid_node",
+		) {
+			t.Fatalf("Trojan extension diagnostic for %s = %+v", field, analysis.Diagnostics)
+		}
+	}
+}
+
 func TestAnalyzeBasicProfileVLESSPreservesPacketEncodingPresence(t *testing.T) {
 	data := []byte(`{
   "outbounds":[
@@ -387,7 +465,7 @@ func TestAnalyzeBasicProfileBlocksUnknownProxyProtocolEvenWithSupportedNodes(t *
 	data := []byte(`{
   "outbounds":[
     {"type":"http","tag":"http-a","server":"127.0.0.1","server_port":8080},
-    {"type":"trojan","tag":"trojan-b","server":"example.com","server_port":443,"password":"secret"}
+    {"type":"hysteria2","tag":"hysteria-b","server":"example.com","server_port":443,"password":"secret"}
   ]
 }`)
 	analysis, err := AnalyzeBasicProfile(data, "profile-a")
