@@ -197,3 +197,11 @@ The same preview is accessible through `karing-tui profiles preview <id> --snaps
 The candidate returned by `profiles preview` can be staged as a **new immutable declaration revision** with `profiles stage <id> --snapshot-id=N --expected-source-revision=N --expected-declaration-revision=N --candidate-sha256=HASH --runtime-overlay-sha256=HASH --confirm`. Every flag is mandatory; hashes must be canonical 64-character lowercase SHA-256 hex strings. The daemon verifies the exact accepted snapshot, preview-acknowledged source revision, enabled source state and runtime overlay revisions, re-materializes the candidate and checks both user-acknowledged hashes, then uses a single SQLite guarded CAS transaction. Missing/removed selected nodes, stale snapshots, changed runtime overlays and concurrent competing stages are rejected.
 
 Staging deliberately returns `core_validated=false` and `applied=false`: it **does not run the pinned core checker, activate a generation or restart core**. The explicit compile/apply API remains independently guarded, and neither stage nor preview imports subscription/ISP routing.
+
+## M4 first Bubble Tea TUI slice
+
+`karing-tui tui` is a read-only Bubble Tea v1.3.10 client using daemon Unix Socket APIs; it never reads the SQLite store or launches/stops core. Its Dashboard distinguishes daemon/core status, configuration/declaration revisions, applied/LKG generation and recovery requirement. Profiles lists safe source IDs, type, enabled state and failure counters, while Nodes displays stable IDs and user aliases without disclosing source URLs, source keys, proxy credentials or raw error messages.
+
+The view implements terminal size handling, Chinese width-aware sanitization, bounded lists and node pages, request timeouts, cancellation on UI exit, explicit refresh (no implicit polling), and stale-response suppression by request generation. All terminal control/format and bidi controls are filtered before rendering untrusted fields. `q`/Ctrl-C only exits the TUI; there is no implicit configuration mutation or core lifecycle action.
+
+This is a bounded **read-only** milestone. Interactive node choice, routing/DNS editing, connection/log inspection, backup/rollback, complete filters and protocol coverage remain outstanding. Subscription/ISP routing remains excluded.

@@ -1209,3 +1209,11 @@ docs/
 [S26]: https://curl.se/docs/manpage.html
 [S27]: https://karing.app/clash
 [S28]: https://karing.app/tutorial/backup-sync
+
+### 2026-10-09 M4 只读 TUI 首个切片
+
+- 采用精确锁定的 Bubble Tea `v1.3.10`（v1 API，不混用 v2），`karing-tui tui` 启动终端界面。
+- 仅读取版本化 Unix Socket API：Dashboard、Profiles、Nodes 三个界面；异步、限时、可取消请求，不在 `Update/View` 中阻塞 IO。
+- 使用请求序号拒绝旧响应，列表展示数量和节点分页有界；窄屏、中文显示宽度、终端控制字符及 bidi 格式字符统一受保护。
+- `q`/Ctrl-C 只退出界面，不写 daemon/core 状态；错误安全概括，不输出订阅凭据或原始错误文本。
+- 仅为 M4 UI 基础，不表示 M3 协议支持、路由/DNS 编辑、CN 资源闭包或正式稳定门槛已完成。

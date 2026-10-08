@@ -2,7 +2,7 @@
 
 Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs/plan.md).
 
-> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. M2 routing/compiler primitives and M3 source/snapshot management exist, but broad subscription compatibility, the complete CN offline resource bundle, automatic profile-to-declaration promotion, and TUI are **not** finished.
+> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. M2 routing/compiler primitives and M3 source/snapshot management exist, but broad subscription compatibility, the complete CN offline resource bundle, automatic profile-to-declaration promotion, and full TUI operation are **not** finished. A read-only Bubble Tea TUI prototype is available for status, profile and node inspection.
 
 ## Non-negotiable scope
 
@@ -16,6 +16,7 @@ Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs
 
 ```bash
 karing-tui daemon run
+karing-tui tui
 karing-tui core start
 karing-tui core stop
 karing-tui status
@@ -23,6 +24,8 @@ karing-tui status --json
 karing-tui capabilities
 karing-tui version
 ```
+
+Run the daemon independently (for example as a systemd user service), then run `karing-tui tui` in an interactive terminal. The TUI uses only the existing Unix Socket read APIs; `q` / Ctrl-C exits the UI **without** stopping the daemon or core. Press `1`/ `2`/ `3` for Dashboard / Profiles / Nodes, `Tab` to cycle, `j`/`k` to select/scroll, `Enter` to inspect profile nodes, `n`/`p` to page, and `r` to refresh on demand. TUI output is credential-safe and sanitizes untrusted labels. This is an intentionally read-only first milestone, not full M4 completion.
 
 The daemon requires a safe per-user runtime directory. Under a normal systemd user session, `XDG_RUNTIME_DIR` is already set. Tests and unusual supervisors may provide `KARING_TUI_RUNTIME_DIR`; the directory must be owned by the current UID and not writable by group/others.
 

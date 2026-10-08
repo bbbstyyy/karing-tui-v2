@@ -2,7 +2,10 @@ module github.com/bbbstyyy/karing-tui-v2
 
 go 1.27.1
 
-require modernc.org/sqlite v1.60.1
+require (
+	github.com/charmbracelet/bubbletea v1.3.10
+	modernc.org/sqlite v1.60.1
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

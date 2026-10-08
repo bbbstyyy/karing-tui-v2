@@ -2,6 +2,13 @@
   "schema": 1,
   "dependencies": [
     {
+      "module": "github.com/charmbracelet/bubbletea",
+      "version": "v1.3.10",
+      "source": "https://github.com/charmbracelet/bubbletea",
+      "license": "MIT",
+      "purpose": "Pinned Bubble Tea v1 terminal event loop; read-only dashboard client"
+    },
+    {
       "module": "modernc.org/sqlite",
       "version": "v1.60.1",
       "source": "https://gitlab.com/cznic/sqlite",

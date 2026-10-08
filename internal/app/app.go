@@ -15,6 +15,7 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/client"
 	"github.com/bbbstyyy/karing-tui-v2/internal/daemon"
 	"github.com/bbbstyyy/karing-tui-v2/internal/runtimepath"
+	"github.com/bbbstyyy/karing-tui-v2/internal/tui"
 	"github.com/bbbstyyy/karing-tui-v2/internal/version"
 )
 
@@ -37,6 +38,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runStorage(args[1:], stdout, stderr)
 	case "profiles":
 		return runProfiles(args[1:], stdout, stderr)
+	case "tui":
+		return runTUI(args[1:], stderr)
 	case "version":
 		fmt.Fprintf(stdout, "karing-tui-v2 %s (%s, %s)\n", version.Version, version.Commit, version.Date)
 		return 0
@@ -48,6 +51,27 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return 2
 	}
+}
+
+func runTUI(args []string, stderr io.Writer) int {
+	if len(args) != 0 {
+		fmt.Fprintln(stderr, "usage: karing-tui tui")
+		return 2
+	}
+	paths, err := runtimepath.Resolve()
+	if err != nil {
+		fmt.Fprintln(stderr, "tui runtime paths unavailable")
+		return 1
+	}
+	if err := tui.Run(context.Background(), paths.Socket); err != nil {
+		if errors.Is(err, tui.ErrNotTerminal) {
+			fmt.Fprintln(stderr, "tui requires an interactive terminal")
+		} else {
+			fmt.Fprintln(stderr, "tui closed with an error (details suppressed)")
+		}
+		return 1
+	}
+	return 0
 }
 
 func runDaemon(args []string, stderr io.Writer) int {
@@ -213,6 +237,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `karing-tui-v2 (early development)
 
 Usage:
+  karing-tui tui              open the read-only terminal dashboard
   karing-tui daemon run       run the management daemon in the foreground
   karing-tui core start       start the confirmed applied core generation
   karing-tui core stop        stop the managed core and persist stop intent
