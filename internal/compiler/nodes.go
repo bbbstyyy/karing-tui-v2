@@ -12,6 +12,13 @@ var (
 	ErrDuplicateNodeSpec = errors.New("duplicate node specification")
 )
 
+type NodeOutboundTLSConfig struct {
+	Enabled    bool   `json:"enabled"`
+	DisableSNI bool   `json:"disable_sni,omitempty"`
+	ServerName string `json:"server_name,omitempty"`
+	Insecure   bool   `json:"insecure,omitempty"`
+}
+
 type NodeOutboundConfig struct {
 	Type                string  `json:"type"`
 	Tag                 string  `json:"tag"`
@@ -31,8 +38,9 @@ type NodeOutboundConfig struct {
 	AlterID             uint16  `json:"alter_id,omitempty"`
 	GlobalPadding       bool    `json:"global_padding,omitempty"`
 	AuthenticatedLength bool    `json:"authenticated_length,omitempty"`
-	PacketEncoding      *string `json:"packet_encoding,omitempty"`
-	DomainResolver      string  `json:"domain_resolver,omitempty"`
+	PacketEncoding      *string                `json:"packet_encoding,omitempty"`
+	TLS                 *NodeOutboundTLSConfig `json:"tls,omitempty"`
+	DomainResolver      string                 `json:"domain_resolver,omitempty"`
 }
 
 type CompiledNodes struct {
@@ -182,6 +190,7 @@ func compileBasicNode(node domain.Node, tag string) (NodeOutboundConfig, error) 
 			GlobalPadding:       node.VMess.GlobalPadding,
 			AuthenticatedLength: node.VMess.AuthenticatedLength,
 			PacketEncoding:      packetEncoding,
+			TLS:                 compileNodeTLS(node.TLS),
 		}, nil
 	case domain.NodeVLESS:
 		network := ""
@@ -213,6 +222,7 @@ func compileBasicNode(node domain.Node, tag string) (NodeOutboundConfig, error) 
 			Flow:           node.VLESS.Flow,
 			Encryption:     node.VLESS.Encryption,
 			PacketEncoding: packetEncoding,
+			TLS:            compileNodeTLS(node.TLS),
 		}, nil
 	case domain.NodeTrojan:
 		network := ""
@@ -236,8 +246,21 @@ func compileBasicNode(node domain.Node, tag string) (NodeOutboundConfig, error) 
 			ServerPort: node.Port,
 			Password:   node.Trojan.Password,
 			Network:    network,
+			TLS:        compileNodeTLS(node.TLS),
 		}, nil
 	default:
 		return NodeOutboundConfig{}, fmt.Errorf("%w: unsupported basic node kind %q", domain.ErrInvalidNode, node.Kind)
+	}
+}
+
+func compileNodeTLS(options *domain.OutboundTLSOptions) *NodeOutboundTLSConfig {
+	if options == nil {
+		return nil
+	}
+	return &NodeOutboundTLSConfig{
+		Enabled:    options.Enabled,
+		DisableSNI: options.DisableSNI,
+		ServerName: options.ServerName,
+		Insecure:   options.Insecure,
 	}
 }
