@@ -56,7 +56,7 @@ func (f guardedStageFixture) commit(ctx context.Context, overlays []ProfileNodeO
 
 func TestGuardedProfileStageAtomicallyRejectsStaleSourceSnapshotAndOverlays(t *testing.T) {
 	for _, test := range []struct {
-		name string
+		name   string
 		mutate func(*testing.T, guardedStageFixture) []ProfileNodeOverlayState
 	}{
 		{name: "source-revision", mutate: func(t *testing.T, f guardedStageFixture) []ProfileNodeOverlayState {

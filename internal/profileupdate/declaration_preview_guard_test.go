@@ -33,12 +33,12 @@ func TestProfileStageRejectsSourceRevisionChangeWithUnchangedSnapshot(t *testing
 	store, _ := newDeclarationUpdateStore(t, ctx)
 	defer store.Close()
 	spec := profile.SourceSpec{
-		ProfileID: "profile-a",
-		Format: profile.SourceFormatSingBox,
+		ProfileID:    "profile-a",
+		Format:       profile.SourceFormatSingBox,
 		LocationKind: profile.SourceLocationFile,
-		Location: "/tmp/karing-profile-source.json",
-		Fetch: profile.FetchPolicy{Mode: profile.FetchDirect},
-		Enabled: true,
+		Location:     "/tmp/karing-profile-source.json",
+		Fetch:        profile.FetchPolicy{Mode: profile.FetchDirect},
+		Enabled:      true,
 	}
 	source, err := store.CommitProfileSource(ctx, 0, spec)
 	if err != nil {

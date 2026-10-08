@@ -53,7 +53,7 @@ func registerProfileDeclarationStageRoutes(mux *http.ServeMux, store *storage.St
 		writeJSON(w, http.StatusCreated, apiv1.ProfileDeclarationStageResponse{
 			ProfileID: id, SnapshotID: request.SnapshotID, SourceRevision: result.Preview.SourceRevision,
 			DeclarationRevision: result.Revision.Revision,
-			DeclarationSHA256: result.Revision.SHA256, CoreValidated: false, Applied: false,
+			DeclarationSHA256:   result.Revision.SHA256, CoreValidated: false, Applied: false,
 		})
 	})
 }

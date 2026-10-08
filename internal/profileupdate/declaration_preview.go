@@ -16,7 +16,7 @@ var (
 	ErrPreviewDeclarationStale     = errors.New("profile snapshot preview declaration revision changed")
 	ErrPreviewDeclarationIntegrity = errors.New("profile snapshot preview base declaration integrity mismatch")
 	ErrPreviewOverlayStale         = errors.New("profile snapshot preview overlay revisions changed")
-	ErrPreviewSourceDisabled      = errors.New("profile declaration preview requires an enabled source")
+	ErrPreviewSourceDisabled       = errors.New("profile declaration preview requires an enabled source")
 )
 
 type DeclarationSnapshotPreview struct {

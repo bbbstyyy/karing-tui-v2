@@ -53,7 +53,7 @@ func runProfileStageCommand(ctx context.Context, api profileStageCLIClient, args
 	result, err := api.StageProfileDeclaration(requestCtx, profileID, apiv1.ProfileDeclarationStageRequest{
 		SnapshotID: *snapshotID, ExpectedSourceRevision: *expectedSource,
 		ExpectedDeclarationRevision: *expected,
-		CandidateSHA256: *candidateHash, RuntimeOverlaySHA256: *overlayHash,
+		CandidateSHA256:             *candidateHash, RuntimeOverlaySHA256: *overlayHash,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "profile declaration stage failed: %s\n", safeSourceCLIError(err))
