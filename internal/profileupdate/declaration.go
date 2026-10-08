@@ -12,9 +12,10 @@ import (
 var ErrNoBaseDeclaration = errors.New("profile snapshot update requires an existing declaration")
 
 type DeclarationSnapshotResult struct {
-	Snapshot    storage.ProfileSnapshot
-	Replacement declaration.ProfileNodeReplacement
-	Revision    storage.DeclarationRevision
+	Snapshot             storage.ProfileSnapshot
+	RuntimeOverlaySHA256 string
+	Replacement          declaration.ProfileNodeReplacement
+	Revision             storage.DeclarationRevision
 }
 
 func CommitSingBoxSnapshotToDeclaration(
@@ -37,6 +38,15 @@ func CommitSingBoxSnapshotToDeclaration(
 	if err != nil {
 		return result, err
 	}
+	overlays, err := store.ProfileNodeOverlays(ctx, profileID)
+	if err != nil {
+		return result, err
+	}
+	nodes, overlaySHA256, err := ApplyRuntimeNodeOverlays(nodes, overlays)
+	if err != nil {
+		return result, err
+	}
+	result.RuntimeOverlaySHA256 = overlaySHA256
 
 	if expectedDeclarationRevision == 0 {
 		return result, ErrNoBaseDeclaration
@@ -59,7 +69,7 @@ func CommitSingBoxSnapshotToDeclaration(
 		ctx,
 		expectedDeclarationRevision,
 		replacement.Document,
-		fmt.Sprintf("profile-snapshot/%d", snapshotID),
+		fmt.Sprintf("profile-snapshot/%d/overlay/%s", snapshotID, overlaySHA256),
 	)
 	if err != nil {
 		return result, err
