@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-M3 starts with native sing-box because it provides explicit outbound tags and a structured JSON source. The project still cannot treat an arbitrary sing-box configuration as a runtime configuration: subscription routing is intentionally excluded, transparent/privileged inbounds are forbidden, and the current node compiler only materializes a narrow HTTP/SOCKS subset.
+M3 starts with native sing-box because it provides explicit outbound tags and a structured JSON source. The project still cannot treat an arbitrary sing-box configuration as a runtime configuration: subscription routing is intentionally excluded, transparent/privileged inbounds are forbidden, and the node compiler only materializes explicitly modelled protocol subsets.
 
 A partial importer that keeps only `type/server/port` while silently discarding TLS, detour, UDP-over-TCP or protocol-specific fields would violate the plan. Likewise, committing a partially parsed source before compatibility analysis completes would make a failed update replace a usable snapshot.
 
@@ -21,9 +21,13 @@ It:
 3. reports source `route` and `dns` policy as ignored by product policy rather than importing it;
 4. reports runtime context such as inbounds/experimental sections separately from profile node state;
 5. treats `direct`, `block` and `dns` outbounds as non-node runtime plumbing;
-6. accepts only the node fields already represented by the current domain/compiler:
+6. accepts only node fields already represented end-to-end by the current domain/declaration/compiler:
    - plain HTTP CONNECT: tag, server, server_port, username, password;
    - SOCKS 4/4a/5: tag, server, server_port, version, username, password, network;
+   - Shadowsocks basic subset: tag, server, server_port, method, password, plugin, plugin_opts, network;
+   - VMess basic subset: tag, server, server_port, uuid, security, alter_id, global_padding, authenticated_length, network, packet_encoding;
+   - VLESS basic subset: tag, server, server_port, uuid, network, lossless packet_encoding presence, and empty/none encryption only;
+   - Trojan basic subset: tag, server, server_port, password, network;
 7. rejects automatic commit when a proxy protocol is unsupported or when a supported protocol contains any unmodelled field;
 8. retains the complete accepted outbound object as the node payload for durable snapshot storage.
 
@@ -64,7 +68,7 @@ This slice does not make the compiler read the mutable current profile snapshot.
 
 Tests cover:
 
-- supported HTTP/SOCKS extraction and defaults;
+- supported HTTP/SOCKS/Shadowsocks/VMess/VLESS/Trojan extraction and protocol defaults;
 - routing/DNS policy diagnostics;
 - privileged/TUN source rejection;
 - unsupported protocol and unsupported-field refusal;
@@ -76,6 +80,6 @@ Tests cover:
 
 ## Consequences
 
-Native sing-box now has a safe first import path for the currently supported node subset without weakening the no-subscription-routing rule.
+Native sing-box now has a safe import path for the currently supported basic node subsets without weakening the no-subscription-routing rule.
 
-VLESS, VMess, Trojan, Shadowsocks, Hysteria/Hysteria2, TUIC, TLS/Reality, transport, Mux, detour and provider-backed node materialization remain explicit compatibility work. They must be added field-by-field with importer diagnostics and compiler coverage before being considered supported.
+Hysteria/Hysteria2, TUIC, TLS/Reality, advanced transport, Mux, detour and provider-backed node materialization remain explicit compatibility work. Protocol extensions that are not represented end-to-end continue to block the whole candidate update rather than being silently discarded.
