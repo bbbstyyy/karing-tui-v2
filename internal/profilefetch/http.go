@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	DefaultMaxBodyBytes = int64(16 << 20)
-	DefaultTimeout      = 30 * time.Second
-	DefaultMaxRedirects = 5
+	DefaultMaxBodyBytes    = int64(16 << 20)
+	DefaultTimeout         = 30 * time.Second
+	DefaultMetadataTimeout = 5 * time.Second
+	DefaultMaxRedirects    = 5
 )
 
 var (
@@ -60,6 +61,12 @@ type Result struct {
 	NotModified           bool
 	ETag                  string
 	LastModified          string
+	SubscriptionUsage     *profile.SubscriptionUsage
+	UsageMetadataObserved bool
+	UsageMetadataError    string
+}
+
+type MetadataResult struct {
 	SubscriptionUsage     *profile.SubscriptionUsage
 	UsageMetadataObserved bool
 	UsageMetadataError    string
@@ -226,6 +233,100 @@ func (f *HTTPFetcher) Fetch(
 			RetryAfter: retryAfter,
 		}
 	}
+}
+
+func (f *HTTPFetcher) FetchMetadata(
+	ctx context.Context,
+	spec profile.SourceSpec,
+) (MetadataResult, error) {
+	if f == nil {
+		return MetadataResult{}, errors.New("profile HTTP fetcher is nil")
+	}
+	if err := spec.Validate(); err != nil {
+		return MetadataResult{}, err
+	}
+	if spec.LocationKind != profile.SourceLocationURL {
+		return MetadataResult{}, ErrUnsupportedSourceLocation
+	}
+
+	proxy, err := f.proxyFor(spec.Fetch)
+	if err != nil {
+		return MetadataResult{}, err
+	}
+	transport := newHTTPTransport(proxy)
+	defer transport.CloseIdleConnections()
+
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) > f.options.MaxRedirects {
+				return ErrFetchRedirect
+			}
+			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+				return ErrFetchRedirect
+			}
+			if req.URL.User != nil {
+				return ErrFetchRedirect
+			}
+			return nil
+		},
+	}
+
+	timeout := f.options.Timeout
+	if timeout > DefaultMetadataTimeout {
+		timeout = DefaultMetadataTimeout
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(fetchCtx, http.MethodHead, spec.Location, nil)
+	if err != nil {
+		return MetadataResult{}, errors.New("profile metadata URL could not be prepared")
+	}
+	userAgent := spec.UserAgent
+	if userAgent == "" {
+		userAgent = f.options.DefaultUA
+	}
+	if userAgent != "" {
+		request.Header.Set("User-Agent", userAgent)
+	}
+	request.Header.Set("Accept", "*/*")
+
+	response, err := client.Do(request)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(fetchCtx.Err(), context.DeadlineExceeded):
+			return MetadataResult{}, ErrFetchTimeout
+		case errors.Is(err, ErrFetchRedirect):
+			return MetadataResult{}, ErrFetchRedirect
+		default:
+			return MetadataResult{}, ErrFetchNetwork
+		}
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
+		drainResponse(response.Body)
+		return MetadataResult{}, &HTTPStatusError{
+			StatusCode: response.StatusCode,
+			RetryAfter: retryAfter,
+		}
+	}
+
+	usage, observed, usageErr := profile.ParseSubscriptionUserinfo(
+		response.Header.Get("Subscription-Userinfo"),
+	)
+	usageError := ""
+	if usageErr != nil {
+		usageError = usageErr.Error()
+	}
+	drainResponse(response.Body)
+	return MetadataResult{
+		SubscriptionUsage:     usage,
+		UsageMetadataObserved: observed,
+		UsageMetadataError:    usageError,
+	}, nil
 }
 
 func (f *HTTPFetcher) proxyFor(policy profile.FetchPolicy) (*url.URL, error) {
