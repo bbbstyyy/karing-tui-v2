@@ -42,8 +42,7 @@ func TestNodeOverlayRejectsInvalidAliasAndRank(t *testing.T) {
 		{ProfileID: "", NodeID: nodeID},
 		{ProfileID: "profile-a", NodeID: ""},
 		{ProfileID: "profile-a", NodeID: nodeID, Alias: " padded "},
-		{ProfileID: "profile-a", NodeID: nodeID, Alias: "bad
-alias"},
+		{ProfileID: "profile-a", NodeID: nodeID, Alias: "bad\nalias"},
 		{ProfileID: "profile-a", NodeID: nodeID, Alias: strings.Repeat("a", MaxNodeAliasBytes+1)},
 		{ProfileID: "profile-a", NodeID: nodeID, SortRank: &negative},
 		{ProfileID: "profile-a", NodeID: nodeID, SortRank: &tooLarge},
