@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
+	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
@@ -159,6 +161,24 @@ func (r *serverRuntime) checkHistoricalGeneration(
 		return evidence, ErrHistoricalCheckChanged
 	}
 
+	// Materialize a bounded independent copy of the entire target + fallback
+	// rule closure before Check. It is an ephemeral safety prerequisite,
+	// deliberately NOT a re-bound runtime config or an activation lease.
+	isolated, isolateErr := coreartifact.StagePinnedRuleSetSnapshot(ctx,
+		filepath.Join(stateRoot, "core"), pins.files)
+	if isolateErr != nil {
+		return evidence, ErrHistoricalCheckRejected
+	}
+	defer func() {
+		if closeErr := isolated.Close(); closeErr != nil {
+			err = errors.Join(err, ErrHistoricalCheckUnavailable)
+			evidence = HistoricalCheckEvidence{}
+		}
+	}()
+	if isolated.Verify(ctx) != nil || pins.Reverify(ctx) != nil {
+		return evidence, ErrHistoricalCheckChanged
+	}
+
 	precondition := storage.HistoricalRestorePrecondition{
 		SourceGenerationID:                sourceID,
 		SourceConfigSHA256:                source.ConfigSHA256,
@@ -202,7 +222,8 @@ func (r *serverRuntime) checkHistoricalGeneration(
 		!bytes.Equal(sealed.ManifestJSON, manifestJSON) ||
 		!bytes.Equal(sealed.SourceMapJSON, sourceMapJSON) ||
 		!historicalCheckStillBound(ctx, store, precondition, attempt.ID) ||
-		!historicalPayloadsUnchanged(ctx, store, originals) || pins.Reverify(ctx) != nil {
+		!historicalPayloadsUnchanged(ctx, store, originals) ||
+		pins.Reverify(ctx) != nil || isolated.Verify(ctx) != nil {
 		return evidence, ErrHistoricalCheckChanged
 	}
 
@@ -217,7 +238,8 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	// Re-read original SQLite payloads and all pinned source/fallback file
 	// descriptors AFTER core Check, not only the target's pathname.
 	if !historicalCheckStillBound(ctx, store, precondition, attempt.ID) ||
-		!historicalPayloadsUnchanged(ctx, store, originals) || pins.Reverify(ctx) != nil {
+		!historicalPayloadsUnchanged(ctx, store, originals) ||
+		pins.Reverify(ctx) != nil || isolated.Verify(ctx) != nil {
 		return evidence, ErrHistoricalCheckChanged
 	}
 
