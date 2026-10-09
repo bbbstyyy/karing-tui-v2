@@ -59,13 +59,13 @@ func recoveryAudit(ctx context.Context, store *storage.Store, stateRoot string) 
 			return apiv1.RecoveryAuditResponse{}, err
 		}
 		item := apiv1.RecoveryGenerationAudit{
-			GenerationID:             ref.GenerationID,
-			CommittedConfigRevision:  ref.TargetConfigRevision,
-			Applied:                  before.AppliedGenerationID != nil && *before.AppliedGenerationID == ref.GenerationID,
-			LastKnownGood:            before.LastKnownGoodGenerationID != nil && *before.LastKnownGoodGenerationID == ref.GenerationID,
-			PayloadRetained:          ref.PayloadRetained,
-			Status:                   "payload_pruned",
-			RestoreReady:             false,
+			GenerationID:            ref.GenerationID,
+			CommittedConfigRevision: ref.TargetConfigRevision,
+			Applied:                 before.AppliedGenerationID != nil && *before.AppliedGenerationID == ref.GenerationID,
+			LastKnownGood:           before.LastKnownGoodGenerationID != nil && *before.LastKnownGoodGenerationID == ref.GenerationID,
+			PayloadRetained:         ref.PayloadRetained,
+			Status:                  "payload_pruned",
+			RestoreReady:            false,
 		}
 		if ref.PayloadRetained {
 			item = inspectRetainedGeneration(ctx, store, stateRoot, item)

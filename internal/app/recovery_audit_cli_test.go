@@ -12,8 +12,8 @@ import (
 
 type fakeRecoveryAuditClient struct {
 	result apiv1.RecoveryAuditResponse
-	err error
-	calls int
+	err    error
+	calls  int
 }
 
 func (f *fakeRecoveryAuditClient) RecoveryAudit(ctx context.Context) (apiv1.RecoveryAuditResponse, error) {
@@ -26,8 +26,8 @@ func (f *fakeRecoveryAuditClient) RecoveryAudit(ctx context.Context) (apiv1.Reco
 
 func recoveryAuditFixture() apiv1.RecoveryAuditResponse {
 	return apiv1.RecoveryAuditResponse{
-		APIVersion: apiv1.Version,
-		Evidence: "committed_generation_history_and_retained_storage",
+		APIVersion:     apiv1.Version,
+		Evidence:       "committed_generation_history_and_retained_storage",
 		ConfigRevision: 3, CurrentDeclarationRevision: 6,
 		RestoreSupported: false,
 		Generations: []apiv1.RecoveryGenerationAudit{
@@ -77,7 +77,7 @@ func TestRecoveryAuditCLIRejectsMutationsBeforeAnyRPC(t *testing.T) {
 
 func TestRecoveryAuditCLIRejectsForgedReadyAndUnknownStatus(t *testing.T) {
 	cases := []struct {
-		name string
+		name   string
 		change func(*apiv1.RecoveryAuditResponse)
 	}{
 		{"restore enabled", func(r *apiv1.RecoveryAuditResponse) {
@@ -122,7 +122,7 @@ func TestRecoveryAuditCLIRejectsForgedReadyAndUnknownStatus(t *testing.T) {
 func TestRecoveryAuditCLIUnavailableDoesNotExposeSQLitePaths(t *testing.T) {
 	api := &fakeRecoveryAuditClient{
 		result: recoveryAuditFixture(),
-		err: errors.New("sqlite /home/user/secret.db with password=PRIVATE_KEY"),
+		err:    errors.New("sqlite /home/user/secret.db with password=PRIVATE_KEY"),
 	}
 	var stdout, stderr bytes.Buffer
 	if code := runRecoveryAuditCLI(context.Background(), api, nil, &stdout, &stderr); code != 1 ||

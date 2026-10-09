@@ -314,7 +314,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"route_edit_stage":              declarationCompileRuntime,
 				"declaration_apply_api":         declarationApplyRuntime,
 				"checked_declaration_apply_api": checkedApplyRuntime,
-				"historical_generation_audit":  true,
+				"historical_generation_audit":   true,
 				"config_inspection_api":         true,
 				"apply_journal":                 true,
 				"apply_coordinator":             true,

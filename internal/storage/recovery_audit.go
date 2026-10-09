@@ -11,9 +11,9 @@ const MaxConfirmedGenerationAudit = 16
 // An audit reference does not authorize a restore, even when its payload
 // remains retained; generation files may be pruned or become unavailable.
 type ConfirmedGenerationRef struct {
-	GenerationID       int64
+	GenerationID         int64
 	TargetConfigRevision uint64
-	PayloadRetained    bool
+	PayloadRetained      bool
 }
 
 // ConfirmedGenerationRefs merges compact archived history with unarchived

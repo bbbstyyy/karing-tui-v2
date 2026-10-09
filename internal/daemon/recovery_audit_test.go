@@ -3,8 +3,8 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -83,8 +83,7 @@ func TestRecoveryAuditReadOnlyCommittedHistoryAndManifestIntegrity(t *testing.T)
 		len(core.events) != beforeEvents {
 		t.Fatal("read-only audit changed durable state or contacted the core")
 	}
-	if post := routeEditCall(t, handler, http.MethodPost, "/v1/config/recovery/audit", nil);
-		post.Code != http.StatusMethodNotAllowed {
+	if post := routeEditCall(t, handler, http.MethodPost, "/v1/config/recovery/audit", nil); post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("unexpected recovery write endpoint: %d", post.Code)
 	}
 }
@@ -93,8 +92,7 @@ func TestRecoveryAuditFailClosedOnTamperedStoredManifest(t *testing.T) {
 	store, _, _, handler := checkedApplyHarness(t)
 	defer store.Close()
 	preview := checkedPreviewTest(t, handler)
-	if result := routeEditCall(t, handler, http.MethodPost, "/v1/config/apply/confirm", preview.Receipt);
-		result.Code != http.StatusOK {
+	if result := routeEditCall(t, handler, http.MethodPost, "/v1/config/apply/confirm", preview.Receipt); result.Code != http.StatusOK {
 		t.Fatalf("seed apply failed: %d", result.Code)
 	}
 	snapshot, err := store.Snapshot(context.Background())
@@ -154,8 +152,7 @@ func TestRecoveryAuditNeverDisclosesStoredMetadataSecrets(t *testing.T) {
 	store, _, _, handler := checkedApplyHarness(t)
 	defer store.Close()
 	preview := checkedPreviewTest(t, handler)
-	if result := routeEditCall(t, handler, http.MethodPost, "/v1/config/apply/confirm", preview.Receipt);
-		result.Code != http.StatusOK {
+	if result := routeEditCall(t, handler, http.MethodPost, "/v1/config/apply/confirm", preview.Receipt); result.Code != http.StatusOK {
 		t.Fatal("fixture")
 	}
 	resp := routeEditCall(t, handler, http.MethodGet, "/v1/config/recovery/audit", nil)
