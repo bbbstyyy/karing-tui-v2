@@ -59,10 +59,32 @@ func (c *Client) CoreStop(ctx context.Context) error {
 	return c.post(ctx, "/v1/core/stop")
 }
 
+const maxObservedConnectionsResponseBytes = 8 << 20
+
+// Bound core snapshots before allocation and JSON decode.
 func (c *Client) ObservedConnections(ctx context.Context) (apiv1.ObservedConnectionsResponse, error) {
-	var response apiv1.ObservedConnectionsResponse
-	if err := c.get(ctx, "/v1/connections", &response); err != nil {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/connections", nil)
+	if err != nil {
 		return apiv1.ObservedConnectionsResponse{}, err
+	}
+	resp, err := c.queryClient.Do(req)
+	if err != nil {
+		return apiv1.ObservedConnectionsResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return apiv1.ObservedConnectionsResponse{}, responseError(resp)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxObservedConnectionsResponseBytes+1))
+	if err != nil {
+		return apiv1.ObservedConnectionsResponse{}, fmt.Errorf("read bounded connection snapshot: %w", err)
+	}
+	if len(body) > maxObservedConnectionsResponseBytes {
+		return apiv1.ObservedConnectionsResponse{}, fmt.Errorf("connection snapshot exceeds %d bytes", maxObservedConnectionsResponseBytes)
+	}
+	var response apiv1.ObservedConnectionsResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return apiv1.ObservedConnectionsResponse{}, fmt.Errorf("decode connection snapshot: %w", err)
 	}
 	return response, nil
 }
