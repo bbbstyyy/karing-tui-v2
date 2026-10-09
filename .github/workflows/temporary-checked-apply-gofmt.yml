@@ -1,0 +1,29 @@
+name: temporary-checked-apply-gofmt
+on:
+  push:
+    branches:
+      - feat/m0-m1-foundation
+    paths:
+      - .github/workflows/temporary-checked-apply-gofmt.yml
+permissions:
+  contents: write
+jobs:
+  format:
+    if: github.repository == 'bbbstyyy/karing-tui-v2'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - name: Format checked apply API, CLI and tests
+        run: |
+          gofmt -w internal/apiv1/types.go internal/client/client.go internal/daemon/server.go internal/daemon/checked_apply.go internal/daemon/checked_apply_test.go internal/app/app.go internal/app/checked_apply_cli.go internal/app/checked_apply_cli_test.go internal/app/route_config_cli.go
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add internal/apiv1/types.go internal/client/client.go internal/daemon/server.go internal/daemon/checked_apply.go internal/daemon/checked_apply_test.go internal/app/app.go internal/app/checked_apply_cli.go internal/app/checked_apply_cli_test.go internal/app/route_config_cli.go
+            git commit -m "style(m4): format checked current-head apply CLI and API"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
