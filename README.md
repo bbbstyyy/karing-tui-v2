@@ -33,6 +33,10 @@ Run the daemon independently (for example as a systemd user service), then run `
 
 The daemon requires a safe per-user runtime directory. Under a normal systemd user session, `XDG_RUNTIME_DIR` is already set. Tests and unusual supervisors may provide `KARING_TUI_RUNTIME_DIR`; the directory must be owned by the current UID and not writable by group/others.
 
+## Historical recovery staging status
+
+The read-only `config recovery-audit` command now checks retained generations, immutable rule-set resources, and historical CurrentSelected/route-mode bindings. The storage layer additionally has an **internal-only** atomic historical candidate preparation primitive: it verifies committed history, exact revision/CAS bindings and quota, and records the historical source in SQLite schema v17. This **does not** apply or activate the historical core config, and no manual `restore` or `rollback` command/API exists. To enable it in the future, the daemon must recheck pinned rule resources and core binary, coordinate the apply gate, perform live core check/activate/verify and prove rollback-of-rollback with fault injection. See [ADR 0086](docs/adr/0086-atomic-historical-restore-preparation.md).
+
 ## Persistent state and recovery
 
 Authoritative state is stored under `XDG_STATE_HOME/karing-tui-v2/state.db`. The database is created as mode `0600` inside the private XDG state directory and uses SQLite WAL with full synchronous durability.
