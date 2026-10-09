@@ -44,7 +44,7 @@ func configInspectFixture() apiv1.ConfigInspectionResponse {
 				Groups: []apiv1.ConfigInspectionRouteGroup{{
 					ID: "cn.example", Order: 1, Enabled: true, Origin: "cn_preset",
 					MatchKinds: []string{"domain_suffix", "rule_set"},
-					Target: domain.TargetRef{Kind: domain.TargetCurrentSelected},
+					Target:     domain.TargetRef{Kind: domain.TargetCurrentSelected},
 					DNSProfile: "group-dns",
 				}}},
 			{Layer: domain.LayerGeoSite, Enabled: true},
@@ -154,7 +154,9 @@ func TestInspectionRejectsInvalidEvidenceAndStaleSnapshots(t *testing.T) {
 		func(r *apiv1.ConfigInspectionResponse) { r.Evidence = "observed" },
 		func(r *apiv1.ConfigInspectionResponse) { r.RouteTotal++ },
 		func(r *apiv1.ConfigInspectionResponse) { r.Layers[4].Enabled = false },
-		func(r *apiv1.ConfigInspectionResponse) { r.Layers[0].Groups[0].MatchKinds = []string{"secret-domain.example"} },
+		func(r *apiv1.ConfigInspectionResponse) {
+			r.Layers[0].Groups[0].MatchKinds = []string{"secret-domain.example"}
+		},
 		func(r *apiv1.ConfigInspectionResponse) { r.DNS.Profiles[0].UpstreamKind = "https://user:pass@dns" },
 		func(r *apiv1.ConfigInspectionResponse) { r.DNS.ProfileCount++ },
 	} {

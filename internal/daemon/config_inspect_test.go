@@ -23,7 +23,9 @@ func TestConfigInspectionAppliedBindingAndStagedSemanticDrift(t *testing.T) {
 		t.Fatalf("inspection = %d, %s", response.Code, response.Body.String())
 	}
 	var first apiv1.ConfigInspectionResponse
-	if err := json.NewDecoder(response.Body).Decode(&first); err != nil { t.Fatal(err) }
+	if err := json.NewDecoder(response.Body).Decode(&first); err != nil {
+		t.Fatal(err)
+	}
 	if first.Evidence != "applied_declaration" || first.GenerationID < 1 ||
 		first.ConfigRevision != 1 || first.AppliedDeclarationRevision != 1 ||
 		first.CurrentDeclarationRevision != 1 || first.StagedUnapplied ||
@@ -38,11 +40,15 @@ func TestConfigInspectionAppliedBindingAndStagedSemanticDrift(t *testing.T) {
 		}
 	}
 	current, err := store.CurrentDeclaration(context.Background())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	next := strings.Replace(string(document), "\"final\":{\"kind\":\"current_selected\"}",
 		"\"final\":{\"kind\":\"direct\"}", 1)
 	next = strings.Replace(next, "\"port\":53", "\"port\":54", 1)
-	if next == string(document) { t.Fatal("staged fixture unchanged") }
+	if next == string(document) {
+		t.Fatal("staged fixture unchanged")
+	}
 	if _, err := store.CommitDeclaration(context.Background(), current.Revision, []byte(next), "test:inspection-pending"); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +57,9 @@ func TestConfigInspectionAppliedBindingAndStagedSemanticDrift(t *testing.T) {
 		t.Fatalf("staged inspection = %d, %s", response.Code, response.Body.String())
 	}
 	var second apiv1.ConfigInspectionResponse
-	if err := json.NewDecoder(response.Body).Decode(&second); err != nil { t.Fatal(err) }
+	if err := json.NewDecoder(response.Body).Decode(&second); err != nil {
+		t.Fatal(err)
+	}
 	if !second.StagedUnapplied || !second.RoutingChanged || !second.DNSChanged ||
 		second.AppliedDeclarationRevision != 1 || second.CurrentDeclarationRevision != 2 ||
 		second.Layers[4].Groups[0].Target.Kind != domain.TargetCurrentSelected ||
@@ -63,7 +71,9 @@ func TestConfigInspectionAppliedBindingAndStagedSemanticDrift(t *testing.T) {
 func TestConfigInspectionRefusesNoAppliedGeneration(t *testing.T) {
 	store := openServerTestStore(t, context.Background())
 	defer store.Close()
-	if _, err := store.CommitDeclaration(context.Background(), 0, currentSelectionTestDeclaration(), "test:unapplied"); err != nil { t.Fatal(err) }
+	if _, err := store.CommitDeclaration(context.Background(), 0, currentSelectionTestDeclaration(), "test:unapplied"); err != nil {
+		t.Fatal(err)
+	}
 	handler := New(runtimepath.Paths{}).handler(store, nil)
 	response := selectionAPICall(t, handler, http.MethodGet, "/v1/config/inspection", nil)
 	if response.Code != http.StatusConflict || strings.Contains(response.Body.String(), "127.0.0.1") {
@@ -73,7 +83,7 @@ func TestConfigInspectionRefusesNoAppliedGeneration(t *testing.T) {
 
 func TestConfigInspectionCNInterleavingRegionAndSecretFreeDNS(t *testing.T) {
 	model := declaration.Model{
-		Routing: domain.RoutingPlan{Final: domain.TargetRef{Kind: domain.TargetCurrentSelected}},
+		Routing:  domain.RoutingPlan{Final: domain.TargetRef{Kind: domain.TargetCurrentSelected}},
 		CNPreset: &declaration.CNPresetPlan{SourceCommit: preset.CNSourceCommit},
 		RegionAppend: &domain.RegionAppendPlan{
 			RegionCode: "cn", GeoSiteEnabled: true, GeoIPEnabled: true,
@@ -90,9 +100,13 @@ func TestConfigInspectionCNInterleavingRegionAndSecretFreeDNS(t *testing.T) {
 		},
 	}
 	effective, err := declaration.EffectiveRouting(model)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := projectConfigurationInspection(7, 11, 13, 13, model, effective)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !result.CNPreset || !result.RegionAppend ||
 		result.RouteTotal != preset.CNExpectedGroups+3 ||
 		result.Layers[0].GroupCount != preset.CNExpectedGroups ||
@@ -105,37 +119,45 @@ func TestConfigInspectionCNInterleavingRegionAndSecretFreeDNS(t *testing.T) {
 		t.Fatalf("CN/region/DNS provenance incorrect: %+v", result)
 	}
 	encoded, err := json.Marshal(result)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, sensitive := range []string{"dns-private.example", "192.0.2.3", "203.0.113.4", "\"server\""} {
-		if strings.Contains(string(encoded), sensitive) { t.Fatalf("raw DNS endpoint disclosed: %q", sensitive) }
+		if strings.Contains(string(encoded), sensitive) {
+			t.Fatalf("raw DNS endpoint disclosed: %q", sensitive)
+		}
 	}
 }
 
 func TestConfigInspectionCapsGroupsAndDNSProfiles(t *testing.T) {
 	model := declaration.Model{
 		Routing: domain.RoutingPlan{Final: domain.TargetRef{Kind: domain.TargetDirect}},
-		DNS: domain.DNSPlan{OutboundProfileID: "outbound"},
+		DNS:     domain.DNSPlan{OutboundProfileID: "outbound"},
 	}
 	for i := 0; i < maxInspectedRouteGroups+10; i++ {
 		match := domain.Atom(domain.Predicate{
 			Kind: domain.PredicateDomainSuffix, Value: fmt.Sprintf("credential-%d.private.example", i),
 		})
 		model.Routing.Custom = append(model.Routing.Custom, domain.RouteGroup{
-			ID: fmt.Sprintf("g-%d", i), Layer: domain.LayerCustom, Order: uint32(i+1), Match: &match,
+			ID: fmt.Sprintf("g-%d", i), Layer: domain.LayerCustom, Order: uint32(i + 1), Match: &match,
 			Binding: domain.RouteBinding{Enabled: true, Target: domain.TargetRef{Kind: domain.TargetDirect}},
 		})
 	}
 	for i := 0; i < maxInspectedDNSProfiles+3; i++ {
 		role := domain.DNSRoleBootstrap
 		name := fmt.Sprintf("resolver-%d", i)
-		if i == 0 { role, name = domain.DNSRoleOutbound, "outbound" }
+		if i == 0 {
+			role, name = domain.DNSRoleOutbound, "outbound"
+		}
 		model.DNS.Profiles = append(model.DNS.Profiles, domain.DNSProfile{
 			ID: name, Role: role, Transport: domain.DNSTransportUDP,
 			Server: "192.0.2.8", Port: 53,
 		})
 	}
 	result, err := projectConfigurationInspection(2, 8, 4, 4, model, model.Routing)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !result.RouteTruncated || result.RouteTotal != maxInspectedRouteGroups+11 ||
 		len(result.Layers[0].Groups) != maxInspectedRouteGroups ||
 		result.Layers[4].GroupCount != 1 || len(result.Layers[4].Groups) != 1 ||
@@ -144,7 +166,9 @@ func TestConfigInspectionCapsGroupsAndDNSProfiles(t *testing.T) {
 		t.Fatalf("bounded projection = %+v", result)
 	}
 	encoded, err := json.Marshal(result)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(string(encoded), "credential-") {
 		t.Fatal("route matcher values leaked in category-only projection")
 	}

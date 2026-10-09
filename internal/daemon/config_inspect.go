@@ -169,7 +169,7 @@ func projectConfigurationInspection(
 		out := apiv1.ConfigInspectionLayer{
 			Layer: section.layer, Enabled: effective.Layers.Enabled(section.layer),
 			GroupCount: len(section.groups),
-			Groups: make([]apiv1.ConfigInspectionRouteGroup, 0, min(len(section.groups), budget)),
+			Groups:     make([]apiv1.ConfigInspectionRouteGroup, 0, min(len(section.groups), budget)),
 		}
 		result.RouteTotal += len(section.groups)
 		for _, group := range section.groups {
@@ -183,8 +183,7 @@ func projectConfigurationInspection(
 			origin := "custom"
 			if section.layer == domain.LayerCustom && cnIDs[group.ID] {
 				origin = "cn_preset"
-			} else if model.RegionAppend != nil && (
-				(section.layer == domain.LayerGeoSite && group.ID == "region:auto-geosite:"+model.RegionAppend.RegionCode) ||
+			} else if model.RegionAppend != nil && ((section.layer == domain.LayerGeoSite && group.ID == "region:auto-geosite:"+model.RegionAppend.RegionCode) ||
 				(section.layer == domain.LayerGeoIP && group.ID == "region:auto-geoip:"+model.RegionAppend.RegionCode)) {
 				origin = "region_append"
 			}
@@ -212,10 +211,10 @@ func projectConfigurationInspection(
 	})
 	dns := apiv1.ConfigInspectionDNS{
 		OutboundProfile: model.DNS.OutboundProfileID,
-		DirectProfile: model.DNS.DirectProfileID,
-		ProxyProfile: model.DNS.ProxyProfileID,
+		DirectProfile:   model.DNS.DirectProfileID,
+		ProxyProfile:    model.DNS.ProxyProfileID,
 		FallbackProfile: model.DNS.FallbackProfileID,
-		ProfileCount: len(model.DNS.Profiles),
+		ProfileCount:    len(model.DNS.Profiles),
 	}
 	dns.Truncated = len(model.DNS.Profiles) > maxInspectedDNSProfiles
 	limit := min(len(model.DNS.Profiles), maxInspectedDNSProfiles)
