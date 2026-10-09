@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -171,4 +172,15 @@ func TestRecoveryAuditUnavailableStoreDoesNotOfferFallback(t *testing.T) {
 	if err == nil {
 		t.Fatal("nil storage accepted")
 	}
+}
+
+func corruptStoredGenerationManifestHash(path string, generation int64) error {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("UPDATE generations SET manifest_sha256 = ? WHERE id = ?",
+		strings.Repeat("f", 64), generation)
+	return err
 }
