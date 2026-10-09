@@ -205,3 +205,67 @@ func TestRuleSetSnapshotRejectsInvalidInputsAndSupportsEmptyClosure(t *testing.T
 		t.Fatal(err)
 	}
 }
+
+
+func TestRuleSetSnapshotFailureAfterFirstCopyReclaimsPartialScope(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "core")
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pins []*RuleSetPin
+	for _, text := range []string{"source-one", "source-two"} {
+		data := []byte(text)
+		sum := sha256.Sum256(data)
+		hash := hex.EncodeToString(sum[:])
+		path, _, err := store.PutRuleSet(context.Background(), bytes.NewReader(data), hash, "binary")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pin, err := PinRuleSet(path, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pins = append(pins, pin)
+		t.Cleanup(func() { _ = pin.Close() })
+	}
+	// First pin is healthy, but second source changes after pinning.
+	// Partial copying must never leave a positive-looking directory behind.
+	if err := os.WriteFile(pins[1].path, []byte("altered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := StagePinnedRuleSetSnapshot(context.Background(), root, pins); !errors.Is(err, ErrUnsafeRuleSetSnapshot) {
+		t.Fatalf("partial source change was not rejected: %v", err)
+	}
+	dirs, err := os.ReadDir(filepath.Join(root, "historical-check-snapshots"))
+	if err != nil || len(dirs) != 0 {
+		t.Fatalf("partially copied historical rules leaked: entries=%v err=%v", dirs, err)
+	}
+}
+
+func TestRuleSetSnapshotRejectsUnexpectedEntriesWithoutDeletingThem(t *testing.T) {
+	source, hash, _ := pinnedRuleSetFixture(t)
+	pin, err := PinRuleSet(source, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pin.Close()
+	snapshot, err := StagePinnedRuleSetSnapshot(context.Background(),
+		filepath.Join(t.TempDir(), "core"), []*RuleSetPin{pin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra := filepath.Join(snapshot.dir, "unknown")
+	if err := os.WriteFile(extra, []byte("do not delete"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Verify(context.Background()); !errors.Is(err, ErrUnsafeRuleSetSnapshot) {
+		t.Fatalf("unexpected extra entry accepted: %v", err)
+	}
+	if err := snapshot.Close(); !errors.Is(err, ErrUnsafeRuleSetSnapshot) {
+		t.Fatalf("unexpected extra entry was recursively cleaned: %v", err)
+	}
+	if content, err := os.ReadFile(extra); err != nil || string(content) != "do not delete" {
+		t.Fatalf("cleanup touched unrecognized file: %q err=%v", content, err)
+	}
+}
