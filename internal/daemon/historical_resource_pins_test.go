@@ -200,7 +200,6 @@ func TestHistoricalRuleSetPinRejectsArbitraryManifestPath(t *testing.T) {
 	}
 }
 
-
 func TestHistoricalCoreCheckStagesAndCleansIsolatedTargetFallbackCopies(t *testing.T) {
 	store, core, runtime, sourceID, root, fallback, fallbackBytes := historicalRuleSetHarness(t)
 	ctx := context.Background()
