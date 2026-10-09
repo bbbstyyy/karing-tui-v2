@@ -35,6 +35,10 @@ func recoveryAudit(ctx context.Context, store *storage.Store, stateRoot string) 
 	if err != nil {
 		return apiv1.RecoveryAuditResponse{}, err
 	}
+	intent, persisted, err := store.CurrentSelectionIntent(ctx)
+	if err != nil {
+		return apiv1.RecoveryAuditResponse{}, err
+	}
 	head, err := store.CurrentDeclaration(ctx)
 	if err != nil {
 		return apiv1.RecoveryAuditResponse{}, err
@@ -71,18 +75,22 @@ func recoveryAudit(ctx context.Context, store *storage.Store, stateRoot string) 
 			RestoreReady:            false,
 		}
 		if ref.PayloadRetained {
-			item = inspectRetainedGeneration(ctx, store, stateRoot, item, &bytesRemaining)
+			item = inspectRetainedGeneration(ctx, store, stateRoot, item, before, intent, persisted, &bytesRemaining)
 		}
 		result.Generations = append(result.Generations, item)
 	}
 	// This is still a point-in-time report, not a durable lease. Reject a
 	// concurrent new apply or declaration head so the report is not a mix.
 	after, err := store.Snapshot(ctx)
-	if err != nil || after.Revision != before.Revision ||
-		!sameGenerationID(after.AppliedGenerationID, before.AppliedGenerationID) ||
-		!sameGenerationID(after.LastKnownGoodGenerationID, before.LastKnownGoodGenerationID) ||
-		!sameGenerationID(after.ActiveAttemptID, before.ActiveAttemptID) ||
-		after.RecoveryRequired != before.RecoveryRequired {
+	if err != nil || !sameRecoveryAuditSnapshot(before, after) {
+		return apiv1.RecoveryAuditResponse{}, ErrRecoveryAuditChanged
+	}
+	finalIntent, finalPersisted, err := store.CurrentSelectionIntent(ctx)
+	if err != nil || !sameRecoveryAuditIntent(intent, persisted, finalIntent, finalPersisted) {
+		return apiv1.RecoveryAuditResponse{}, ErrRecoveryAuditChanged
+	}
+	finalRefs, finalTruncated, err := store.ConfirmedGenerationRefs(ctx, maxRecoveryAuditedGenerations)
+	if err != nil || !sameRecoveryAuditRefs(refs, truncated, finalRefs, finalTruncated) {
 		return apiv1.RecoveryAuditResponse{}, ErrRecoveryAuditChanged
 	}
 	current, err := store.CurrentDeclaration(ctx)
@@ -102,9 +110,11 @@ func auditDigest(data []byte, expected string, maxSize int) bool {
 
 func inspectRetainedGeneration(
 	ctx context.Context, store *storage.Store, stateRoot string,
-	item apiv1.RecoveryGenerationAudit, bytesRemaining *int64,
+	item apiv1.RecoveryGenerationAudit, snapshot storage.Snapshot,
+	intent storage.SelectionIntent, persisted bool, bytesRemaining *int64,
 ) apiv1.RecoveryGenerationAudit {
 	item.Status = "payload_unavailable"
+	item.PreflightStatus = recoveryPreflightNotChecked
 	artifacts, err := store.GenerationArtifacts(ctx, item.GenerationID)
 	if err != nil {
 		return item
@@ -144,6 +154,7 @@ func inspectRetainedGeneration(
 	}
 	item.RuleSetResourcesVerified = true
 	item.Status = "stored_integrity_verified_only"
+	item.PreflightStatus = historicalGenerationPreflight(decl.DocumentJSON, manifest, snapshot, intent, persisted)
 	// Intentionally false: stored bytes and resource checks are insufficient
 	// to establish runtime compatibility, selector binding and restore CAS.
 	return item
