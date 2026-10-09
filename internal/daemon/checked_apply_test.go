@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
@@ -212,7 +213,8 @@ func TestCheckedApplyRejectsUnknownAndOversizedRequestsAndMissingRuntime(t *test
 		"{\"native_config_sha256\":\"" + strings.Repeat("A", 4096) + "\"}",
 		"{}{}",
 	} {
-		result := routeEditCall(t, handler, http.MethodPost, "/v1/config/apply/confirm", json.RawMessage(bad))
+		result := httptest.NewRecorder()
+		handler.ServeHTTP(result, httptest.NewRequest(http.MethodPost, "/v1/config/apply/confirm", strings.NewReader(bad)))
 		if result.Code != http.StatusBadRequest {
 			t.Fatalf("invalid JSON accepted: %d, body=%s", result.Code, result.Body.String())
 		}
