@@ -178,10 +178,10 @@ func TestHistoricalRuleSetPinRejectsArbitraryManifestPath(t *testing.T) {
 	}
 	sum := sha256.Sum256(data)
 	manifest := compiler.NativeManifest{
-		SchemaID: compiler.NativeSchemaID,
-		ConfigSHA256: strings.Repeat("a", 64),
+		SchemaID:            compiler.NativeSchemaID,
+		ConfigSHA256:        strings.Repeat("a", 64),
 		DeclarationRevision: 1,
-		DeclarationSHA256: strings.Repeat("b", 64),
+		DeclarationSHA256:   strings.Repeat("b", 64),
 		RuleSets: []compiler.NativeRuleSetManifest{{
 			Ref: "custom:one", RuntimeTag: "rs-one", RuntimePath: external,
 			SHA256: hex.EncodeToString(sum[:]), Format: compiler.RuleSetFormatSource,
