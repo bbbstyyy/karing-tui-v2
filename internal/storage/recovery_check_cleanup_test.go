@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 )
 
@@ -266,7 +265,7 @@ func TestReclaimAbortedHistoricalCheckArchiveCollisionLeavesCandidateUntouched(t
 	if err != nil || journal.Phase != PhaseFailed {
 		t.Fatalf("archive collision lost original journal: %+v err=%v", journal, err)
 	}
-	if err := store.ReclaimAbortedHistoricalCheck(ctx, attempt.ID); !errors.Is(err, ErrHistoricalCheckCleanupUnsafe) && err == nil {
-		t.Fatal(fmt.Sprintf("conflicting archive did not continue failing: %v", err))
+	if err := store.ReclaimAbortedHistoricalCheck(ctx, attempt.ID); err == nil {
+		t.Fatal("conflicting archive did not continue failing")
 	}
 }
