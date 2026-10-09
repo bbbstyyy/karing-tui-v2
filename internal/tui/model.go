@@ -31,6 +31,8 @@ type API interface {
 	RouteEditContext(context.Context) (apiv1.RouteEditContext, error)
 	PreviewRouteEdit(context.Context, apiv1.RouteEditRequest) (apiv1.RouteEditPreviewResponse, error)
 	StageRouteEdit(context.Context, apiv1.RouteEditStageRequest) (apiv1.RouteEditStageResponse, error)
+	CheckedApplyPreview(context.Context) (apiv1.CheckedApplyPreviewResponse, error)
+	CheckedApply(context.Context, apiv1.CheckedApplyReceipt) (apiv1.CheckedApplyResponse, error)
 }
 
 type page uint8
@@ -96,6 +98,7 @@ type Model struct {
 	selection   selectionObservation
 	connections connectionsObservation
 	inspection  configInspectionState
+	checkedApply checkedApplyState
 
 	quitting bool
 }
@@ -180,6 +183,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if (m.checkedApply.pending != nil || m.checkedApply.previewing) &&
+			(m.width < minApplyConfirmWidth || m.height < minApplyConfirmHeight) {
+			m.checkedApply.discard()
+			m.checkedApply.notice = "Apply confirmation discarded after resize; no write sent."
+		}
 		return m, nil
 	case statusLoaded:
 		if msg.request != m.statusRequest {
@@ -291,7 +299,33 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case routeToggleWriteLoaded:
 		return m, m.acceptRouteToggleWrite(msg)
+	case checkedApplyPreviewLoaded:
+		m.acceptCheckedApplyPreview(msg)
+		return m, nil
+	case checkedApplyWriteLoaded:
+		m.acceptCheckedApplyWrite(msg)
+		return m, nil
 	case tea.KeyMsg:
+		if m.checkedApply.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.checkedApply.pending != nil {
+			switch msg.String() {
+			case "y":
+				return m, m.confirmCheckedApply()
+			case "esc":
+				m.cancelCheckedApply()
+				return m, nil
+			case "q", "ctrl+c":
+				// Exit without accepting the proposed write.
+			default:
+				return m, nil
+			}
+		}
+		if m.checkedApply.previewing && msg.String() == "esc" {
+			m.cancelCheckedApply()
+			return m, nil
+		}
 		if m.inspection.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
 			return m, nil
 		}
@@ -378,6 +412,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "r":
+			if m.page == dashboardPage {
+				m.checkedApply.discard()
+			}
 			switch m.page {
 			case routePage:
 				return m, m.startRouteProbe()
@@ -418,6 +455,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchPage(routingInspectPage)
 		case "8":
 			return m, m.switchPage(dnsInspectPage)
+		case "a":
+			if m.page == dashboardPage {
+				return m, m.startCheckedApplyPreview()
+			}
 		case "e":
 			if m.page == routePage {
 				m.beginRouteProbeEditing()
@@ -510,6 +551,9 @@ func (m *Model) switchPage(to page) tea.Cmd {
 	m.overlayConfirm = nil
 	m.overlayNotice = ""
 	if m.page != to {
+		if m.page == dashboardPage {
+			m.checkedApply.discard()
+		}
 		if m.page == routingInspectPage {
 			m.inspection.previewSeq++
 			m.inspection.previewing = false
@@ -639,7 +683,19 @@ func (m Model) View() string {
 	}
 	lines = append(lines, "")
 	help := "Tab: page  j/k: select  n/p: page  f: favorite  d: disable  r: reload  q: quit"
-	if m.overlayConfirm != nil {
+	if m.page == dashboardPage {
+		help = "a: compile/apply staged declaration  r: reload  Tab: page  q: quit"
+		switch {
+		case m.checkedApply.writing:
+			help = "Applying: q quits UI; daemon-accepted transaction may finish."
+		case m.checkedApply.pending != nil:
+			help = "y: CONFIRM potentially disruptive core apply  Esc: cancel  q: quit"
+		case m.checkedApply.previewing:
+			help = "Compiler preview only: Esc cancels  r: refresh  q: quit"
+		case m.checkedApply.notice != "":
+			help = m.checkedApply.notice
+		}
+	} else if m.overlayConfirm != nil {
 		help = "y: CONFIRM " + m.overlayConfirm.action + "  Esc: cancel  (daemon only; no core apply)"
 	} else if m.page == selectionPage {
 		help = "j/k: choose  Enter: propose  r: reload  Tab: page  q: quit"
@@ -704,11 +760,16 @@ func (m Model) pageLines() []string {
 	case routingInspectPage, dnsInspectPage:
 		return m.configInspectionLines()
 	case dashboardPage:
+		if lines := m.checkedApplyLines(); len(lines) > 0 {
+			return lines
+		}
 		if !m.statusReady {
 			if m.statusError {
-				return []string{"Dashboard: daemon status unavailable.", "Press r to retry. No configuration or core state was changed."}
+				return []string{"Dashboard: daemon status unavailable.",
+					"Press r to retry; inspect durable state before any retry.",
+					m.checkedApply.notice}
 			}
-			return []string{"Dashboard: loading local daemon status..."}
+			return []string{"Dashboard: loading local daemon status...", m.checkedApply.notice}
 		}
 		s := m.status
 		result := []string{
@@ -726,6 +787,9 @@ func (m Model) pageLines() []string {
 		if m.hasCoreError {
 			// Core errors can include upstream URLs and credentials. Never render them.
 			result = append(result, "Core reports an error (details suppressed; use controlled diagnostics).")
+		}
+		if m.checkedApply.notice != "" {
+			result = append(result, m.checkedApply.notice)
 		}
 		return result
 	case profilesPage:
