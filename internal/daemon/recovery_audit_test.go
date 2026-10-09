@@ -151,6 +151,9 @@ func TestRecoveryAuditRuleSetClosureVerifiesPrivateContentAddressedPath(t *testi
 	if auditRuleSetResources(context.Background(), root, []compiler.NativeRuleSetManifest{rule}, &budget) {
 		t.Fatal("tampered rule set hash was accepted")
 	}
+	if budget != maxRecoveryAuditRuleBytes-int64(len(`{"tampered":true}`)) {
+		t.Fatal("failed verification did not consume its bounded read budget")
+	}
 }
 
 func TestRecoveryAuditNeverDisclosesStoredMetadataSecrets(t *testing.T) {
