@@ -46,6 +46,24 @@ func TestSchemaV9AddsProfileSnapshotsToV8Database(t *testing.T) {
 		_ = db.Close()
 		t.Fatal(err)
 	}
+	// The v8 database also contains the generation table introduced in
+	// migration 1 and extended in migration 3. Migration 17 adds a nullable
+	// historical restore provenance column to this existing table.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE generations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		base_revision INTEGER NOT NULL CHECK(base_revision >= 0),
+		target_revision INTEGER NOT NULL CHECK(target_revision = base_revision + 1),
+		config_json BLOB NOT NULL,
+		config_sha256 TEXT NOT NULL CHECK(length(config_sha256) = 64),
+		created_at TEXT NOT NULL,
+		manifest_json BLOB,
+		manifest_sha256 TEXT CHECK(manifest_sha256 IS NULL OR length(manifest_sha256) = 64),
+		source_map_json BLOB,
+		source_map_sha256 TEXT CHECK(source_map_sha256 IS NULL OR length(source_map_sha256) = 64)
+	)`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
 	// Schema v8 already included migration 6's singleton selection_state.
 	// Omitting it would fabricate a corrupted database, not a v8 fixture.
 	if _, err := db.ExecContext(ctx, `
@@ -79,8 +97,8 @@ func TestSchemaV9AddsProfileSnapshotsToV8Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 16 {
-		t.Fatalf("schema version = %d, want 16", version)
+	if version != 17 {
+		t.Fatalf("schema version = %d, want 17", version)
 	}
 	intent, persisted, err := store.CurrentSelectionIntent(ctx)
 	if err != nil || !persisted || intent.Revision != 0 || string(intent.TargetJSON) != `{"kind":"direct"}` {
