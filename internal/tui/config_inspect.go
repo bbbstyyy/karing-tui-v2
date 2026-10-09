@@ -31,6 +31,10 @@ type configInspectionState struct {
 
 	routeRows           []routeToggleRow
 	routeSelected       int
+	targetChoices       []domain.TargetRef
+	dnsChoices          []string
+	dnsComplete         bool
+	chooser             *routeBindingChooser
 	declarationRevision uint64
 	configRevision      uint64
 	generationID        int64
@@ -48,6 +52,9 @@ type configInspectionLoaded struct {
 	routing             []string
 	dns                 []string
 	routeRows           []routeToggleRow
+	targetChoices       []domain.TargetRef
+	dnsChoices          []string
+	dnsComplete         bool
 	declarationRevision uint64
 	configRevision      uint64
 	generationID        int64
@@ -58,9 +65,10 @@ func (s *configInspectionState) discardAndForget() {
 	s.previewSeq++
 	s.active, s.ready, s.failed = false, false, false
 	s.previewing, s.writing = false, false
-	s.pending = nil
+	s.pending, s.chooser = nil, nil
 	s.scroll, s.routeSelected = 0, 0
 	s.routing, s.dns, s.routeRows = nil, nil, nil
+	s.targetChoices, s.dnsChoices, s.dnsComplete = nil, nil, false
 	s.notice = ""
 }
 
@@ -72,6 +80,8 @@ func (m *Model) requestConfigInspection() tea.Cmd {
 	m.inspection.active = true
 	m.inspection.ready, m.inspection.failed = false, false
 	m.inspection.routing, m.inspection.dns, m.inspection.routeRows = nil, nil, nil
+	m.inspection.targetChoices, m.inspection.dnsChoices = nil, nil
+	m.inspection.dnsComplete, m.inspection.chooser = false, nil
 	m.inspection.previewSeq++
 	m.inspection.previewing = false
 	m.inspection.pending = nil
@@ -100,6 +110,9 @@ func loadConfigInspection(ctx context.Context, api API, seq uint64) tea.Cmd {
 		msg.failed = false
 		msg.routing, msg.dns = routing, dns
 		msg.routeRows = projectRouteToggleRows(raw, routing)
+		if len(msg.routeRows) != 0 {
+			msg.targetChoices, msg.dnsChoices, msg.dnsComplete = projectRouteBindingChoices(raw)
+		}
 		msg.declarationRevision = raw.CurrentDeclarationRevision
 		msg.configRevision = raw.ConfigRevision
 		msg.generationID = raw.GenerationID
@@ -119,6 +132,8 @@ func (m *Model) acceptConfigInspection(msg configInspectionLoaded) {
 	if !msg.failed {
 		m.inspection.routing, m.inspection.dns = msg.routing, msg.dns
 		m.inspection.routeRows = msg.routeRows
+		m.inspection.targetChoices, m.inspection.dnsChoices = msg.targetChoices, msg.dnsChoices
+		m.inspection.dnsComplete = msg.dnsComplete
 		m.inspection.declarationRevision = msg.declarationRevision
 		m.inspection.configRevision = msg.configRevision
 		m.inspection.generationID = msg.generationID
@@ -129,6 +144,12 @@ func (m Model) configInspectionLines() []string {
 	title := "Routing"
 	if m.page == dnsInspectPage {
 		title = "DNS"
+	}
+	if m.page == routingInspectPage && m.inspection.chooser != nil {
+		return m.routeBindingChooserLines()
+	}
+	if m.page == routingInspectPage && m.inspection.pending != nil {
+		return m.routeBindingReceiptLines()
 	}
 	switch {
 	case m.inspection.active:

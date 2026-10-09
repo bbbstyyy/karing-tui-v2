@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -13,18 +12,21 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 )
 
-// routeToggleRow holds only a safe route identity and enabled flag. No raw
-// matcher, upstream DNS address, node credential or outbound JSON is retained.
+// routeToggleRow holds safe route identity and typed binding references.
+// No raw matcher, upstream DNS address or credentials are retained.
 type routeToggleRow struct {
 	layer   domain.RoutingLayer
 	id      string
 	origin  string
 	enabled bool
+	target domain.TargetRef
+	dnsProfile string
 	line    int
 }
 
 type routeToggleReceipt struct {
-	row   routeToggleRow
+	row routeToggleRow
+	choice routeBindingChoice
 	stage apiv1.RouteEditStageRequest
 }
 
@@ -74,12 +76,14 @@ func projectRouteToggleRows(raw apiv1.ConfigInspectionResponse, lines []string) 
 			searchFrom++
 			if layer.Layer == domain.LayerFinal || group.Origin == "region_append" ||
 				(group.Origin != "custom" && group.Origin != "cn_preset") ||
-				group.ID == "" || inspectionSafeID(group.ID) != group.ID {
+				group.ID == "" || inspectionSafeID(group.ID) != group.ID ||
+			!routeBindingSafeRef(group.Target) ||
+			(group.DNSProfile != "" && inspectionSafeID(group.DNSProfile) != group.DNSProfile) {
 				continue
 			}
 			rows = append(rows, routeToggleRow{
 				layer: layer.Layer, id: group.ID, origin: group.Origin,
-				enabled: group.Enabled, line: line,
+				enabled: group.Enabled, target: group.Target, dnsProfile: group.DNSProfile, line: line,
 			})
 		}
 	}
@@ -107,7 +111,7 @@ func (m *Model) moveRouteToggle(delta int) {
 func (m *Model) startRouteToggle() tea.Cmd {
 	if m.page != routingInspectPage || !m.inspection.ready ||
 		m.inspection.active || m.inspection.previewing || m.inspection.writing ||
-		m.inspection.pending != nil || len(m.inspection.routeRows) == 0 ||
+		m.inspection.pending != nil || m.inspection.chooser != nil || len(m.inspection.routeRows) == 0 ||
 		m.inspection.routeSelected >= len(m.inspection.routeRows) {
 		return nil
 	}
@@ -121,57 +125,8 @@ func (m *Model) startRouteToggle() tea.Cmd {
 
 func previewRouteToggle(ctx context.Context, api API, sequence uint64, row routeToggleRow,
 	declarationRevision, configRevision uint64, generationID int64) tea.Cmd {
-	return func() tea.Msg {
-		result := routeTogglePreviewLoaded{sequence: sequence, failed: true}
-		if api == nil || declarationRevision == 0 || generationID <= 0 {
-			return result
-		}
-		bounded, cancel := context.WithTimeout(ctx, 28*time.Second)
-		defer cancel()
-		binding, err := api.RouteEditContext(bounded)
-		if err != nil || binding.APIVersion != apiv1.Version ||
-			binding.DeclarationRevision != declarationRevision ||
-			binding.ConfigRevision != configRevision ||
-			binding.AppliedGenerationID == nil ||
-			*binding.AppliedGenerationID != generationID ||
-			!validRouteToggleDigest(binding.DeclarationSHA256) {
-			return result
-		}
-		nextEnabled := !row.enabled
-		request := apiv1.RouteEditRequest{
-			ExpectedDeclarationRevision: binding.DeclarationRevision,
-			ExpectedDeclarationSHA256:   binding.DeclarationSHA256,
-			ExpectedConfigRevision:      binding.ConfigRevision,
-			ExpectedGenerationID:        cloneGenerationID(binding.AppliedGenerationID),
-			ExpectedSelectionRevision:   binding.SelectionRevision,
-			Layer:                       row.layer, GroupID: row.id, Enabled: &nextEnabled,
-		}
-		preview, err := api.PreviewRouteEdit(bounded, request)
-		if err != nil || preview.APIVersion != apiv1.Version ||
-			!reflect.DeepEqual(preview.Request, request) ||
-			preview.Origin != row.origin ||
-			preview.BeforeEnabled != row.enabled || preview.AfterEnabled != nextEnabled ||
-			!reflect.DeepEqual(preview.BeforeTarget, preview.AfterTarget) ||
-			preview.BeforeDNSProfileID != preview.AfterDNSProfileID ||
-			!validRouteToggleDigest(preview.CandidateSHA256) ||
-			!validRouteToggleDigest(preview.NativeConfigSHA256) ||
-			preview.NativeSchemaID == "" || preview.RouteEntryCount < 0 ||
-			preview.DNSServerCount < 0 || preview.RuleSetCount < 0 ||
-			!preview.CompilerValidated || preview.CoreValidated ||
-			preview.Staged || preview.Applied {
-			return result
-		}
-		result.failed = false
-		result.receipt = &routeToggleReceipt{
-			row: row,
-			stage: apiv1.RouteEditStageRequest{
-				RouteEditRequest:   request,
-				CandidateSHA256:    preview.CandidateSHA256,
-				NativeConfigSHA256: preview.NativeConfigSHA256,
-			},
-		}
-		return result
-	}
+	return previewRouteEdit(ctx, api, sequence, row, routeBindingChoice{kind: "enabled"},
+		declarationRevision, configRevision, generationID)
 }
 
 func validRouteToggleDigest(s string) bool {

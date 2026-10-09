@@ -309,6 +309,27 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		if m.inspection.chooser != nil {
+			switch msg.String() {
+			case "up", "k":
+				m.moveRouteBindingChooser(-1)
+				return m, nil
+			case "down", "j":
+				m.moveRouteBindingChooser(1)
+				return m, nil
+			case "enter":
+				return m, m.previewRouteBindingChoice()
+			case "esc":
+				m.inspection.chooser = nil
+				m.inspection.scroll = 0
+				m.inspection.notice = "Binding choice cancelled; no write sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Quit never stages unconfirmed changes.
+			default:
+				return m, nil
+			}
+		}
 		if m.selection.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
 			return m, nil
 		}
@@ -406,6 +427,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			if m.page == routePage {
 				m.cycleRouteProbeEntry()
+			} else if m.page == routingInspectPage {
+				m.beginRouteBindingChooser("target")
+			}
+		case "g":
+			if m.page == routingInspectPage {
+				m.beginRouteBindingChooser("dns")
 			}
 		case "esc":
 			if m.page == nodesPage {
@@ -487,6 +514,7 @@ func (m *Model) switchPage(to page) tea.Cmd {
 			m.inspection.previewSeq++
 			m.inspection.previewing = false
 			m.inspection.pending = nil
+			m.inspection.chooser = nil
 		}
 		if (m.page == routingInspectPage || m.page == dnsInspectPage) &&
 			to != routingInspectPage && to != dnsInspectPage {
@@ -631,11 +659,13 @@ func (m Model) View() string {
 		if m.inspection.writing {
 			help = "Staging only; q exits. The daemon may finish an accepted stage."
 		} else if m.inspection.pending != nil {
-			help = "y: CONFIRM staging route toggle (NOT core apply)  Esc: cancel  q: quit"
+			help = "y: CONFIRM one-field STAGE (NOT core apply)  Esc: cancel  q: quit"
+		} else if m.inspection.chooser != nil {
+			help = "j/k: choose  Enter: compiler preview  Esc: cancel  q: quit"
 		} else if m.inspection.previewing {
 			help = "Compiling preview; no write sent. r: reload  q: quit"
 		} else if len(m.inspection.routeRows) > 0 {
-			help = "j/k: select route  e: preview enable toggle  r: reload  Tab: page"
+			help = "j/k: route  e: toggle  t: target  g: DNS  r: reload  Tab: page"
 		} else {
 			help = "Read-only (staged/truncated/unavailable); r: reload  Tab: page"
 		}
