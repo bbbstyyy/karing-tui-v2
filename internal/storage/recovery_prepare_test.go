@@ -359,7 +359,6 @@ func TestHistoricalRestorePreconditionCannotBeForgedWithInvalidFields(t *testing
 	}
 }
 
-
 func TestHistoricalRestorePreparedCrashKeepsConfirmedGeneration(t *testing.T) {
 	store, precondition, _, live := historicalRestoreFixture(t)
 	ctx := context.Background()
