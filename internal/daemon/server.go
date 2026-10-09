@@ -195,6 +195,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	registerProfileDeclarationStageRoutes(mux, store, profileOperations)
 	registerRouteEditRoutes(mux, store, runtime)
 	registerCheckedApplyRoutes(mux, store, runtime)
+	registerRecoveryAuditRoutes(mux, store, s.paths.State)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
 		// The HTTP handlers hold runtime.gate for the entire read/validate/
@@ -313,6 +314,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"route_edit_stage":              declarationCompileRuntime,
 				"declaration_apply_api":         declarationApplyRuntime,
 				"checked_declaration_apply_api": checkedApplyRuntime,
+				"historical_generation_audit":  true,
 				"config_inspection_api":         true,
 				"apply_journal":                 true,
 				"apply_coordinator":             true,

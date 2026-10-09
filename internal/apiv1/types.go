@@ -226,6 +226,38 @@ type CheckedApplyPreviewResponse struct {
 	Applied           bool                `json:"applied"`
 }
 
+// RecoveryAudit describes a bounded, read-only historical evidence check.
+// Every entry is informational: this API NEVER authorizes manual rollback.
+// Identifiers, hash summaries and status enums contain no native JSON,
+// rule-set paths, subscription URLs or node credentials.
+type RecoveryAuditResponse struct {
+	APIVersion                 string                   `json:"api_version"`
+	Evidence                   string                   `json:"evidence"`
+	ConfigRevision             uint64                   `json:"config_revision"`
+	CurrentDeclarationRevision uint64                   `json:"current_declaration_revision"`
+	AppliedGenerationID        *int64                   `json:"applied_generation_id"`
+	LastKnownGoodGenerationID  *int64                   `json:"last_known_good_generation_id"`
+	RecoveryRequired           bool                     `json:"recovery_required"`
+	ActiveApply                bool                     `json:"active_apply"`
+	Truncated                  bool                     `json:"truncated"`
+	RestoreSupported           bool                     `json:"restore_supported"`
+	Generations                []RecoveryGenerationAudit `json:"generations"`
+}
+
+type RecoveryGenerationAudit struct {
+	GenerationID          int64  `json:"generation_id"`
+	CommittedConfigRevision uint64 `json:"committed_config_revision"`
+	Applied               bool   `json:"applied"`
+	LastKnownGood         bool   `json:"last_known_good"`
+	PayloadRetained       bool   `json:"payload_retained"`
+	StoredIntegrityVerified bool `json:"stored_integrity_verified"`
+	RuleSetResourcesVerified bool `json:"rule_set_resources_verified"`
+	DeclarationRevision   uint64 `json:"declaration_revision,omitempty"`
+	RuleSetCount          int    `json:"rule_set_count"`
+	Status                string `json:"status"`
+	RestoreReady          bool   `json:"restore_ready"`
+}
+
 type CheckedApplyResponse struct {
 	DeclarationApplyResponse
 	CoreChecked bool `json:"core_checked"`
