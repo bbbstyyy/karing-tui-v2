@@ -119,7 +119,8 @@ func (m *Model) beginRouteBindingChooser(kind string) {
 	}
 	m.inspection.chooser = &routeBindingChooser{row: row, kind: kind, options: options}
 	m.inspection.notice = ""
-	m.inspection.scroll = 0
+	// Make the first selectable candidate visible even in a 32x7 terminal.
+	m.inspection.scroll = max(0, 5-max(1, m.height-5))
 }
 
 func routeBindingChoiceText(choice routeBindingChoice) string {

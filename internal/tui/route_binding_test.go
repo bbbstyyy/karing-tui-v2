@@ -222,6 +222,9 @@ func TestRouteBindingMenuRendersBoundedSmallTerminal(t *testing.T) {
 	m := loadedToggleModel(t, api)
 	m, _ = updated(t, m, tea.WindowSizeMsg{Width: 38, Height: 8})
 	m, _ = toggleKey(t, m, 't')
+	if !strings.Contains(m.View(), "> ") {
+		t.Fatalf("initial candidate hidden at small viewport: %s", m.View())
+	}
 	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	view := m.View()
