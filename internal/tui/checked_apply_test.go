@@ -195,6 +195,7 @@ func TestTUICheckedApplyCancelQuitAndStalePreviewNeverWrite(t *testing.T) {
 	m := checkedApplyDashboard(t, api)
 	m, late := checkedApplyKey(t, m, 'a')
 	m, _ = checkedApplyKey(t, m, 'r')
+	m, _ = updated(t, m, statusLoaded{request: m.statusRequest, value: api.fakeAPI.status})
 	m, _ = updated(t, m, late())
 	if m.checkedApply.pending != nil || m.checkedApply.previewing || api.applyCalls != 0 {
 		t.Fatal("old compiler preview survived status refresh")
