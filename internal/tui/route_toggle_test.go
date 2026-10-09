@@ -27,12 +27,12 @@ type routeToggleFakeAPI struct {
 	contextValue apiv1.RouteEditContext
 	contextError error
 	previewError error
-	stageError error
+	stageError   error
 	contextCalls int
 	previewCalls int
-	stageCalls int
-	lastPreview apiv1.RouteEditRequest
-	lastStage apiv1.RouteEditStageRequest
+	stageCalls   int
+	lastPreview  apiv1.RouteEditRequest
+	lastStage    apiv1.RouteEditStageRequest
 }
 
 func newRouteToggleFake() *routeToggleFakeAPI {
@@ -69,7 +69,7 @@ func (f *routeToggleFakeAPI) PreviewRouteEdit(ctx context.Context, r apiv1.Route
 		BeforeEnabled: true, AfterEnabled: false,
 		BeforeTarget: target, AfterTarget: target,
 		BeforeDNSProfileID: "group-dns", AfterDNSProfileID: "group-dns",
-		CandidateSHA256: strings.Repeat("b", 64),
+		CandidateSHA256:    strings.Repeat("b", 64),
 		NativeConfigSHA256: strings.Repeat("c", 64), NativeSchemaID: "native",
 		RouteEntryCount: 1, DNSServerCount: 2, RuleSetCount: 0,
 		CompilerValidated: true,
@@ -86,7 +86,7 @@ func (f *routeToggleFakeAPI) StageRouteEdit(ctx context.Context, r apiv1.RouteEd
 	f.value.RoutingChanged = true
 	return apiv1.RouteEditStageResponse{
 		DeclarationRevision: r.ExpectedDeclarationRevision + 1,
-		DeclarationSHA256: r.CandidateSHA256, NativeConfigSHA256: r.NativeConfigSHA256,
+		DeclarationSHA256:   r.CandidateSHA256, NativeConfigSHA256: r.NativeConfigSHA256,
 		CompilerValidated: true, Staged: true,
 	}, nil
 }
@@ -205,4 +205,3 @@ func TestRouteToggleIgnoresLatePreviewAndUncertainStage(t *testing.T) {
 		t.Fatal("uncertain stage retried automatically")
 	}
 }
-

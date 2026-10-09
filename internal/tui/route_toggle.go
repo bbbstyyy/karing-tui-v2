@@ -16,27 +16,27 @@ import (
 // routeToggleRow holds only a safe route identity and enabled flag. No raw
 // matcher, upstream DNS address, node credential or outbound JSON is retained.
 type routeToggleRow struct {
-	layer domain.RoutingLayer
-	id string
-	origin string
+	layer   domain.RoutingLayer
+	id      string
+	origin  string
 	enabled bool
-	line int
+	line    int
 }
 
 type routeToggleReceipt struct {
-	row routeToggleRow
+	row   routeToggleRow
 	stage apiv1.RouteEditStageRequest
 }
 
 type routeTogglePreviewLoaded struct {
 	sequence uint64
-	failed bool
-	receipt *routeToggleReceipt
+	failed   bool
+	receipt  *routeToggleReceipt
 }
 
 type routeToggleWriteLoaded struct {
 	sequence uint64
-	failed bool
+	failed   bool
 }
 
 // Only untruncated, currently applied declarations may seed TUI edits. A
@@ -140,11 +140,11 @@ func previewRouteToggle(ctx context.Context, api API, sequence uint64, row route
 		nextEnabled := !row.enabled
 		request := apiv1.RouteEditRequest{
 			ExpectedDeclarationRevision: binding.DeclarationRevision,
-			ExpectedDeclarationSHA256: binding.DeclarationSHA256,
-			ExpectedConfigRevision: binding.ConfigRevision,
-			ExpectedGenerationID: cloneGenerationID(binding.AppliedGenerationID),
-			ExpectedSelectionRevision: binding.SelectionRevision,
-			Layer: row.layer, GroupID: row.id, Enabled: &nextEnabled,
+			ExpectedDeclarationSHA256:   binding.DeclarationSHA256,
+			ExpectedConfigRevision:      binding.ConfigRevision,
+			ExpectedGenerationID:        cloneGenerationID(binding.AppliedGenerationID),
+			ExpectedSelectionRevision:   binding.SelectionRevision,
+			Layer:                       row.layer, GroupID: row.id, Enabled: &nextEnabled,
 		}
 		preview, err := api.PreviewRouteEdit(bounded, request)
 		if err != nil || preview.APIVersion != apiv1.Version ||
@@ -165,8 +165,8 @@ func previewRouteToggle(ctx context.Context, api API, sequence uint64, row route
 		result.receipt = &routeToggleReceipt{
 			row: row,
 			stage: apiv1.RouteEditStageRequest{
-				RouteEditRequest: request,
-				CandidateSHA256: preview.CandidateSHA256,
+				RouteEditRequest:   request,
+				CandidateSHA256:    preview.CandidateSHA256,
 				NativeConfigSHA256: preview.NativeConfigSHA256,
 			},
 		}
@@ -247,4 +247,3 @@ func (m *Model) acceptRouteToggleWrite(msg routeToggleWriteLoaded) tea.Cmd {
 	}
 	return refresh
 }
-
