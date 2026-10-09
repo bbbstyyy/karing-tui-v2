@@ -2,7 +2,7 @@
 
 Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs/plan.md).
 
-> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. M2 routing/compiler primitives and M3 source/snapshot management exist, but broad subscription compatibility, the complete CN offline resource bundle, automatic profile-to-declaration promotion, and full TUI operation are **not** finished. A read-only Bubble Tea TUI prototype is available for status, profile and node inspection.
+> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. M2 routing/compiler primitives and M3 source/snapshot management exist, but broad subscription compatibility, the complete CN offline resource bundle, automatic profile-to-declaration promotion, and full TUI operation are **not** finished. A Bubble Tea TUI prototype is available for read-only status/route diagnostics and explicitly confirmed node favorite/disabled overlays; it is not a complete configuration editor.
 
 ## Non-negotiable scope
 
@@ -25,7 +25,7 @@ karing-tui capabilities
 karing-tui version
 ```
 
-Run the daemon independently (for example as a systemd user service), then run `karing-tui tui` in an interactive terminal. The TUI uses only the existing Unix Socket read APIs; `q` / Ctrl-C exits the UI **without** stopping the daemon or core. Press `1`/ `2`/ `3` for Dashboard / Profiles / Nodes, `Tab` to cycle, `j`/`k` to select/scroll, `Enter` to inspect profile nodes, `n`/`p` to page, and `r` to refresh on demand. TUI output is credential-safe and sanitizes untrusted labels. This is an intentionally read-only first milestone, not full M4 completion.
+Run the daemon independently (for example as a systemd user service), then run `karing-tui tui` in an interactive terminal. `q` / Ctrl-C exits **only the TUI**. Press `1`/`2`/`3`/`4` for Dashboard / Profiles / Nodes / Route Probe, `Tab` to cycle, and `j`/`k` to select or scroll. On Profiles, Enter opens the selected profile's nodes; `n`/`p` pages nodes. On Nodes, `f`/`d` proposes a favorite/disabled toggle, `y` confirms, and Esc cancels. Node edits use the daemon's revision/CAS API and **do not** automatically update declarations or apply/restart the core. On Route Probe, `e` enters an ASCII hostname or literal IP, Enter requests a bounded local **applied-generation simulation**, `t` cycles Rule/Direct/Selected, and `r` repeats. The result shows layer/group/target and DNS-profile **binding**, not proof of observed DNS traffic or a verified live route; unknown rule-set matches remain unknown. Every TUI output line is sanitized and viewport-bounded. Full M4 operation and M2/M3 compatibility remain incomplete; see [ADR 0073](docs/adr/0073-confirmed-tui-node-overlays.md) and [ADR 0074](docs/adr/0074-bounded-route-probe-tui.md).
 
 The daemon requires a safe per-user runtime directory. Under a normal systemd user session, `XDG_RUNTIME_DIR` is already set. Tests and unusual supervisors may provide `KARING_TUI_RUNTIME_DIR`; the directory must be owned by the current UID and not writable by group/others.
 
