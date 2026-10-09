@@ -21,6 +21,8 @@ karing-tui core start
 karing-tui core stop
 karing-tui status
 karing-tui status --json
+karing-tui config apply-preview --out="$HOME/apply-receipt.json"
+karing-tui config apply --receipt="$HOME/apply-receipt.json" --confirm
 karing-tui capabilities
 karing-tui version
 ```
@@ -193,3 +195,20 @@ karing-tui profiles preview my-profile --snapshot-id=123 --expected-declaration-
 ```
 
 This command only requests the daemon's read-only preview. It returns credential-safe counts and SHA-256 digests. Its `applied` and `core_validated` fields are always false for this operation. It **cannot** promote a subscription snapshot to an active configuration.
+
+## Explicit checked apply of the current staged declaration (disruptive)
+
+After a profile or Routing edit has created a new **unapplied declaration revision**, inspect what will be compiled and applied:
+
+```sh
+karing-tui config apply-preview --out="$HOME/apply-receipt.json"
+# Review the 0600 JSON receipt: declaration SHA/revision, expected config revision and generation,
+# CurrentSelected revision, native config SHA-256, schema and resource counts.
+# compiler_validated=true, core_validated=false, applied=false
+karing-tui config apply --receipt="$HOME/apply-receipt.json" --confirm
+karing-tui status --json
+```
+
+The second command is **explicitly disruptive**: the daemon strictly recompiles the current declaration, validates the exact receipt, performs managed-core check, activation, behavior verification and a durable config-generation commit. It may restart/replace the running core and interrupt existing connections. The CLI verifies the daemon acknowledgement against the receipt and reads back the new durable generation/revision before reporting success. Receipt files must be regular, owner-owned, private, bounded and not symlinks; no existing receipt is overwritten.
+
+The guard rejects stale declaration content, changed config revision/generation, changed CurrentSelected intent or a new native SHA-256, and rejects an already-applied declaration. `config apply-preview` **does not** check or start the real core; no core changes happen until the deliberate `--confirm`. A timed-out/closed-client confirmation may have succeeded, failed or entered rollback; **never retry automatically**. Query `status --json` and investigate recovery state first. On check/activation/verification failure the pre-existing apply journal retains its transactional rollback semantics; this feature does not provide a manually selectable historical-generation rollback or TUI apply button. Legacy `/v1/declaration/apply` can apply historical immutable revisions, but it is **not** the checked current-head UX described here. See [ADR 0082](docs/adr/0082-checked-current-declaration-apply-cli.md). Full TUI apply/rollback, consistent backups and real DNS detour observation remain outstanding.

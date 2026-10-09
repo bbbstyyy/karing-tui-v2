@@ -1241,3 +1241,11 @@ docs/
 - 预览基于权威当前声明和 CurrentSelected 状态生成候选，复用严格真实编译器和已有规则资源 resolver，返回候选声明与编译原生配置 SHA-256、可显示的变更摘要，`compiler_validated=true`、`core_validated=false`、`staged=false`、`applied=false`。
 - 确认时必须复验双 digest、声明修订/哈希、配置修订、应用代际、CurrentSelected revision，再原子提交一个新的声明修订。操作门闩序列化应用/选择切换，SQLite CAS 同时防止旧客户端覆盖；409 不写入，502/超时后回读而不盲目重试。
 - CLI 回执文件独占创建，`0600` 权限，stage 拒绝 symlink 和非私有/非本人普通文件。运行中 core、DNS 路径、五层顺序和订阅/ISP 排除策略均不受本次暂存直接改变。完整 TUI 编辑、显式代际应用/回滚、T10/T23 和长期稳定验收尚未关闭。见 ADR 0079。
+
+
+### 2026-10-09 M4 当前声明显式应用的校验回执切片
+
+- 新增 `GET /v1/config/apply/preview`：在 daemon OperationGate 中读取未应用的**当前声明头**，核对声明 SHA 与配置修订、已应用代际、CurrentSelected 修订，重新严格编译并返回无敏感内容的原生 SHA-256/规则资源统计；不进行真实 core check 或运行态变更。
+- 新增 `POST /v1/config/apply/confirm`：接收预览签认的固定标识与原生哈希，在同一 Gate 内复验、重新编译，调用既有原子代际应用协调器完成 `check -> activate -> verify -> commit`，失败交由既有 journal/rollback/recovery。冲突回执不得再应用；超时/断链不盲重试。
+- CLI 提供 `config apply-preview [--out=0600_FILE]`、`config apply --receipt=PRIVATE_FILE --confirm`，拒绝 symlink、非私有/非本人文件、失效摘要或缺少明确确认；成功后校验代际与配置修订回读。应用可能替换 core 并影响连接，不因预览或 TUI 页面切换而自动发生。
+- 当前仅是 **CLI 当前头版本应用闭环**，不能宣称 TUI 版本回滚、历史代际主动恢复、一致性备份或 M4 完成。五层路由/CN 预置/订阅 ISP 排除、Linux 普通用户和无 TUN 不变。详见 ADR 0082。
