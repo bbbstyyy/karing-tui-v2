@@ -59,7 +59,9 @@ func runCheckedApplyPreviewCLI(ctx context.Context, api checkedApplyCLIClient, a
 	fs := flag.NewFlagSet("config apply-preview", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	out := fs.String("out", "", "create a private new 0600 receipt file")
-	if err := fs.Parse(args); err != nil { return 2 }
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	if len(fs.Args()) != 0 || (flagWasSet(fs, "out") && *out == "") {
 		checkedApplyUsage(stderr)
 		return 2
@@ -88,14 +90,22 @@ func runCheckedApplyPreviewCLI(ctx context.Context, api checkedApplyCLIClient, a
 
 func flagWasSet(fs *flag.FlagSet, name string) bool {
 	found := false
-	fs.Visit(func(f *flag.Flag) { if f.Name == name { found = true } })
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
 	return found
 }
 
 func readPrivateCheckedApplyReceipt(path string) (apiv1.CheckedApplyPreviewResponse, error) {
-	if path == "" { return apiv1.CheckedApplyPreviewResponse{}, errors.New("empty receipt path") }
+	if path == "" {
+		return apiv1.CheckedApplyPreviewResponse{}, errors.New("empty receipt path")
+	}
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
-	if err != nil { return apiv1.CheckedApplyPreviewResponse{}, err }
+	if err != nil {
+		return apiv1.CheckedApplyPreviewResponse{}, err
+	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
 	stat, err := file.Stat()
@@ -110,7 +120,9 @@ func readPrivateCheckedApplyReceipt(path string) (apiv1.CheckedApplyPreviewRespo
 	decoder := json.NewDecoder(io.LimitReader(file, 8193))
 	decoder.DisallowUnknownFields()
 	var preview apiv1.CheckedApplyPreviewResponse
-	if err := decoder.Decode(&preview); err != nil { return apiv1.CheckedApplyPreviewResponse{}, err }
+	if err := decoder.Decode(&preview); err != nil {
+		return apiv1.CheckedApplyPreviewResponse{}, err
+	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return apiv1.CheckedApplyPreviewResponse{}, errors.New("trailing or invalid receipt contents")
@@ -123,7 +135,9 @@ func runCheckedApplyConfirmCLI(ctx context.Context, api checkedApplyCLIClient, a
 	fs.SetOutput(stderr)
 	path := fs.String("receipt", "", "private receipt from apply-preview")
 	confirm := fs.Bool("confirm", false, "authorize core check and possibly disruptive activation")
-	if err := fs.Parse(args); err != nil { return 2 }
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	if len(fs.Args()) != 0 || !flagWasSet(fs, "receipt") || *path == "" ||
 		!flagWasSet(fs, "confirm") || !*confirm {
 		checkedApplyUsage(stderr)
@@ -165,18 +179,18 @@ func runCheckedApplyConfirmCLI(ctx context.Context, api checkedApplyCLIClient, a
 		return 1
 	}
 	return printJSON(stdout, stderr, struct {
-		Apply           apiv1.CheckedApplyResponse `json:"apply"`
-		ReadbackConfigRevision uint64 `json:"readback_config_revision"`
-		ReadbackGenerationID int64 `json:"readback_generation_id"`
-		CurrentDeclarationRevision uint64 `json:"current_declaration_revision"`
-		HeadAdvanced bool `json:"head_advanced_since_preview"`
-		CoreState string `json:"core_state"`
+		Apply                      apiv1.CheckedApplyResponse `json:"apply"`
+		ReadbackConfigRevision     uint64                     `json:"readback_config_revision"`
+		ReadbackGenerationID       int64                      `json:"readback_generation_id"`
+		CurrentDeclarationRevision uint64                     `json:"current_declaration_revision"`
+		HeadAdvanced               bool                       `json:"head_advanced_since_preview"`
+		CoreState                  string                     `json:"core_state"`
 	}{
 		Apply: result, ReadbackConfigRevision: status.ConfigRevision,
-		ReadbackGenerationID: *status.AppliedGenerationID,
+		ReadbackGenerationID:       *status.AppliedGenerationID,
 		CurrentDeclarationRevision: status.DeclarationRevision,
-		HeadAdvanced: status.DeclarationRevision != result.DeclarationRevision,
-		CoreState: status.CoreState,
+		HeadAdvanced:               status.DeclarationRevision != result.DeclarationRevision,
+		CoreState:                  status.CoreState,
 	})
 }
 

@@ -206,12 +206,12 @@ type RouteEditStageResponse struct {
 // runtime config, generation, selector revision and compiler-produced bytes.
 // It never contains source/native JSON, DNS endpoints or node credentials.
 type CheckedApplyReceipt struct {
-	DeclarationRevision        uint64 `json:"declaration_revision"`
-	DeclarationSHA256          string `json:"declaration_sha256"`
-	ExpectedConfigRevision     uint64 `json:"expected_config_revision"`
+	DeclarationRevision         uint64 `json:"declaration_revision"`
+	DeclarationSHA256           string `json:"declaration_sha256"`
+	ExpectedConfigRevision      uint64 `json:"expected_config_revision"`
 	ExpectedAppliedGenerationID *int64 `json:"expected_applied_generation_id"`
-	ExpectedSelectionRevision  uint64 `json:"expected_selection_revision"`
-	NativeConfigSHA256         string `json:"native_config_sha256"`
+	ExpectedSelectionRevision   uint64 `json:"expected_selection_revision"`
+	NativeConfigSHA256          string `json:"native_config_sha256"`
 }
 
 type CheckedApplyPreviewResponse struct {

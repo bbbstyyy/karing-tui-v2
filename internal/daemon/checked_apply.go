@@ -64,12 +64,12 @@ func ensureUnappliedDeclaration(ctx context.Context, store *storage.Store, b api
 
 func checkedApplyReceiptFor(b apiv1.RouteEditContext, nativeSHA string) apiv1.CheckedApplyReceipt {
 	return apiv1.CheckedApplyReceipt{
-		DeclarationRevision: b.DeclarationRevision,
-		DeclarationSHA256: b.DeclarationSHA256,
-		ExpectedConfigRevision: b.ConfigRevision,
+		DeclarationRevision:         b.DeclarationRevision,
+		DeclarationSHA256:           b.DeclarationSHA256,
+		ExpectedConfigRevision:      b.ConfigRevision,
 		ExpectedAppliedGenerationID: cloneRouteEditGeneration(b.AppliedGenerationID),
-		ExpectedSelectionRevision: b.SelectionRevision,
-		NativeConfigSHA256: nativeSHA,
+		ExpectedSelectionRevision:   b.SelectionRevision,
+		NativeConfigSHA256:          nativeSHA,
 	}
 }
 
@@ -107,25 +107,39 @@ func (r *serverRuntime) CheckedApplyPreview(
 	var result apiv1.CheckedApplyPreviewResponse
 	err := r.gate.Do(ctx, "checked-apply-preview", func(inner context.Context) error {
 		base, err := checkedApplyContext(inner, store)
-		if err != nil { return err }
-		if err := ensureUnappliedDeclaration(inner, store, base); err != nil { return err }
+		if err != nil {
+			return err
+		}
+		if err := ensureUnappliedDeclaration(inner, store, base); err != nil {
+			return err
+		}
 
 		artifact, err := r.declarations.CompileRevision(inner, base.DeclarationRevision)
-		if err != nil { return fmt.Errorf("%w: current declaration could not compile", ErrCheckedApplyRejected) }
-		if !checkedApplyArtifactMatches(base, artifact) { return ErrCheckedApplyRejected }
+		if err != nil {
+			return fmt.Errorf("%w: current declaration could not compile", ErrCheckedApplyRejected)
+		}
+		if !checkedApplyArtifactMatches(base, artifact) {
+			return ErrCheckedApplyRejected
+		}
 
 		fresh, err := checkedApplyContext(inner, store)
-		if err != nil { return err }
-		if !reflect.DeepEqual(base, fresh) { return ErrCheckedApplyConflict }
-		if err := ensureUnappliedDeclaration(inner, store, fresh); err != nil { return err }
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(base, fresh) {
+			return ErrCheckedApplyConflict
+		}
+		if err := ensureUnappliedDeclaration(inner, store, fresh); err != nil {
+			return err
+		}
 
 		result = apiv1.CheckedApplyPreviewResponse{
-			APIVersion: apiv1.Version,
-			Receipt: checkedApplyReceiptFor(base, artifact.SHA256),
-			NativeSchemaID: artifact.Manifest.SchemaID,
-			RouteEntryCount: len(artifact.SourceMap),
-			DNSServerCount: len(artifact.Manifest.DNSServerTags),
-			RuleSetCount: len(artifact.Manifest.RuleSets),
+			APIVersion:        apiv1.Version,
+			Receipt:           checkedApplyReceiptFor(base, artifact.SHA256),
+			NativeSchemaID:    artifact.Manifest.SchemaID,
+			RouteEntryCount:   len(artifact.SourceMap),
+			DNSServerCount:    len(artifact.Manifest.DNSServerTags),
+			RuleSetCount:      len(artifact.Manifest.RuleSets),
 			CompilerValidated: true, CoreValidated: false, Applied: false,
 		}
 		return nil
@@ -145,33 +159,53 @@ func (r *serverRuntime) CheckedApplyConfirm(
 	var result apiv1.CheckedApplyResponse
 	err := r.gate.Do(ctx, "checked-apply-confirm", func(inner context.Context) error {
 		base, err := checkedApplyContext(inner, store)
-		if err != nil { return err }
-		if err := validateCheckedApplyReceipt(receipt, base); err != nil { return err }
-		if err := ensureUnappliedDeclaration(inner, store, base); err != nil { return err }
+		if err != nil {
+			return err
+		}
+		if err := validateCheckedApplyReceipt(receipt, base); err != nil {
+			return err
+		}
+		if err := ensureUnappliedDeclaration(inner, store, base); err != nil {
+			return err
+		}
 
 		artifact, err := r.declarations.CompileRevision(inner, receipt.DeclarationRevision)
-		if err != nil { return fmt.Errorf("%w: current declaration could not compile", ErrCheckedApplyRejected) }
-		if !checkedApplyArtifactMatches(base, artifact) { return ErrCheckedApplyRejected }
-		if artifact.SHA256 != receipt.NativeConfigSHA256 { return ErrCheckedApplyConflict }
+		if err != nil {
+			return fmt.Errorf("%w: current declaration could not compile", ErrCheckedApplyRejected)
+		}
+		if !checkedApplyArtifactMatches(base, artifact) {
+			return ErrCheckedApplyRejected
+		}
+		if artifact.SHA256 != receipt.NativeConfigSHA256 {
+			return ErrCheckedApplyConflict
+		}
 
 		fresh, err := checkedApplyContext(inner, store)
-		if err != nil { return err }
-		if err := validateCheckedApplyReceipt(receipt, fresh); err != nil { return err }
-		if err := ensureUnappliedDeclaration(inner, store, fresh); err != nil { return err }
+		if err != nil {
+			return err
+		}
+		if err := validateCheckedApplyReceipt(receipt, fresh); err != nil {
+			return err
+		}
+		if err := ensureUnappliedDeclaration(inner, store, fresh); err != nil {
+			return err
+		}
 
 		// Do not re-enter the non-reentrant operation gate.
 		attempt, err := r.applyNativeArtifact(inner, receipt.ExpectedConfigRevision, artifact)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 
 		result = apiv1.CheckedApplyResponse{
 			DeclarationApplyResponse: apiv1.DeclarationApplyResponse{
-				DeclarationRevision: artifact.Manifest.DeclarationRevision,
-				DeclarationSHA256: artifact.Manifest.DeclarationSHA256,
-				NativeSchemaID: artifact.Manifest.SchemaID,
-				ConfigSHA256: artifact.Manifest.ConfigSHA256,
-				AttemptID: attempt.ID,
-				GenerationID: attempt.GenerationID,
-				BaseConfigRevision: attempt.BaseRevision,
+				DeclarationRevision:  artifact.Manifest.DeclarationRevision,
+				DeclarationSHA256:    artifact.Manifest.DeclarationSHA256,
+				NativeSchemaID:       artifact.Manifest.SchemaID,
+				ConfigSHA256:         artifact.Manifest.ConfigSHA256,
+				AttemptID:            attempt.ID,
+				GenerationID:         attempt.GenerationID,
+				BaseConfigRevision:   attempt.BaseRevision,
 				TargetConfigRevision: attempt.TargetRevision,
 			},
 			CoreChecked: true, Verified: true, Applied: true,
@@ -193,7 +227,10 @@ func registerCheckedApplyRoutes(mux *http.ServeMux, store *storage.Store, runtim
 		ctx, cancel := context.WithTimeout(req.Context(), 25*time.Second)
 		defer cancel()
 		preview, err := runtime.CheckedApplyPreview(ctx, store)
-		if err != nil { writeCheckedApplyError(w, err); return }
+		if err != nil {
+			writeCheckedApplyError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, preview)
 	})
 	mux.HandleFunc("POST /v1/config/apply/confirm", func(w http.ResponseWriter, req *http.Request) {
@@ -212,7 +249,10 @@ func registerCheckedApplyRoutes(mux *http.ServeMux, store *storage.Store, runtim
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 80*time.Second)
 		defer cancel()
 		result, err := runtime.CheckedApplyConfirm(ctx, store, receipt)
-		if err != nil { writeCheckedApplyError(w, err); return }
+		if err != nil {
+			writeCheckedApplyError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, result)
 	})
 }

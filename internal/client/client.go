@@ -145,11 +145,17 @@ func (c *Client) CheckedApply(ctx context.Context, receipt apiv1.CheckedApplyRec
 
 func (c *Client) getWithClient(ctx context.Context, httpClient *http.Client, path string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	resp, err := httpClient.Do(req)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK { return responseError(resp) }
+	if resp.StatusCode != http.StatusOK {
+		return responseError(resp)
+	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 8192)).Decode(target)
 }
 
