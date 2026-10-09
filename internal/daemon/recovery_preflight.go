@@ -12,11 +12,11 @@ import (
 // These statuses describe bounded, read-only compatibility evidence. They are
 // deliberately not restore authorizations, not a core check, and not a lease.
 const (
-	recoveryPreflightNotChecked          = "not_checked"
-	recoveryPreflightStateNotQuiescent   = "state_not_quiescent"
-	recoveryPreflightSelectorMismatch   = "selector_incompatible"
-	recoveryPreflightPolicyMismatch     = "runtime_policy_incompatible"
-	recoveryPreflightConsistentOnly      = "bound_state_consistent_only"
+	recoveryPreflightNotChecked        = "not_checked"
+	recoveryPreflightStateNotQuiescent = "state_not_quiescent"
+	recoveryPreflightSelectorMismatch  = "selector_incompatible"
+	recoveryPreflightPolicyMismatch    = "runtime_policy_incompatible"
+	recoveryPreflightConsistentOnly    = "bound_state_consistent_only"
 )
 
 // historicalGenerationPreflight tests the *current* selector intent against
