@@ -1,0 +1,29 @@
+name: temporary-recovery-audit-gofmt
+on:
+  push:
+    branches:
+      - feat/m0-m1-foundation
+    paths:
+      - .github/workflows/temporary-recovery-audit-gofmt.yml
+permissions:
+  contents: write
+jobs:
+  format:
+    if: github.repository == 'bbbstyyy/karing-tui-v2'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - name: Format bounded read-only recovery audit
+        run: |
+          gofmt -w internal/storage/recovery_audit.go internal/storage/recovery_audit_test.go internal/daemon/recovery_audit.go internal/daemon/recovery_audit_test.go internal/apiv1/types.go internal/daemon/server.go internal/client/client.go internal/app/recovery_audit_cli.go internal/app/recovery_audit_cli_test.go internal/app/app.go
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add internal/storage/recovery_audit.go internal/storage/recovery_audit_test.go internal/daemon/recovery_audit.go internal/daemon/recovery_audit_test.go internal/apiv1/types.go internal/daemon/server.go internal/client/client.go internal/app/recovery_audit_cli.go internal/app/recovery_audit_cli_test.go internal/app/app.go
+            git commit -m "style(m4): format read-only generation audit"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
