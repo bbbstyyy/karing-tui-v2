@@ -19,6 +19,7 @@ type Client struct {
 	queryClient   *http.Client
 	controlClient *http.Client
 	refreshClient *http.Client
+	applyClient   *http.Client
 }
 
 func New(socketPath string) *Client {
@@ -32,6 +33,7 @@ func New(socketPath string) *Client {
 		queryClient:   &http.Client{Transport: transport, Timeout: 3 * time.Second},
 		controlClient: &http.Client{Transport: transport, Timeout: 20 * time.Second},
 		refreshClient: &http.Client{Transport: transport, Timeout: 75 * time.Second},
+		applyClient:   &http.Client{Transport: transport, Timeout: 95 * time.Second},
 	}
 }
 
@@ -120,6 +122,36 @@ func (c *Client) RouteExplain(
 // InspectConfig is intentionally bounded before JSON decoding: it must never
 // accidentally fetch full declarations, core configs or DNS credentials.
 const maxInspectionResponseBytes = 1 << 20
+
+// CheckedApplyPreview compiles the current unapplied declaration, without
+// touching a running generation or returning secret-bearing artifacts.
+func (c *Client) CheckedApplyPreview(ctx context.Context) (apiv1.CheckedApplyPreviewResponse, error) {
+	var response apiv1.CheckedApplyPreviewResponse
+	if err := c.getWithClient(ctx, c.applyClient, "/v1/config/apply/preview", &response); err != nil {
+		return apiv1.CheckedApplyPreviewResponse{}, err
+	}
+	return response, nil
+}
+
+// CheckedApply is a single, explicitly confirmed attempt. A disconnected
+// client cannot infer failure: read status and declaration state, never retry.
+func (c *Client) CheckedApply(ctx context.Context, receipt apiv1.CheckedApplyReceipt) (apiv1.CheckedApplyResponse, error) {
+	var response apiv1.CheckedApplyResponse
+	if err := c.sendJSON(ctx, c.applyClient, http.MethodPost, "/v1/config/apply/confirm", receipt, &response); err != nil {
+		return apiv1.CheckedApplyResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) getWithClient(ctx context.Context, httpClient *http.Client, path string, target any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
+	if err != nil { return err }
+	resp, err := httpClient.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK { return responseError(resp) }
+	return json.NewDecoder(io.LimitReader(resp.Body, 8192)).Decode(target)
+}
 
 // Edit context contains only optimistic identity tokens, not the raw V1 document.
 func (c *Client) RouteEditContext(ctx context.Context) (apiv1.RouteEditContext, error) {

@@ -58,10 +58,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 func runConfig(args []string, stdout, stderr io.Writer) int {
 	paths, err := runtimepath.Resolve()
 	if err != nil {
-		fmt.Fprintln(stderr, "route edit runtime paths unavailable")
+		fmt.Fprintln(stderr, "config runtime paths unavailable")
 		return 1
 	}
-	return runRouteConfigCommand(context.Background(), client.New(paths.Socket), args, stdout, stderr)
+	api := client.New(paths.Socket)
+	if len(args) > 0 && (args[0] == "apply-preview" || args[0] == "apply") {
+		return runCheckedApplyCLI(context.Background(), api, args, stdout, stderr)
+	}
+	return runRouteConfigCommand(context.Background(), api, args, stdout, stderr)
 }
 
 func runTUI(args []string, stderr io.Writer) int {
@@ -258,6 +262,8 @@ Usage:
   karing-tui storage prune     compact audit and prune old generations
   karing-tui config route-preview --help  read and compile one guarded route/DNS edit
   karing-tui config route-stage --receipt=FILE --confirm  stage previewed edit only
+  karing-tui config apply-preview [--out=FILE]  inspect current unapplied declaration
+  karing-tui config apply --receipt=FILE --confirm  apply checked receipt (disruptive)
   karing-tui profiles help     list safe profile and node-management commands
   karing-tui version           show build version
 

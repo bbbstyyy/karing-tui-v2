@@ -194,6 +194,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	registerProfileSnapshotPreviewRoutes(mux, store, profileOperations)
 	registerProfileDeclarationStageRoutes(mux, store, profileOperations)
 	registerRouteEditRoutes(mux, store, runtime)
+	registerCheckedApplyRoutes(mux, store, runtime)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
 		// The HTTP handlers hold runtime.gate for the entire read/validate/

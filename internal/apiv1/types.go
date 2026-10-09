@@ -202,6 +202,37 @@ type RouteEditStageResponse struct {
 	Applied             bool   `json:"applied"`
 }
 
+// A checked apply receipt binds the current unapplied declaration to the
+// runtime config, generation, selector revision and compiler-produced bytes.
+// It never contains source/native JSON, DNS endpoints or node credentials.
+type CheckedApplyReceipt struct {
+	DeclarationRevision        uint64 `json:"declaration_revision"`
+	DeclarationSHA256          string `json:"declaration_sha256"`
+	ExpectedConfigRevision     uint64 `json:"expected_config_revision"`
+	ExpectedAppliedGenerationID *int64 `json:"expected_applied_generation_id"`
+	ExpectedSelectionRevision  uint64 `json:"expected_selection_revision"`
+	NativeConfigSHA256         string `json:"native_config_sha256"`
+}
+
+type CheckedApplyPreviewResponse struct {
+	APIVersion        string              `json:"api_version"`
+	Receipt           CheckedApplyReceipt `json:"receipt"`
+	NativeSchemaID    string              `json:"native_schema_id"`
+	RouteEntryCount   int                 `json:"route_entry_count"`
+	DNSServerCount    int                 `json:"dns_server_count"`
+	RuleSetCount      int                 `json:"rule_set_count"`
+	CompilerValidated bool                `json:"compiler_validated"`
+	CoreValidated     bool                `json:"core_validated"`
+	Applied           bool                `json:"applied"`
+}
+
+type CheckedApplyResponse struct {
+	DeclarationApplyResponse
+	CoreChecked bool `json:"core_checked"`
+	Verified    bool `json:"verified"`
+	Applied     bool `json:"applied"`
+}
+
 type DeclarationApplyRequest struct {
 	DeclarationRevision    uint64 `json:"declaration_revision"`
 	ExpectedConfigRevision uint64 `json:"expected_config_revision"`
