@@ -256,6 +256,7 @@ type RecoveryGenerationAudit struct {
 	RuleSetCount             int    `json:"rule_set_count"`
 	Status                   string `json:"status"`
 	RestoreReady             bool   `json:"restore_ready"`
+	PreflightStatus          string `json:"preflight_status,omitempty"`
 }
 
 type CheckedApplyResponse struct {
