@@ -55,6 +55,14 @@ func validRecoveryAudit(result apiv1.RecoveryAuditResponse) bool {
 			(i > 0 && gen.CommittedConfigRevision > previousRevision) {
 			return false
 		}
+		switch gen.PreflightStatus {
+		case "", "not_checked", "state_not_quiescent", "selector_incompatible", "runtime_policy_incompatible", "bound_state_consistent_only":
+		default:
+			return false
+		}
+		if gen.Status != "stored_integrity_verified_only" && gen.PreflightStatus != "" && gen.PreflightStatus != "not_checked" {
+			return false
+		}
 		switch gen.Status {
 		case "payload_pruned":
 			if gen.PayloadRetained || gen.StoredIntegrityVerified {
