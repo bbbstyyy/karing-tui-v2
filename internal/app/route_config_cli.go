@@ -163,7 +163,7 @@ func runRouteConfigPreview(ctx context.Context, api routeConfigCLIClient, args [
 	return 0
 }
 
-func writeNewPrivateReceipt(path string, receipt apiv1.RouteEditPreviewResponse) error {
+func writeNewPrivateReceipt(path string, receipt any) error {
 	// O_EXCL prevents following a pre-existing symlink and overwriting an
 	// existing receipt. The operator controls the directory.
 	if path == "" || filepath.Base(path) == "." {
