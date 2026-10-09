@@ -192,10 +192,12 @@ func auditRuleSetResources(ctx context.Context, stateRoot string, rules []compil
 			info.Size() > *bytesRemaining {
 			return false
 		}
+		// Reserve bytes before hashing, including corrupt resources that
+		// fail verification. Failure must not reset the audit work budget.
+		*bytesRemaining -= info.Size()
 		if coreartifact.VerifyRuleSet(expected, rule.SHA256) != nil {
 			return false
 		}
-		*bytesRemaining -= info.Size()
 	}
 	return true
 }
