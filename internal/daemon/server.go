@@ -525,11 +525,11 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		defer cancel()
 		state, err := runSelectionWrite(ctx, func(inner context.Context) (CurrentSelectionState, error) {
 			return selection.SetChecked(inner, request.Target, CheckedSelectionExpectation{
-				SelectionRevision: request.ExpectedSelectionRevision,
-				ConfigRevision: request.ExpectedConfigRevision,
+				SelectionRevision:   request.ExpectedSelectionRevision,
+				ConfigRevision:      request.ExpectedConfigRevision,
 				AppliedGenerationID: request.ExpectedGenerationID,
 				DeclarationRevision: request.ExpectedDeclarationRevision,
-				DeclarationSHA256: request.ExpectedDeclarationSHA256,
+				DeclarationSHA256:   request.ExpectedDeclarationSHA256,
 			})
 		})
 		if err != nil {
@@ -805,16 +805,16 @@ func writeRouteExplainError(w http.ResponseWriter, err error) {
 
 func currentSelectionResponse(value CurrentSelectionState) apiv1.CurrentSelectionResponse {
 	response := apiv1.CurrentSelectionResponse{
-		Target:         value.Target,
-		RuntimeTag:     value.RuntimeTag,
-		Persisted:      value.Persisted,
-		Applied:        value.Applied,
-		LiveRuntimeTag: value.LiveRuntimeTag,
-		SelectionRevision: value.SelectionRevision,
-		ConfigRevision: value.ConfigRevision,
+		Target:              value.Target,
+		RuntimeTag:          value.RuntimeTag,
+		Persisted:           value.Persisted,
+		Applied:             value.Applied,
+		LiveRuntimeTag:      value.LiveRuntimeTag,
+		SelectionRevision:   value.SelectionRevision,
+		ConfigRevision:      value.ConfigRevision,
 		AppliedGenerationID: value.AppliedGenerationID,
 		DeclarationRevision: value.DeclarationRevision,
-		DeclarationSHA256: value.DeclarationSHA256,
+		DeclarationSHA256:   value.DeclarationSHA256,
 	}
 	if !value.UpdatedAt.IsZero() {
 		response.UpdatedAt = value.UpdatedAt.Format(time.RFC3339Nano)

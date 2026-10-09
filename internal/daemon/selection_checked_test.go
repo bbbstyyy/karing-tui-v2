@@ -24,22 +24,36 @@ func appliedSelectionFixture(t *testing.T) (*storage.Store, []byte, *fakeSelecti
 	store := openServerTestStore(t, ctx)
 	document := currentSelectionTestDeclaration()
 	decl, err := store.CommitDeclaration(ctx, 0, document, "test:checked-selection")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	manifest, err := json.Marshal(compiler.NativeManifest{
-		SchemaID: compiler.NativeSchemaID,
-		ConfigSHA256: strings.Repeat("a", 64),
+		SchemaID:            compiler.NativeSchemaID,
+		ConfigSHA256:        strings.Repeat("a", 64),
 		DeclarationRevision: decl.Revision,
-		DeclarationSHA256: decl.SHA256,
+		DeclarationSHA256:   decl.SHA256,
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	attempt, err := store.PrepareApplyWithMetadata(ctx, 0, []byte("{}"), manifest, []byte("[]"))
-	if err != nil { t.Fatal(err) }
-	if err := store.BeginActivation(ctx, attempt.ID); err != nil { t.Fatal(err) }
-	if err := store.BeginVerification(ctx, attempt.ID); err != nil { t.Fatal(err) }
-	if err := store.CommitApplied(ctx, attempt.ID, true); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginActivation(ctx, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginVerification(ctx, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitApplied(ctx, attempt.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	a := domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-a", NodeID: "node-a"}
 	tag, err := declaration.CurrentSelectionRuntimeTag(document, a)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	coreFake := &fakeSelectionDaemonCore{fakeCurrentSelectionCore: fakeCurrentSelectionCore{
 		snapshot: core.Snapshot{State: core.StateRunning, PID: 4321},
 		selected: tag,
@@ -53,7 +67,7 @@ func checkedRequest(state apiv1.CurrentSelectionResponse, target domain.TargetRe
 		Target: target, ExpectedSelectionRevision: state.SelectionRevision,
 		ExpectedConfigRevision: state.ConfigRevision, ExpectedGenerationID: state.AppliedGenerationID,
 		ExpectedDeclarationRevision: state.DeclarationRevision,
-		ExpectedDeclarationSHA256: state.DeclarationSHA256,
+		ExpectedDeclarationSHA256:   state.DeclarationSHA256,
 	}
 }
 
@@ -62,7 +76,9 @@ func selectionAPICall(t *testing.T, handler http.Handler, method, path string, b
 	var jsonBody strings.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		jsonBody = *strings.NewReader(string(raw))
 	}
 	recorder := httptest.NewRecorder()
@@ -73,7 +89,9 @@ func selectionAPICall(t *testing.T, handler http.Handler, method, path string, b
 func decodeSelectionAPI(t *testing.T, response *httptest.ResponseRecorder) apiv1.CurrentSelectionResponse {
 	t.Helper()
 	var value apiv1.CurrentSelectionResponse
-	if err := json.NewDecoder(response.Body).Decode(&value); err != nil { t.Fatal(err) }
+	if err := json.NewDecoder(response.Body).Decode(&value); err != nil {
+		t.Fatal(err)
+	}
 	return value
 }
 
@@ -82,7 +100,9 @@ func TestCheckedSelectionAPIBindsAppliedGenerationAndRejectsStaleAndInvalid(t *t
 	defer store.Close()
 
 	get := selectionAPICall(t, handler, http.MethodGet, "/v1/selection/current", nil)
-	if get.Code != http.StatusOK { t.Fatalf("GET = %d, %s", get.Code, get.Body.String()) }
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET = %d, %s", get.Code, get.Body.String())
+	}
 	initial := decodeSelectionAPI(t, get)
 	if initial.SelectionRevision != 0 || initial.ConfigRevision != 1 ||
 		initial.AppliedGenerationID == nil || initial.DeclarationRevision != 1 ||
@@ -120,13 +140,17 @@ func TestCheckedSelectionAPIBindsAppliedGenerationAndRejectsStaleAndInvalid(t *t
 	// A newer committed but UNAPPLIED declaration must not change the
 	// target membership of the currently serving applied generation.
 	originalDecl, err := store.CurrentDeclaration(context.Background())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	newDoc := []byte(strings.ReplaceAll(string(document), "node-b", "node-c"))
 	if _, err := store.CommitDeclaration(context.Background(), originalDecl.Revision, newDoc, "test:unapplied-next"); err != nil {
 		t.Fatal(err)
 	}
 	accepted := selectionAPICall(t, handler, http.MethodPut, "/v1/selection/current/checked", request)
-	if accepted.Code != http.StatusOK { t.Fatalf("checked PUT = %d, %s", accepted.Code, accepted.Body.String()) }
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("checked PUT = %d, %s", accepted.Code, accepted.Body.String())
+	}
 	next := decodeSelectionAPI(t, accepted)
 	if next.SelectionRevision != 1 || next.Target != targetB || !next.Persisted || !next.Applied ||
 		next.DeclarationRevision != 1 || next.AppliedGenerationID == nil || fake.selectCalls != 1 {
@@ -136,10 +160,12 @@ func TestCheckedSelectionAPIBindsAppliedGenerationAndRejectsStaleAndInvalid(t *t
 	if rejected.Code != http.StatusConflict || fake.selectCalls != 1 {
 		t.Fatalf("stale check overwrote selector: %d, calls=%d", rejected.Code, fake.selectCalls)
 	}
-	legacyTarget := domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID:"profile-a",NodeID:"node-a"}
+	legacyTarget := domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-a", NodeID: "node-a"}
 	legacy := selectionAPICall(t, handler, http.MethodPut, "/v1/selection/current",
 		apiv1.CurrentSelectionRequest{Target: legacyTarget})
-	if legacy.Code != http.StatusOK { t.Fatalf("legacy PUT failed: %d, %s", legacy.Code, legacy.Body.String()) }
+	if legacy.Code != http.StatusOK {
+		t.Fatalf("legacy PUT failed: %d, %s", legacy.Code, legacy.Body.String())
+	}
 	legacyState := decodeSelectionAPI(t, legacy)
 	if legacyState.SelectionRevision != 2 || fake.selectCalls != 2 {
 		t.Fatalf("legacy endpoint did not increment checked revision: %+v", legacyState)
@@ -156,7 +182,7 @@ func TestCheckedSelectionLiveFailurePersistsIntentAndNeedsReadback(t *testing.T)
 	defer store.Close()
 	get := selectionAPICall(t, handler, http.MethodGet, "/v1/selection/current", nil)
 	initial := decodeSelectionAPI(t, get)
-	targetB := domain.TargetRef{Kind: domain.TargetSpecificNode,ProfileID:"profile-a",NodeID:"node-b"}
+	targetB := domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-a", NodeID: "node-b"}
 	request := checkedRequest(initial, targetB)
 	fake.selectErr = errors.New("token=DO_NOT_DISCLOSE")
 	failed := selectionAPICall(t, handler, http.MethodPut, "/v1/selection/current/checked", request)
@@ -164,7 +190,9 @@ func TestCheckedSelectionLiveFailurePersistsIntentAndNeedsReadback(t *testing.T)
 		t.Fatalf("live failure leaked or wrong code: %d, %s", failed.Code, failed.Body.String())
 	}
 	after := selectionAPICall(t, handler, http.MethodGet, "/v1/selection/current", nil)
-	if after.Code != http.StatusOK { t.Fatalf("readback = %d, %s", after.Code, after.Body.String()) }
+	if after.Code != http.StatusOK {
+		t.Fatalf("readback = %d, %s", after.Code, after.Body.String())
+	}
 	state := decodeSelectionAPI(t, after)
 	if state.SelectionRevision != 1 || !state.Persisted || state.Target != targetB ||
 		state.Applied || state.LiveRuntimeTag == state.RuntimeTag {
@@ -181,13 +209,19 @@ func TestCheckedSelectionStoppedCorePersistsWithoutLiveClaim(t *testing.T) {
 	store := openServerTestStore(t, ctx)
 	defer store.Close()
 	doc := currentSelectionTestDeclaration()
-	if _, err := store.CommitDeclaration(ctx, 0, doc, "test:selection-stopped-guard"); err != nil { t.Fatal(err) }
+	if _, err := store.CommitDeclaration(ctx, 0, doc, "test:selection-stopped-guard"); err != nil {
+		t.Fatal(err)
+	}
 	fake := &fakeCurrentSelectionCore{snapshot: core.Snapshot{State: core.StateStopped}}
 	coordinator, err := NewCurrentSelectionCoordinator(store, fake)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	initial, err := coordinator.Get(ctx)
-	if err != nil { t.Fatal(err) }
-	target := domain.TargetRef{Kind: domain.TargetSpecificNode,ProfileID:"profile-a",NodeID:"node-b"}
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-a", NodeID: "node-b"}
 	result, err := coordinator.SetChecked(ctx, target, CheckedSelectionExpectation{
 		SelectionRevision: initial.SelectionRevision, ConfigRevision: initial.ConfigRevision,
 		AppliedGenerationID: initial.AppliedGenerationID, DeclarationRevision: initial.DeclarationRevision,

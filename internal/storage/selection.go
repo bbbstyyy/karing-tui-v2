@@ -12,7 +12,7 @@ import (
 const MaxSelectionTargetBytes = 4096
 
 var (
-	ErrInvalidSelectionIntent = errors.New("invalid current selection intent")
+	ErrInvalidSelectionIntent    = errors.New("invalid current selection intent")
 	ErrSelectionRevisionConflict = errors.New("current selection CAS conflict")
 )
 

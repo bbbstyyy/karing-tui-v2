@@ -16,7 +16,9 @@ import (
 
 func TestCheckedSelectionClientSendsEntireBindingAndDoesNotRetryConflict(t *testing.T) {
 	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "selector.sock"))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	var calls int
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		calls++
@@ -50,7 +52,9 @@ func TestCheckedSelectionClientSendsEntireBindingAndDoesNotRetryConflict(t *test
 			Persisted: true, Applied: true,
 		})
 	}))
-	if err := server.Listener.Close(); err != nil { t.Fatal(err) }
+	if err := server.Listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 	server.Listener = listener
 	server.Start()
 	defer server.Close()
@@ -58,7 +62,7 @@ func TestCheckedSelectionClientSendsEntireBindingAndDoesNotRetryConflict(t *test
 	api := New(listener.Addr().String())
 	generation := int64(42)
 	request := apiv1.CurrentSelectionCheckedRequest{
-		Target: domain.TargetRef{Kind: domain.TargetSpecificNode,ProfileID:"profile-a",NodeID:"node-b"},
+		Target:                    domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-a", NodeID: "node-b"},
 		ExpectedSelectionRevision: 3, ExpectedConfigRevision: 7,
 		ExpectedGenerationID: &generation, ExpectedDeclarationRevision: 11,
 		ExpectedDeclarationSHA256: strings.Repeat("a", 64),
