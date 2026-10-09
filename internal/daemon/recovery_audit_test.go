@@ -128,21 +128,27 @@ func TestRecoveryAuditRuleSetClosureVerifiesPrivateContentAddressedPath(t *testi
 		Ref: "test-rules", RuntimeTag: "rs-test", RuntimePath: path,
 		SHA256: sha, Format: compiler.RuleSetFormatSource,
 	}
-	if !auditRuleSetResources(context.Background(), root, []compiler.NativeRuleSetManifest{rule}) {
+	budget := maxRecoveryAuditRuleBytes
+	if !auditRuleSetResources(context.Background(), root, []compiler.NativeRuleSetManifest{rule}, &budget) {
 		t.Fatal("valid private content-addressed resource was rejected")
 	}
 	other := rule
 	other.RuntimePath = filepath.Join(t.TempDir(), sha+".json")
-	if auditRuleSetResources(context.Background(), root, []compiler.NativeRuleSetManifest{other}) {
+	if auditRuleSetResources(context.Background(), root, []compiler.NativeRuleSetManifest{other}, &budget) {
 		t.Fatal("external arbitrary path was accepted as a retained resource")
 	}
-	if auditRuleSetResources(context.Background(), "", []compiler.NativeRuleSetManifest{rule}) {
+	if auditRuleSetResources(context.Background(), "", []compiler.NativeRuleSetManifest{rule}, &budget) {
 		t.Fatal("missing resource root was treated as verified")
 	}
+	budget = 1
+	if auditRuleSetResources(context.Background(), root, []compiler.NativeRuleSetManifest{rule}, &budget) {
+		t.Fatal("audit ignored global resource byte budget")
+	}
+	budget = maxRecoveryAuditRuleBytes
 	if err := os.WriteFile(path, []byte(`{"tampered":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if auditRuleSetResources(context.Background(), root, []compiler.NativeRuleSetManifest{rule}) {
+	if auditRuleSetResources(context.Background(), root, []compiler.NativeRuleSetManifest{rule}, &budget) {
 		t.Fatal("tampered rule set hash was accepted")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 
 const maxRecoveryAuditedGenerations = 12
 const maxRecoveryAuditedRuleSets = 128
+const maxRecoveryAuditRuleBytes = int64(128 << 20)
 
 var ErrRecoveryAuditChanged = errors.New("recovery audit state changed")
 
@@ -54,6 +56,7 @@ func recoveryAudit(ctx context.Context, store *storage.Store, stateRoot string) 
 		RestoreSupported:           false,
 		Generations:                make([]apiv1.RecoveryGenerationAudit, 0, len(refs)),
 	}
+	bytesRemaining := maxRecoveryAuditRuleBytes
 	for _, ref := range refs {
 		if err := ctx.Err(); err != nil {
 			return apiv1.RecoveryAuditResponse{}, err
@@ -68,7 +71,7 @@ func recoveryAudit(ctx context.Context, store *storage.Store, stateRoot string) 
 			RestoreReady:            false,
 		}
 		if ref.PayloadRetained {
-			item = inspectRetainedGeneration(ctx, store, stateRoot, item)
+			item = inspectRetainedGeneration(ctx, store, stateRoot, item, &bytesRemaining)
 		}
 		result.Generations = append(result.Generations, item)
 	}
@@ -99,7 +102,7 @@ func auditDigest(data []byte, expected string, maxSize int) bool {
 
 func inspectRetainedGeneration(
 	ctx context.Context, store *storage.Store, stateRoot string,
-	item apiv1.RecoveryGenerationAudit,
+	item apiv1.RecoveryGenerationAudit, bytesRemaining *int64,
 ) apiv1.RecoveryGenerationAudit {
 	item.Status = "payload_unavailable"
 	artifacts, err := store.GenerationArtifacts(ctx, item.GenerationID)
@@ -136,7 +139,7 @@ func inspectRetainedGeneration(
 	item.DeclarationRevision = manifest.DeclarationRevision
 	item.RuleSetCount = len(manifest.RuleSets)
 	item.Status = "rule_set_resources_unverified"
-	if !auditRuleSetResources(ctx, stateRoot, manifest.RuleSets) {
+	if !auditRuleSetResources(ctx, stateRoot, manifest.RuleSets, bytesRemaining) {
 		return item
 	}
 	item.RuleSetResourcesVerified = true
@@ -146,11 +149,11 @@ func inspectRetainedGeneration(
 	return item
 }
 
-func auditRuleSetResources(ctx context.Context, stateRoot string, rules []compiler.NativeRuleSetManifest) bool {
+func auditRuleSetResources(ctx context.Context, stateRoot string, rules []compiler.NativeRuleSetManifest, bytesRemaining *int64) bool {
 	if len(rules) == 0 {
 		return true
 	}
-	if stateRoot == "" || !filepath.IsAbs(stateRoot) {
+	if bytesRemaining == nil || *bytesRemaining <= 0 || stateRoot == "" || !filepath.IsAbs(stateRoot) {
 		return false
 	}
 	root := filepath.Join(stateRoot, "core", "rule-sets", "sha256")
@@ -176,9 +179,23 @@ func auditRuleSetResources(ctx context.Context, stateRoot string, rules []compil
 		// Only inspect the known private content-addressed store. Do not open
 		// an arbitrary path supplied by stored manifest bytes.
 		expected := filepath.Join(root, rule.SHA256+extension)
-		if rule.RuntimePath != expected || coreartifact.VerifyRuleSet(expected, rule.SHA256) != nil {
+		if rule.RuntimePath != expected {
 			return false
 		}
+		// A conservative total disk-I/O budget prevents an operator audit
+		// of many retained generations from repeatedly hashing huge files.
+		// The existing verifier independently enforces private ownership,
+		// regular file, no final-symlink and the expected content digest.
+		info, err := os.Lstat(expected)
+		if err != nil || !info.Mode().IsRegular() || info.Size() < 0 ||
+			info.Size() > coreartifact.MaxRuleSetUploadBytes ||
+			info.Size() > *bytesRemaining {
+			return false
+		}
+		if coreartifact.VerifyRuleSet(expected, rule.SHA256) != nil {
+			return false
+		}
+		*bytesRemaining -= info.Size()
 	}
 	return true
 }
