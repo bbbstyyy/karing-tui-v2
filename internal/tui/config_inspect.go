@@ -122,8 +122,9 @@ func projectConfigInspection(raw apiv1.ConfigInspectionResponse) ([]string, []st
 	}
 	head := fmt.Sprintf("Stored applied generation %d / config rev %d / declaration rev %d",
 		raw.GenerationID, raw.ConfigRevision, raw.AppliedDeclarationRevision)
-	drift := fmt.Sprintf("Current declaration rev %d | staged=%t routing changed=%t DNS changed=%t rule sets changed=%t",
-		raw.CurrentDeclarationRevision, raw.StagedUnapplied,
+	drift := fmt.Sprintf("Current declaration rev %d | staged=%t",
+		raw.CurrentDeclarationRevision, raw.StagedUnapplied)
+	changes := fmt.Sprintf("Preview delta: routing changed=%t DNS changed=%t rule sets changed=%t",
 		raw.RoutingChanged, raw.DNSChanged, raw.RuleSetsChanged)
 	if !raw.StagedUnapplied && (raw.RoutingChanged || raw.DNSChanged || raw.RuleSetsChanged ||
 		raw.CurrentDeclarationRevision != raw.AppliedDeclarationRevision) {
@@ -135,7 +136,7 @@ func projectConfigInspection(raw apiv1.ConfigInspectionResponse) ([]string, []st
 	common := []string{
 		head,
 		"Evidence: APPLIED DECLARATION reconstruction, not live route/DNS observation",
-		drift,
+		drift, changes,
 	}
 	routing := append([]string(nil), common...)
 	routing = append(routing,
@@ -191,9 +192,11 @@ func projectConfigInspection(raw apiv1.ConfigInspectionResponse) ([]string, []st
 			if row.Enabled && layer.Enabled {
 				state = "on"
 			}
-			routing = append(routing, fmt.Sprintf("  #%d %s (%s) [%s] match=%s target=%s dns=%s",
-				row.Order, inspectionSafeID(row.ID), row.Origin, state, matcher,
-				inspectionTarget(row.Target), inspectionSafeID(row.DNSProfile)))
+			routing = append(routing,
+				fmt.Sprintf("  #%d %s (%s) [%s] match=%s",
+					row.Order, inspectionSafeID(row.ID), row.Origin, state, matcher),
+				fmt.Sprintf("      target=%s dns=%s",
+					inspectionTarget(row.Target), inspectionSafeID(row.DNSProfile)))
 			if i != 4 {
 				shown++
 			}
@@ -241,9 +244,10 @@ func projectConfigInspection(raw apiv1.ConfigInspectionResponse) ([]string, []st
 			}
 			detour = inspectionTarget(*row.Detour)
 		}
-		dns = append(dns, fmt.Sprintf("  %s [%s] %s/%d upstream=%s bootstrap=%s detour=%s",
-			inspectionSafeID(row.ID), row.Role, row.Transport, row.Port,
-			row.UpstreamKind, inspectionSafeID(row.BootstrapID), detour))
+		dns = append(dns,
+			fmt.Sprintf("  %s [%s] %s/%d upstream=%s",
+				inspectionSafeID(row.ID), row.Role, row.Transport, row.Port, row.UpstreamKind),
+			fmt.Sprintf("      bootstrap=%s detour=%s", inspectionSafeID(row.BootstrapID), detour))
 	}
 	// Final defensive sanitizer: no raw upstream error or matcher payload is
 	// retained in the Bubble Tea model even if a hostile daemon replies.
