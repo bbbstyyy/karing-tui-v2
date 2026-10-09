@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	maxRouteProbeInput = 253
-	maxRouteProbeTrace = 16
+	maxRouteProbeInput   = 253
+	maxRouteProbeTrace   = 16
 	maxRouteProbeUnknown = 4
 )
 
@@ -254,20 +254,20 @@ func routeProbeTarget(target *domain.TargetRef) string {
 
 func projectRouteProbe(response apiv1.RouteExplainResponse) routeProbeSummary {
 	summary := routeProbeSummary{
-		entry: string(response.Entry),
+		entry:    string(response.Entry),
 		evidence: response.Evidence, decision: response.Decision,
-		configRevision: response.ConfigRevision,
-		generationID: response.GenerationID,
+		configRevision:      response.ConfigRevision,
+		generationID:        response.GenerationID,
 		declarationRevision: response.DeclarationRevision,
-		routingMode: clipRouteText(response.RoutingMode),
-		privateDirect: response.PrivateDirect,
-		source: clipRouteText(response.Source),
-		layer: clipRouteText(string(response.Layer)),
-		group: clipRouteText(response.GroupID),
-		target: routeProbeTarget(response.Target),
-		dnsProfile: clipRouteText(response.DNSProfileID),
-		action: clipRouteText(response.Action),
-		traceTotal: len(response.Trace),
+		routingMode:         clipRouteText(response.RoutingMode),
+		privateDirect:       response.PrivateDirect,
+		source:              clipRouteText(response.Source),
+		layer:               clipRouteText(string(response.Layer)),
+		group:               clipRouteText(response.GroupID),
+		target:              routeProbeTarget(response.Target),
+		dnsProfile:          clipRouteText(response.DNSProfileID),
+		action:              clipRouteText(response.Action),
+		traceTotal:          len(response.Trace),
 	}
 	if response.Input.Domain != "" {
 		summary.query = response.Input.Domain
@@ -369,7 +369,7 @@ func (m Model) routeProbeLines() []string {
 		fmt.Sprintf("Routing mode: %s | private-direct: %t", s.routingMode, s.privateDirect),
 		fmt.Sprintf("Source: %s | layer: %s | group: %s", fallbackRouteField(s.source), fallbackRouteField(s.layer), fallbackRouteField(s.group)),
 		fmt.Sprintf("Action: %s | target: %s", fallbackRouteField(s.action), s.target),
-		"DNS profile binding: " + fallbackRouteField(s.dnsProfile) + " (NOT observed DNS use)",
+		"DNS profile binding: "+fallbackRouteField(s.dnsProfile)+" (NOT observed DNS use)",
 		"Generation is a snapshot at query time; current declaration/core may differ.",
 	)
 	if s.evidence == "unknown" {
