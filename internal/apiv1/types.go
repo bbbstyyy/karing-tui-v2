@@ -237,7 +237,10 @@ type CurrentSelectionResponse struct {
 	ConfigRevision      uint64           `json:"config_revision"`
 	AppliedGenerationID *int64           `json:"applied_generation_id"`
 	DeclarationRevision uint64           `json:"declaration_revision"`
-	DeclarationSHA256   string           `json:"declaration_sha256"`
+	DeclarationSHA256   string             `json:"declaration_sha256"`
+	Candidates          []domain.TargetRef `json:"candidates,omitempty"`
+	CandidateCount      int                `json:"candidate_count"`
+	CandidatesTruncated bool               `json:"candidates_truncated"`
 }
 
 type RouteExplainRequest struct {

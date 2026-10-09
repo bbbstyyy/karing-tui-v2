@@ -19,6 +19,8 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
+const maxCurrentSelectionCandidates = 128
+
 var (
 	ErrCurrentSelectionUnavailable = errors.New("current selection is unavailable")
 	ErrCurrentSelectionTarget      = errors.New("invalid current selection target")
@@ -53,6 +55,9 @@ type CurrentSelectionState struct {
 	AppliedGenerationID *int64
 	DeclarationRevision uint64
 	DeclarationSHA256   string
+	Candidates          []domain.TargetRef
+	CandidateCount      int
+	CandidatesTruncated bool
 }
 
 type CurrentSelectionCoordinator struct {
@@ -85,6 +90,20 @@ func (c *CurrentSelectionCoordinator) Get(ctx context.Context) (CurrentSelection
 	if err != nil {
 		return CurrentSelectionState{}, err
 	}
+	// Only the generation-bound declaration defines selectable members.
+	parsed, err := declaration.ParseV1(current.DocumentJSON)
+	if err != nil {
+		return CurrentSelectionState{}, fmt.Errorf("%w: parse bound candidate list", ErrCurrentSelectionUnavailable)
+	}
+	members := parsed.Selection.Current.Members
+	count := len(members)
+	if count == 0 {
+		return CurrentSelectionState{}, ErrCurrentSelectionUnavailable
+	}
+	truncated := count > maxCurrentSelectionCandidates
+	if truncated {
+		members = members[:maxCurrentSelectionCandidates]
+	}
 	var target domain.TargetRef
 	var updatedAt time.Time
 	if persisted {
@@ -94,11 +113,7 @@ func (c *CurrentSelectionCoordinator) Get(ctx context.Context) (CurrentSelection
 		}
 		updatedAt = intent.UpdatedAt
 	} else {
-		model, parseErr := declaration.ParseV1(current.DocumentJSON)
-		if parseErr != nil {
-			return CurrentSelectionState{}, parseErr
-		}
-		target = model.Selection.Current.Default
+		target = parsed.Selection.Current.Default
 	}
 
 	runtimeTag, err := declaration.CurrentSelectionRuntimeTag(current.DocumentJSON, target)
@@ -115,6 +130,9 @@ func (c *CurrentSelectionCoordinator) Get(ctx context.Context) (CurrentSelection
 		AppliedGenerationID: snapshot.AppliedGenerationID,
 		DeclarationRevision: current.Revision,
 		DeclarationSHA256:   current.SHA256,
+		Candidates:          append([]domain.TargetRef(nil), members...),
+		CandidateCount:      count,
+		CandidatesTruncated: truncated,
 	}
 	if c.core == nil || c.core.Snapshot().State != core.StateRunning {
 		return state, nil

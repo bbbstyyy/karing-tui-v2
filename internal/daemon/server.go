@@ -818,6 +818,9 @@ func currentSelectionResponse(value CurrentSelectionState) apiv1.CurrentSelectio
 		AppliedGenerationID: value.AppliedGenerationID,
 		DeclarationRevision: value.DeclarationRevision,
 		DeclarationSHA256:   value.DeclarationSHA256,
+		Candidates:          value.Candidates,
+		CandidateCount:      value.CandidateCount,
+		CandidatesTruncated: value.CandidatesTruncated,
 	}
 	if !value.UpdatedAt.IsZero() {
 		response.UpdatedAt = value.UpdatedAt.Format(time.RFC3339Nano)

@@ -25,6 +25,7 @@ type API interface {
 	PutProfileNodeOverlay(context.Context, string, string, apiv1.ProfileNodeOverlayPutRequest) (apiv1.ProfileNodeOverlayResponse, error)
 	RouteExplain(context.Context, apiv1.RouteExplainRequest) (apiv1.RouteExplainResponse, error)
 	CurrentSelection(context.Context) (apiv1.CurrentSelectionResponse, error)
+	SetCurrentSelectionChecked(context.Context, apiv1.CurrentSelectionCheckedRequest) (apiv1.CurrentSelectionResponse, error)
 	ObservedConnections(context.Context) (apiv1.ObservedConnectionsResponse, error)
 }
 
@@ -270,10 +271,29 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case selectionObservationLoaded:
 		m.acceptSelectionObservation(msg)
 		return m, nil
+	case selectionWriteLoaded:
+		return m, m.acceptSelectionWrite(msg)
 	case connectionsObservationLoaded:
 		m.acceptConnectionsObservation(msg)
 		return m, nil
 	case tea.KeyMsg:
+		if m.selection.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.selection.pending != nil {
+			switch msg.String() {
+			case "y":
+				return m, m.confirmSelection()
+			case "esc":
+				m.selection.pending = nil
+				m.selection.notice = "Selection proposal cancelled; no write sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Quitting cancels an unconfirmed proposal.
+			default:
+				return m, nil
+			}
+		}
 		if m.page == routePage && m.route.editing {
 			return m.updateRouteProbeEditing(msg)
 		}
@@ -352,7 +372,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.switchPage(profilesPage)
 			}
 		case "up", "k":
-			if m.page == connectionsPage && m.connections.scroll > 0 {
+			if m.page == selectionPage && m.selection.ready && m.selection.selected > 0 {
+				m.selection.selected--
+			} else if m.page == connectionsPage && m.connections.scroll > 0 {
 				m.connections.scroll--
 			} else if m.page == routePage && m.route.scroll > 0 {
 				m.route.scroll--
@@ -362,7 +384,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.nodesScroll--
 			}
 		case "down", "j":
-			if m.page == connectionsPage && m.connections.scroll+1 < len(m.connectionsObservationLines()) {
+			if m.page == selectionPage && m.selection.ready && m.selection.selected+1 < len(m.selection.result.candidates) {
+				m.selection.selected++
+			} else if m.page == connectionsPage && m.connections.scroll+1 < len(m.connectionsObservationLines()) {
 				m.connections.scroll++
 			} else if m.page == routePage && m.route.scroll+1 < len(m.routeProbeLines()) {
 				m.route.scroll++
@@ -372,7 +396,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.nodesScroll++
 			}
 		case "enter":
-			if m.page == profilesPage && m.selectedProfileID() != "" {
+			if m.page == selectionPage {
+				m.proposeSelection()
+			} else if m.page == profilesPage && m.selectedProfileID() != "" {
 				return m, m.switchPage(nodesPage)
 			}
 		case "f":
@@ -491,6 +517,15 @@ func (m Model) View() string {
 		case routePage:
 			start := min(m.route.scroll, len(body)-limit)
 			body = body[start:min(len(body), start+limit)]
+		case selectionPage:
+			start := 0
+			if m.selection.ready && len(m.selection.result.candidates) > 0 {
+				// Eight fixed summary lines precede the candidate list.
+				selectedLine := 8 + m.selection.selected
+				start = max(0, selectedLine-limit+1)
+				start = min(start, len(body)-limit)
+			}
+			body = body[start:min(len(body), start+limit)]
 		case connectionsPage:
 			start := min(m.connections.scroll, len(body)-limit)
 			body = body[start:min(len(body), start+limit)]
@@ -511,7 +546,16 @@ func (m Model) View() string {
 	if m.overlayConfirm != nil {
 		help = "y: CONFIRM " + m.overlayConfirm.action + "  Esc: cancel  (daemon only; no core apply)"
 	} else if m.page == selectionPage {
-		help = "Selector read-only; r: reload  Tab: page  q: quit"
+		help = "j/k: choose  Enter: propose  r: reload  Tab: page  q: quit"
+		if m.selection.pending != nil {
+			help = "y: CONFIRM checked selection write  Esc: cancel  q: exit without write"
+		} else if m.selection.writing {
+			help = "Saving selection: q exits TUI; daemon-accepted writes may finish."
+		} else if m.selection.active {
+			help = "Reading selection; q exits TUI (no writes by read)."
+		} else if m.selection.failed || !m.selection.result.editable {
+			help = "Selection unavailable/read-only; r: reload  Tab: page  q: quit"
+		}
 	} else if m.page == connectionsPage {
 		help = "Snapshot only (no polling); r: reload  j/k: scroll  Tab: page  q: quit"
 	} else if m.page == routePage {

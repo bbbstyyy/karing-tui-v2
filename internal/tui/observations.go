@@ -29,12 +29,23 @@ type selectionObservation struct {
 	ready    bool
 	failed   bool
 	result   selectionSummary
+	selected int
+	pending  *selectionProposal
+	writing  bool
+	writeSeq uint64
+	notice   string
 }
 
 type selectionSummary struct {
-	target    string
-	persisted bool
-	live      string
+	target       string
+	targetRef    domain.TargetRef
+	persisted    bool
+	live         string
+	candidates   []domain.TargetRef
+	total        int
+	truncated    bool
+	editable     bool
+	expected     apiv1.CurrentSelectionCheckedRequest
 }
 
 type selectionObservationLoaded struct {
@@ -86,9 +97,13 @@ type connectionsObservationLoaded struct {
 }
 
 func (s *selectionObservation) discardAndForget() {
+	s.sequence++ // Invalidate stale completions on page leave and immediate reentry.
 	s.discard = true
-	s.ready, s.failed = false, false
+	s.active, s.ready, s.failed = false, false, false
 	s.result = selectionSummary{}
+	s.pending = nil
+	s.selected = 0
+	s.notice = ""
 }
 
 func (s *connectionsObservation) discardAndForget() {
@@ -99,14 +114,16 @@ func (s *connectionsObservation) discardAndForget() {
 }
 
 func (m *Model) requestSelectionObservation() tea.Cmd {
-	if m.page != selectionPage || m.selection.active {
+	if m.page != selectionPage || m.selection.active || m.selection.writing {
 		return nil
 	}
+	m.selection.pending = nil
 	m.selection.sequence++
 	m.selection.active = true
 	m.selection.discard = false
 	m.selection.ready, m.selection.failed = false, false
 	m.selection.result = selectionSummary{}
+	m.selection.selected = 0
 	return loadSelectionObservation(m.ctx, m.api, m.selection.sequence)
 }
 
@@ -124,25 +141,11 @@ func loadSelectionObservation(ctx context.Context, api API, sequence uint64) tea
 			msg.failed = true
 			return msg
 		}
-		if err := raw.Target.Validate(); err != nil {
+		result, err := projectSelectionObservation(raw)
+		if err != nil {
+			// Never retain raw daemon errors or a rejected response.
 			msg.failed = true
 			return msg
-		}
-		if raw.Applied && (raw.LiveRuntimeTag == "" || raw.LiveRuntimeTag != raw.RuntimeTag) {
-			msg.failed = true
-			return msg
-		}
-		result := selectionSummary{
-			target:    routeProbeTarget(&raw.Target),
-			persisted: raw.Persisted,
-			live:      "not observed (core stopped or unavailable)",
-		}
-		if raw.LiveRuntimeTag != "" {
-			if raw.Applied {
-				result.live = "matches durable intent"
-			} else {
-				result.live = "MISMATCH (durable intent not live)"
-			}
 		}
 		msg.result = result
 		return msg
@@ -159,33 +162,83 @@ func (m *Model) acceptSelectionObservation(msg selectionObservationLoaded) {
 	}
 	m.selection.ready = !msg.failed
 	m.selection.failed = msg.failed
-	if !msg.failed {
-		m.selection.result = msg.result
+	if msg.failed {
+		m.selection.notice = "Readback unavailable; no selection state assumed."
+		return
+	}
+	m.selection.result = msg.result
+	m.selection.selected = 0
+	for i, candidate := range msg.result.candidates {
+		if candidate == msg.result.targetRef {
+			m.selection.selected = i
+			break
+		}
 	}
 }
 
 func (m Model) selectionObservationLines() []string {
 	lines := []string{
-		"CurrentSelected: read-only intent and live selector evidence",
-		"Changing selection requires daemon-side CAS, not yet available in TUI.",
+		"CurrentSelected: read-only evidence + confirmed guarded CAS edits",
+		"Choose j/k; Enter proposes a change; y confirms; Esc cancels.",
 	}
 	switch {
+	case m.selection.writing:
+		return append(lines, "Selection write in flight; daemon may commit before TUI exits.")
 	case m.selection.active:
-		return append(lines, "Reading local daemon selection...")
+		return append(lines, "Reading one local daemon selection snapshot...")
 	case m.selection.failed:
-		return append(lines, "Selection unavailable or inconsistent; no default assumed. Press r.")
+		return append(lines, "Selection unavailable or inconsistent. Press r to reload.")
 	case !m.selection.ready:
 		return append(lines, "Press r to inspect persisted and live selection.")
 	}
 	s := m.selection.result
-	lines = append(lines, "Selected typed target: "+s.target)
+	intent := "bound declaration default (not explicitly persisted)"
 	if s.persisted {
-		lines = append(lines, "Intent: persisted (survives core restarts)")
-	} else {
-		lines = append(lines, "Intent: bound declaration default (not explicitly persisted)")
+		intent = "persisted (survives core restarts)"
 	}
-	lines = append(lines, "Live selector readback: "+s.live)
-	return append(lines, "No core or declaration was changed by this page.")
+	notice := m.selection.notice
+	if m.selection.pending != nil {
+		notice = "CONFIRM change to " + safeText(routeProbeTarget(&m.selection.pending.target), 100) + " (not yet written)"
+	} else if notice == "" && !s.editable {
+		if s.truncated {
+			notice = "Candidate list truncated; editing disabled until pagination is available."
+		} else {
+			notice = "No safe bound candidate snapshot; selection stays read-only."
+		}
+	}
+	if notice == "" {
+		notice = "No write proposed. Select a different target and press Enter."
+	}
+	lines = append(lines,
+		"Selected target: "+s.target,
+		"Intent: "+intent,
+		"Live selector readback: "+s.live,
+		fmt.Sprintf("Binding: generation=%s config=%d declaration=%d selection rev=%d",
+			generationLabel(s.expected.ExpectedGenerationID), s.expected.ExpectedConfigRevision,
+			s.expected.ExpectedDeclarationRevision, s.expected.ExpectedSelectionRevision),
+		fmt.Sprintf("Candidates: %d total, %d shown%s",
+			s.total, len(s.candidates), selectionTruncatedSuffix(s.truncated)),
+		"Status: "+notice,
+	)
+	for i, candidate := range s.candidates {
+		cursor := "  "
+		if i == m.selection.selected {
+			cursor = "> "
+		}
+		marker := " "
+		if candidate == s.targetRef {
+			marker = "*"
+		}
+		lines = append(lines, cursor+marker+" "+safeText(routeProbeTarget(&candidate), 120))
+	}
+	return lines
+}
+
+func selectionTruncatedSuffix(truncated bool) string {
+	if truncated {
+		return " (truncated: edits disabled)"
+	}
+	return ""
 }
 
 func (m *Model) requestConnectionsObservation() tea.Cmd {

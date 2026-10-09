@@ -1217,3 +1217,11 @@ docs/
 - 使用请求序号拒绝旧响应，列表展示数量和节点分页有界；窄屏、中文显示宽度、终端控制字符及 bidi 格式字符统一受保护。
 - `q`/Ctrl-C 只退出界面，不写 daemon/core 状态；错误安全概括，不输出订阅凭据或原始错误文本。
 - 仅为 M4 UI 基础，不表示 M3 协议支持、路由/DNS 编辑、CN 资源闭包或正式稳定门槛已完成。
+
+
+### 2026-10-09 M4 CurrentSelected CAS 与 TUI 候选切换切片
+
+- schema v16 的选择修订号与已应用代际/声明 SHA-256 条件更新已落地，旧 PUT 也递增相同 revision；409 冲突不写入，502/超时后先回读，不假定回滚。
+- TUI Selector 使用绑定到已应用声明的 CurrentSelected 成员列表，仅支持固定节点、Global URLTest 和 Custom URLTest；候选上限 128，超出时明确截断并禁用编辑。
+- Enter 提议、y 确认、Esc 取消；写入有界异步、单操作在途，提交后必须重新 GET 选择及 live readback；终端退出不停止 daemon/core。
+- 此切片不变更五层分流、订阅/ISP 排除策略、CN 28 组、DNS 或内核版本；仍不表示 M4 全功能和 M5 发布门槛完成。详见 ADR 0076、0077。
