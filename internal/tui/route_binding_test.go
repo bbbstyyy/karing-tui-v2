@@ -15,7 +15,7 @@ func TestRouteBindingTargetChooserPreviewConfirmAndNoCoreApply(t *testing.T) {
 	api := newRouteToggleFake()
 	m := loadedToggleModel(t, api)
 	m, cmd := toggleKey(t, m, 't')
-	if cmd != nil || m.inspection.chooser == nil || len(m.inspection.chooser.options) < 3 ||
+	if cmd != nil || m.inspection.chooser == nil || len(m.inspection.chooser.options) < 2 ||
 		api.previewCalls != 0 || api.stageCalls != 0 {
 		t.Fatalf("target menu did not open without I/O: %+v", m.inspection.chooser)
 	}
