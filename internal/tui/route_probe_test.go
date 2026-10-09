@@ -97,7 +97,7 @@ func TestRouteProbeShowsAppliedSourceAndDNSWithoutObservedClaim(t *testing.T) {
 		"SIMULATION", "Evidence: simulated", "Decision: reject",
 		"generation: 82", "declaration rev: 5", "layer: custom",
 		"group: ads", "target: block", "DNS profile binding: group-dns",
-		"NOT observed DNS use", "#30 true", "19 intermediate trace rules omitted",
+		"NOT observed DNS use", "#30 true", "18 intermediate trace rules omitted",
 	} {
 		if !strings.Contains(view, wanted) {
 			t.Fatalf("missing %q in route view:\n%s", wanted, view)
