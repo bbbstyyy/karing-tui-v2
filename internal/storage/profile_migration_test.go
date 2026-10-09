@@ -46,6 +46,25 @@ func TestSchemaV9AddsProfileSnapshotsToV8Database(t *testing.T) {
 		_ = db.Close()
 		t.Fatal(err)
 	}
+	// Schema v8 already included migration 6's singleton selection_state.
+	// Omitting it would fabricate a corrupted database, not a v8 fixture.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE selection_state (
+			singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+			current_target_json BLOB,
+			updated_at TEXT
+		)
+	`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO selection_state(singleton, current_target_json, updated_at)
+		VALUES(1, '{"kind":"direct"}', '2026-10-07T00:00:00Z')
+	`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +79,12 @@ func TestSchemaV9AddsProfileSnapshotsToV8Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 15 {
-		t.Fatalf("schema version = %d, want 15", version)
+	if version != 16 {
+		t.Fatalf("schema version = %d, want 16", version)
+	}
+	intent, persisted, err := store.CurrentSelectionIntent(ctx)
+	if err != nil || !persisted || intent.Revision != 0 || string(intent.TargetJSON) != `{"kind":"direct"}` {
+		t.Fatalf("v8 persisted selection changed by migration: %+v persisted=%t err=%v", intent, persisted, err)
 	}
 
 	var metadataObservedColumn string
