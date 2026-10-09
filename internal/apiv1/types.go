@@ -139,51 +139,51 @@ type ConfigInspectionDNSProfile struct {
 // RouteEditContext contains non-secret, optimistic bindings needed to form an
 // edit proposal. A staged declaration is not evidence of live core behavior.
 type RouteEditContext struct {
-	APIVersion             string `json:"api_version"`
-	DeclarationRevision    uint64 `json:"declaration_revision"`
-	DeclarationSHA256      string `json:"declaration_sha256"`
-	ConfigRevision         uint64 `json:"config_revision"`
-	AppliedGenerationID    *int64 `json:"applied_generation_id"`
-	SelectionRevision      uint64 `json:"selection_revision"`
+	APIVersion          string `json:"api_version"`
+	DeclarationRevision uint64 `json:"declaration_revision"`
+	DeclarationSHA256   string `json:"declaration_sha256"`
+	ConfigRevision      uint64 `json:"config_revision"`
+	AppliedGenerationID *int64 `json:"applied_generation_id"`
+	SelectionRevision   uint64 `json:"selection_revision"`
 }
 
 // RouteEditRequest changes precisely one field of an existing route group.
 // Missing pointers mean "no edit"; a DNS pointer to "" explicitly clears it.
 type RouteEditRequest struct {
-	ExpectedDeclarationRevision uint64               `json:"expected_declaration_revision"`
-	ExpectedDeclarationSHA256   string               `json:"expected_declaration_sha256"`
-	ExpectedConfigRevision      uint64               `json:"expected_config_revision"`
-	ExpectedGenerationID        *int64               `json:"expected_generation_id"`
-	ExpectedSelectionRevision   uint64               `json:"expected_selection_revision"`
-	Layer                       domain.RoutingLayer  `json:"layer"`
-	GroupID                     string               `json:"group_id"`
-	Enabled                     *bool                `json:"enabled,omitempty"`
-	Target                      *domain.TargetRef    `json:"target,omitempty"`
-	DNSProfileID                *string              `json:"dns_profile_id,omitempty"`
+	ExpectedDeclarationRevision uint64              `json:"expected_declaration_revision"`
+	ExpectedDeclarationSHA256   string              `json:"expected_declaration_sha256"`
+	ExpectedConfigRevision      uint64              `json:"expected_config_revision"`
+	ExpectedGenerationID        *int64              `json:"expected_generation_id"`
+	ExpectedSelectionRevision   uint64              `json:"expected_selection_revision"`
+	Layer                       domain.RoutingLayer `json:"layer"`
+	GroupID                     string              `json:"group_id"`
+	Enabled                     *bool               `json:"enabled,omitempty"`
+	Target                      *domain.TargetRef   `json:"target,omitempty"`
+	DNSProfileID                *string             `json:"dns_profile_id,omitempty"`
 }
 
 // A preview receipt can be handed back as a stage request with both immutable
 // digests. The candidate and native JSON are deliberately absent.
 type RouteEditPreviewResponse struct {
-	APIVersion           string             `json:"api_version"`
-	Request              RouteEditRequest   `json:"request"`
-	Origin               string             `json:"origin"`
-	BeforeEnabled        bool               `json:"before_enabled"`
-	AfterEnabled         bool               `json:"after_enabled"`
-	BeforeTarget         domain.TargetRef   `json:"before_target"`
-	AfterTarget          domain.TargetRef   `json:"after_target"`
-	BeforeDNSProfileID   string             `json:"before_dns_profile_id"`
-	AfterDNSProfileID    string             `json:"after_dns_profile_id"`
-	CandidateSHA256      string             `json:"candidate_sha256"`
-	NativeConfigSHA256   string             `json:"native_config_sha256"`
-	NativeSchemaID       string             `json:"native_schema_id"`
-	RouteEntryCount      int                `json:"route_entry_count"`
-	DNSServerCount       int                `json:"dns_server_count"`
-	RuleSetCount         int                `json:"rule_set_count"`
-	CompilerValidated    bool               `json:"compiler_validated"`
-	CoreValidated        bool               `json:"core_validated"`
-	Staged               bool               `json:"staged"`
-	Applied              bool               `json:"applied"`
+	APIVersion         string           `json:"api_version"`
+	Request            RouteEditRequest `json:"request"`
+	Origin             string           `json:"origin"`
+	BeforeEnabled      bool             `json:"before_enabled"`
+	AfterEnabled       bool             `json:"after_enabled"`
+	BeforeTarget       domain.TargetRef `json:"before_target"`
+	AfterTarget        domain.TargetRef `json:"after_target"`
+	BeforeDNSProfileID string           `json:"before_dns_profile_id"`
+	AfterDNSProfileID  string           `json:"after_dns_profile_id"`
+	CandidateSHA256    string           `json:"candidate_sha256"`
+	NativeConfigSHA256 string           `json:"native_config_sha256"`
+	NativeSchemaID     string           `json:"native_schema_id"`
+	RouteEntryCount    int              `json:"route_entry_count"`
+	DNSServerCount     int              `json:"dns_server_count"`
+	RuleSetCount       int              `json:"rule_set_count"`
+	CompilerValidated  bool             `json:"compiler_validated"`
+	CoreValidated      bool             `json:"core_validated"`
+	Staged             bool             `json:"staged"`
+	Applied            bool             `json:"applied"`
 }
 
 type RouteEditStageRequest struct {

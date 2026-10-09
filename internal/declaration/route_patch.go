@@ -88,8 +88,7 @@ func PatchRouteGroupV1(document []byte, patch RoutePatch) (RoutePatchResult, err
 			return RoutePatchResult{}, fmt.Errorf("%w: group does not exist in specified layer", ErrRoutePatchInvalid)
 		}
 	}
-	if patch.Layer != domain.LayerFinal && model.RegionAppend != nil && (
-		(patch.Layer == domain.LayerGeoSite && patch.GroupID == "region:auto-geosite:"+model.RegionAppend.RegionCode) ||
+	if patch.Layer != domain.LayerFinal && model.RegionAppend != nil && ((patch.Layer == domain.LayerGeoSite && patch.GroupID == "region:auto-geosite:"+model.RegionAppend.RegionCode) ||
 		(patch.Layer == domain.LayerGeoIP && patch.GroupID == "region:auto-geoip:"+model.RegionAppend.RegionCode)) {
 		return RoutePatchResult{}, fmt.Errorf("%w: generated region groups are not directly editable", ErrRoutePatchInvalid)
 	}
@@ -329,4 +328,3 @@ func assignRoutePatchField(object map[string]json.RawMessage, final string, patc
 	object[field] = encoded
 	return nil
 }
-

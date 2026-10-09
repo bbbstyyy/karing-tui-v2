@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	ErrRouteEditConflict = errors.New("route edit optimistic binding conflict")
-	ErrRouteEditRejected = errors.New("route edit or DNS binding cannot be compiled")
+	ErrRouteEditConflict    = errors.New("route edit optimistic binding conflict")
+	ErrRouteEditRejected    = errors.New("route edit or DNS binding cannot be compiled")
 	ErrRouteEditUnavailable = errors.New("route edit unavailable")
 )
 
@@ -58,12 +58,12 @@ func routeEditContext(ctx context.Context, store *storage.Store) (apiv1.RouteEdi
 		return apiv1.RouteEditContext{}, ErrRouteEditConflict
 	}
 	return apiv1.RouteEditContext{
-		APIVersion: apiv1.Version,
+		APIVersion:          apiv1.Version,
 		DeclarationRevision: current.Revision,
-		DeclarationSHA256: current.SHA256,
-		ConfigRevision: snapshot.Revision,
+		DeclarationSHA256:   current.SHA256,
+		ConfigRevision:      snapshot.Revision,
 		AppliedGenerationID: cloneRouteEditGeneration(snapshot.AppliedGenerationID),
-		SelectionRevision: intent.Revision,
+		SelectionRevision:   intent.Revision,
 	}, nil
 }
 
@@ -101,7 +101,7 @@ func validateRouteEditBinding(base apiv1.RouteEditContext, req apiv1.RouteEditRe
 }
 
 type routeEditEvaluated struct {
-	preview apiv1.RouteEditPreviewResponse
+	preview  apiv1.RouteEditPreviewResponse
 	document []byte
 }
 
@@ -152,25 +152,25 @@ func evaluateRouteEdit(
 	return routeEditEvaluated{
 		document: edit.Document,
 		preview: apiv1.RouteEditPreviewResponse{
-			APIVersion: apiv1.Version,
-			Request: req,
-			Origin: edit.Origin,
-			BeforeEnabled: edit.Before.Enabled,
-			AfterEnabled: edit.After.Enabled,
-			BeforeTarget: edit.Before.Target,
-			AfterTarget: edit.After.Target,
+			APIVersion:         apiv1.Version,
+			Request:            req,
+			Origin:             edit.Origin,
+			BeforeEnabled:      edit.Before.Enabled,
+			AfterEnabled:       edit.After.Enabled,
+			BeforeTarget:       edit.Before.Target,
+			AfterTarget:        edit.After.Target,
 			BeforeDNSProfileID: edit.Before.DNSProfileID,
-			AfterDNSProfileID: edit.After.DNSProfileID,
-			CandidateSHA256: hex.EncodeToString(sum[:]),
+			AfterDNSProfileID:  edit.After.DNSProfileID,
+			CandidateSHA256:    hex.EncodeToString(sum[:]),
 			NativeConfigSHA256: artifact.SHA256,
-			NativeSchemaID: artifact.Manifest.SchemaID,
-			RouteEntryCount: len(artifact.SourceMap),
-			DNSServerCount: len(artifact.Manifest.DNSServerTags),
-			RuleSetCount: len(artifact.Manifest.RuleSets),
-			CompilerValidated: true,
-			CoreValidated: false,
-			Staged: false,
-			Applied: false,
+			NativeSchemaID:     artifact.Manifest.SchemaID,
+			RouteEntryCount:    len(artifact.SourceMap),
+			DNSServerCount:     len(artifact.Manifest.DNSServerTags),
+			RuleSetCount:       len(artifact.Manifest.RuleSets),
+			CompilerValidated:  true,
+			CoreValidated:      false,
+			Staged:             false,
+			Applied:            false,
 		},
 	}, nil
 }
@@ -221,9 +221,9 @@ func stageRouteEdit(
 	}
 	return apiv1.RouteEditStageResponse{
 		DeclarationRevision: committed.Revision,
-		DeclarationSHA256: committed.SHA256,
-		NativeConfigSHA256: evaluated.preview.NativeConfigSHA256,
-		CompilerValidated: true, CoreValidated: false,
+		DeclarationSHA256:   committed.SHA256,
+		NativeConfigSHA256:  evaluated.preview.NativeConfigSHA256,
+		CompilerValidated:   true, CoreValidated: false,
 		Staged: true, Applied: false,
 	}, nil
 }
