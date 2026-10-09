@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
