@@ -236,9 +236,13 @@ func TestCheckedApplyCapabilityAdvertisedOnlyWithRuntime(t *testing.T) {
 	defer store.Close()
 	inspect := func(h http.Handler) bool {
 		rec := routeEditCall(t, h, http.MethodGet, "/v1/capabilities", nil)
-		if rec.Code != http.StatusOK { t.Fatalf("capabilities: %d", rec.Code) }
+		if rec.Code != http.StatusOK {
+			t.Fatalf("capabilities: %d", rec.Code)
+		}
 		var caps apiv1.CapabilitiesResponse
-		if err := json.NewDecoder(rec.Body).Decode(&caps); err != nil { t.Fatal(err) }
+		if err := json.NewDecoder(rec.Body).Decode(&caps); err != nil {
+			t.Fatal(err)
+		}
 		return caps.Capabilities["checked_declaration_apply_api"]
 	}
 	if !inspect(handler) || inspect(New(runtimepath.Paths{}).handler(store, nil)) {
