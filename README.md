@@ -2,7 +2,7 @@
 
 Linux terminal-oriented Karing reimplementation, following [`docs/plan.md`](docs/plan.md).
 
-> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. M2 routing/compiler primitives and M3 source/snapshot management exist, but broad subscription compatibility, the complete CN offline resource bundle, automatic profile-to-declaration promotion, and full TUI operation are **not** finished. A Bubble Tea TUI prototype provides read-only status/route/connection/Routing/DNS inspection, guarded CurrentSelected candidate switching, and explicitly confirmed node favorite/disabled overlays; it is not a complete configuration editor.
+> Status: early development. The daemon/API, durable SQLite generation/apply journal, approved reproducible Linux core build, bounded supervisor, secure runtime core options, and conditional lifecycle API now exist. M2 routing/compiler primitives and M3 source/snapshot management exist, but broad subscription compatibility, the complete CN offline resource bundle, automatic profile-to-declaration promotion, and full TUI operation are **not** finished. A Bubble Tea TUI prototype provides read-only status/route/connection/Routing/DNS inspection, guarded CurrentSelected candidate switching, and explicitly confirmed node favorite/disabled overlays. A separate `config route-preview` / `config route-stage` CLI now supports a narrow, compiled, two-step **unapplied** routing/DNS-binding edit; the TUI is still not a full configuration editor.
 
 ## Non-negotiable scope
 
@@ -164,6 +164,25 @@ After a profile refresh produces an accepted snapshot, the Unix-socket daemon ca
 The response reports a candidate SHA-256, stable overlay digest, counts of nodes added/removed/retained and whether the candidate was applied. Source keys, server passwords and complete candidate JSON are never included. Snapshot ID and base declaration revision must match current state; invalid selected-node references or unsupported formats fail closed.
 
 A successful response is **schema-level, read-only evidence**, explicitly `core_validated=false` and `applied=false`. No declaration revision, rule resource or core generation is changed, and no core check is performed. See [ADR 0070](docs/adr/0070-read-only-profile-declaration-preview.md).
+
+
+## Guarded route group and DNS-binding edits (staged, never automatically applied)
+
+The first M4 structured edit supports **one** field per request on one existing route group: change its typed target, enable/disable it, or select/clear an existing **group-role** DNS profile. It does not edit DNS server host addresses, match expressions, group order/layer, CN preset resources, region-generated groups, or subscription/ISP routing. CN's original 28 groups can be changed via source-preserving `cn_preset.overrides` without modifying the pinned preset. Every candidate must satisfy the strict declaration compiler including local rule-set resource availability. This is not a real-core validation.
+
+Use a private receipt file (the preview CLI creates it with `0600` and will not overwrite an existing path):
+
+```sh
+karing-tui config route-preview --layer=final --group=FINAL --target-kind=direct --out="$HOME/route-edit-receipt.json"
+# Inspect the private receipt: previous/next target, candidate and native SHA-256, compiler_validated=true, applied=false
+karing-tui config route-stage --receipt="$HOME/route-edit-receipt.json" --confirm
+```
+
+For ordinary groups, examples include `--layer=custom --group=work --enabled=false` and `--layer=custom --group=work --dns-profile-id=group-dns`; passing `--dns-profile-id=` clears that binding. Specific nodes use `--target-kind=specific_node --profile-id=P --node-id=N`; custom URLTest uses `--target-kind=custom_urltest --urltest-group-id=G`. Only one of `--target-kind`, `--enabled`, and `--dns-profile-id` is allowed per preview.
+
+The daemon's `GET /v1/config/route-edit/context` exposes the expected declaration SHA/revision, config revision, applied generation (nullable) and CurrentSelected revision without returning raw declaration secrets. The `POST /v1/config/route-edit/preview` compiles a transient one-field candidate and returns only diff metadata and SHA-256 digests; the `POST /v1/config/route-edit/stage` requires those exact digests, re-runs the same strict compiler, checks all expected revisions and generation identity under the operation gate, then performs a SQLite declaration CAS. A conflicting commit or selector change produces HTTP 409, while failed validation/resource closure produces 422. On ambiguous stage timeout or transport loss, **read current declaration/status before taking action**; never blindly replay the receipt.
+
+**Staging does not touch the core**, restart it, or change applied-generation state. Existing explicit declaration apply remains a separate, risk-bearing operation, with its usual journal/rollback guards. `compiler_validated=true` does **not** mean `core_validated=true` or that live DNS resolution took the declared path. See [ADR 0079](docs/adr/0079-guarded-route-dns-stage-cli.md). The full M4 Routing/DNS TUI editor, concrete per-rule DNS transport evidence and user-facing backup/restore remain open.
 
 ## Profile declaration preview CLI
 

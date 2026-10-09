@@ -1233,3 +1233,11 @@ docs/
 - DNS TUI 页 `8` 只展示角色、传输、引导引用、detour 目标、IP/主机名类型和绑定；不显示 DNS 上游地址、用户节点密钥，不把绑定等同于已观测的 DNS 解析路径。
 - 当前声明与应用声明不同版本时，仅展示 Routing/DNS/RuleSet 语义变化指标，不静默应用或声称已生效。接口与客户端双重限制输出数量/字节；终端异步刷新、旧结果失效且不保存原始载荷。
 - 本切片并未实现规则/DNS 安全编辑、完整差异预览、备份恢复，T10/T23 和正式长期稳定性门槛仍未关闭。见 ADR 0078。
+
+### 2026-10-09 M4 严格编译路由/DNS 绑定预览与 CAS 暂存切片
+
+- 增加窄范围的 `config route-preview`/`config route-stage` CLI 和版本化 `/v1/config/route-edit/{context,preview,stage}` 本地 API，不允许用户在此接口上传任意运行 JSON。
+- 单次仅修改已有组的一个字段：enabled、TargetRef 或 group-role DNS profile 绑定；CN 28 组通过 pinned `cn_preset.overrides` 表达；地区自动追加组、FINAL DNS、分流层/顺序、规则匹配及 DNS 服务器配置不可越权修改。
+- 预览基于权威当前声明和 CurrentSelected 状态生成候选，复用严格真实编译器和已有规则资源 resolver，返回候选声明与编译原生配置 SHA-256、可显示的变更摘要，`compiler_validated=true`、`core_validated=false`、`staged=false`、`applied=false`。
+- 确认时必须复验双 digest、声明修订/哈希、配置修订、应用代际、CurrentSelected revision，再原子提交一个新的声明修订。操作门闩序列化应用/选择切换，SQLite CAS 同时防止旧客户端覆盖；409 不写入，502/超时后回读而不盲目重试。
+- CLI 回执文件独占创建，`0600` 权限，stage 拒绝 symlink 和非私有/非本人普通文件。运行中 core、DNS 路径、五层顺序和订阅/ISP 排除策略均不受本次暂存直接改变。完整 TUI 编辑、显式代际应用/回滚、T10/T23 和长期稳定验收尚未关闭。见 ADR 0079。

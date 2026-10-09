@@ -121,6 +121,36 @@ func (c *Client) RouteExplain(
 // accidentally fetch full declarations, core configs or DNS credentials.
 const maxInspectionResponseBytes = 1 << 20
 
+// Edit context contains only optimistic identity tokens, not the raw V1 document.
+func (c *Client) RouteEditContext(ctx context.Context) (apiv1.RouteEditContext, error) {
+	var response apiv1.RouteEditContext
+	if err := c.get(ctx, "/v1/config/route-edit/context", &response); err != nil {
+		return apiv1.RouteEditContext{}, err
+	}
+	return response, nil
+}
+
+// Preview compiles an uncommitted single-field candidate and returns an
+// immutable receipt. This method never sends native or declaration JSON.
+func (c *Client) PreviewRouteEdit(ctx context.Context, request apiv1.RouteEditRequest) (apiv1.RouteEditPreviewResponse, error) {
+	var response apiv1.RouteEditPreviewResponse
+	if err := c.sendJSON(ctx, c.refreshClient, http.MethodPost, "/v1/config/route-edit/preview", request, &response); err != nil {
+		return apiv1.RouteEditPreviewResponse{}, err
+	}
+	return response, nil
+}
+
+// Stage is a single attempt. On timeout/transport failure the DB MAY have
+// committed: re-read the current declaration and never retry blindly.
+func (c *Client) StageRouteEdit(ctx context.Context, request apiv1.RouteEditStageRequest) (apiv1.RouteEditStageResponse, error) {
+	var response apiv1.RouteEditStageResponse
+	if err := c.sendJSONWithStatus(ctx, c.refreshClient, http.MethodPost, "/v1/config/route-edit/stage",
+		request, &response, http.StatusCreated); err != nil {
+		return apiv1.RouteEditStageResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) InspectConfig(ctx context.Context) (apiv1.ConfigInspectionResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/config/inspection", nil)
 	if err != nil {

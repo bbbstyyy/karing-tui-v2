@@ -193,6 +193,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	registerProfileNodeRoutes(mux, store, profileOperations)
 	registerProfileSnapshotPreviewRoutes(mux, store, profileOperations)
 	registerProfileDeclarationStageRoutes(mux, store, profileOperations)
+	registerRouteEditRoutes(mux, store, runtime)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
 		// The HTTP handlers hold runtime.gate for the entire read/validate/
@@ -306,6 +307,8 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"declaration_region_append":   true,
 				"declaration_commit_api":      true,
 				"declaration_compile_preview": declarationCompileRuntime,
+				"route_edit_preflight":       declarationCompileRuntime,
+				"route_edit_stage":           declarationCompileRuntime,
 				"declaration_apply_api":       declarationApplyRuntime,
 				"config_inspection_api":       true,
 				"apply_journal":               true,

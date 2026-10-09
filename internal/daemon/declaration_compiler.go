@@ -80,6 +80,26 @@ func (c *DeclarationCompileCoordinator) CompileRevision(
 	}
 
 	document := append([]byte(nil), stored.DocumentJSON...)
+	artifact, err := c.CompileCandidate(ctx, document)
+	if err != nil {
+		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("compile declaration revision %d: %w", revision, err)
+	}
+	bound, err := artifact.BindDeclaration(stored.Revision, stored.SHA256)
+	if err != nil {
+		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("bind declaration revision %d: %w", revision, err)
+	}
+	return bound, nil
+}
+
+// CompileCandidate compiles a transient V1 declaration using the *same*
+// resolved rule resources and persisted CurrentSelected-intent semantics as a
+// revision compile. It never commits or applies the candidate document.
+func (c *DeclarationCompileCoordinator) CompileCandidate(
+	ctx context.Context, document []byte,
+) (corecompiler.NativeConfigArtifact, error) {
+	if c == nil || c.compiler == nil || c.store == nil {
+		return corecompiler.NativeConfigArtifact{}, errors.New("declaration compiler unavailable")
+	}
 	intent, hasIntent, err := c.store.CurrentSelectionIntent(ctx)
 	if err != nil {
 		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("read current selection intent: %w", err)
@@ -100,13 +120,9 @@ func (c *DeclarationCompileCoordinator) CompileRevision(
 		artifact, err = c.compiler.CompileDeclaration(ctx, document)
 	}
 	if err != nil {
-		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("compile declaration revision %d: %w", revision, err)
+		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("compile candidate declaration: %w", err)
 	}
-	bound, err := artifact.BindDeclaration(stored.Revision, stored.SHA256)
-	if err != nil {
-		return corecompiler.NativeConfigArtifact{}, fmt.Errorf("bind declaration revision %d: %w", revision, err)
-	}
-	return bound, nil
+	return artifact, nil
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {

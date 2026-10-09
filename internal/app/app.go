@@ -36,6 +36,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runCapabilities(args[1:], stdout, stderr)
 	case "storage":
 		return runStorage(args[1:], stdout, stderr)
+	case "config":
+		return runConfig(args[1:], stdout, stderr)
 	case "profiles":
 		return runProfiles(args[1:], stdout, stderr)
 	case "tui":
@@ -51,6 +53,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return 2
 	}
+}
+
+func runConfig(args []string, stdout, stderr io.Writer) int {
+	paths, err := runtimepath.Resolve()
+	if err != nil {
+		fmt.Fprintln(stderr, "route edit runtime paths unavailable")
+		return 1
+	}
+	return runRouteConfigCommand(context.Background(), client.New(paths.Socket), args, stdout, stderr)
 }
 
 func runTUI(args []string, stderr io.Writer) int {
@@ -237,7 +248,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `karing-tui-v2 (early development)
 
 Usage:
-  karing-tui tui              open the read-only terminal dashboard
+  karing-tui tui              open the terminal dashboard with guarded selection
   karing-tui daemon run       run the management daemon in the foreground
   karing-tui core start       start the confirmed applied core generation
   karing-tui core stop        stop the managed core and persist stop intent
@@ -245,6 +256,8 @@ Usage:
   karing-tui capabilities      show implemented capability flags
   karing-tui storage retention show generation retention policy and usage
   karing-tui storage prune     compact audit and prune old generations
+  karing-tui config route-preview --help  read and compile one guarded route/DNS edit
+  karing-tui config route-stage --receipt=FILE --confirm  stage previewed edit only
   karing-tui profiles help     list safe profile and node-management commands
   karing-tui version           show build version
 
