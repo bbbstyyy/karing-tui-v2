@@ -1,0 +1,26 @@
+name: one-time-recovery-resource-format
+on:
+  push:
+    branches: [feat/m0-m1-foundation]
+    paths:
+      - .github/workflows/one-time-recovery-resource-format.yml
+permissions:
+  contents: write
+jobs:
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+      - name: Format descriptor-pinned recovery resource code
+        run: |
+          gofmt -w internal/coreartifact/ruleset_pin.go internal/coreartifact/ruleset_pin_test.go internal/daemon/historical_resource_pins.go internal/daemon/historical_resource_pins_test.go internal/daemon/historical_check.go
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/coreartifact/ruleset_pin.go internal/coreartifact/ruleset_pin_test.go internal/daemon/historical_resource_pins.go internal/daemon/historical_resource_pins_test.go internal/daemon/historical_check.go
+            git commit -m "style(m4): gofmt descriptor-pinned historical resources"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
