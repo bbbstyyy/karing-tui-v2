@@ -1,0 +1,26 @@
+name: one-time-restore-tests-format
+on:
+  push:
+    branches: [feat/m0-m1-foundation]
+    paths:
+      - .github/workflows/one-time-restore-tests-format.yml
+permissions:
+  contents: write
+jobs:
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/m0-m1-foundation
+      - name: Format restore regression tests
+        run: |
+          gofmt -w internal/storage/recovery_prepare_test.go internal/storage/profile_migration_test.go
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/storage/recovery_prepare_test.go internal/storage/profile_migration_test.go
+            git commit -m "style(m4): format historical restore and migration tests"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
