@@ -182,7 +182,15 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	// failed validation or core-check timeout. No activation is ever issued.
 	// Cleanup errors are reported and must never be silently ignored.
 	defer func() {
-		cleanupErr := r.apply.abortPrepared(ctx, attempt.ID, "historical core-check completed without activation")
+		cleanupErr := r.apply.abortPrepared(ctx, attempt.ID, storage.HistoricalCheckAbortReason)
+		if cleanupErr == nil {
+			// Do not let a successful dry-run silently consume generations quota.
+			// Reclamation is a SECOND detached, bounded storage transaction that
+			// archives only this directly-aborted historical candidate.
+			cleanupErr = r.apply.cleanupStateStep(ctx, func(cleanupCtx context.Context) error {
+				return store.ReclaimAbortedHistoricalCheck(cleanupCtx, attempt.ID)
+			})
+		}
 		if cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("%w: prepared candidate cleanup failed: %v",
 				ErrHistoricalCheckUnavailable, cleanupErr))
