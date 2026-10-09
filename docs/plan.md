@@ -1265,3 +1265,11 @@ docs/
 - 新增 `GET /v1/config/recovery/audit` 和 `config recovery-audit` 只读入口：逐代际复核原生配置、manifest、source-map 的 SHA-256 与 JSON、原生 schema、声明 revision/hash 及声明本体，并对 manifest 指向的私有 content-addressed 规则资源复用 no-follow/owner/hash 验证；禁止将任意存储路径当作规则文件打开。
 - 返回只有脱敏状态枚举、代际、修订号及完整性布尔值；配置、DNS 上游、节点密钥、rule-set 路径或原始错误不输出。状态与声明在采集前后变化则 409 拒绝拼接快照；资源已经清理或损坏时标记不可用，不悄悄回退为直连。
 - **所有 `restore_ready=false`，`restore_supported=false`**：哈希验证仅说明存储内容与规则文件在该时刻可核查，并不代表该历史配置现在可应用。手动历史代际回滚必须先补齐 CurrentSelected/运行路由策略绑定、规则资源闭包的应用时再校验、可恢复代际 CAS、内核严格检查/事务激活与故障注入测试，不能绕过保护直接复用历史 native JSON。见 ADR 0084。
+
+
+### 2026-10-09 M4 历史代际严格编译与内核 Check（无激活）切片
+
+- 在 ADR 0084/0085 的只读历史审计和 ADR 0086 的 SQLite 原子候选准备基础上，新增仅供 daemon 内部调用的 `CheckHistoricalGeneration`。不注册 HTTP、CLI、TUI 或能力开关，不允许终端直接触发历史配置替换。
+- 在与 core 生命周期和配置应用共享的 OperationGate 内，先核查成功提交的历史代际和当前应用/LKG 资源闭包、CurrentSelected、routing mode 与目标状态；旧声明必须由**当前编译器及控制面参数**重新编译，要求原生 JSON、manifest、source-map 和历史存档逐字节一致。
+- 单个 SQLite CAS 事务将历史代际复制为新候选，使用现有 journal/配额/崩溃恢复机制；只调用 core.Check，不进入 activate/verify/commit。检查后即使连接取消或 core.Check 失败，也以独立清理超时回收 prepared 活动槽，检测变更/回收失败时报错；成功回执永远不表示可恢复。
+- 自动失败回滚及配置生效路径不变。**仍然未开放手动历史代际恢复**，`restore_supported=false`、所有 `restore_ready=false`。后续必须完成真实资源 inode/lease 固定、核验与激活间的隔离、可验证的双层回滚、操作回执、T15/T23 断点故障注入和实际流量健康验证；此切片不等同于 M4 完成。详见 ADR 0087。
