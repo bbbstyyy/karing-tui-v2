@@ -22,6 +22,7 @@ type API interface {
 	Status(context.Context) (apiv1.StatusResponse, error)
 	ProfileSources(context.Context) (apiv1.ProfileSourceListResponse, error)
 	ProfileNodes(context.Context, string, int, int) (apiv1.ProfileNodeListResponse, error)
+	PutProfileNodeOverlay(context.Context, string, string, apiv1.ProfileNodeOverlayPutRequest) (apiv1.ProfileNodeOverlayResponse, error)
 }
 
 type page uint8
@@ -69,6 +70,14 @@ type Model struct {
 	nodesOffset  int
 	nodesScroll  int
 	nodesRequest uint64
+	nodesRestoreID string
+
+	overlayConfirm  *overlayProposal
+	overlayInFlight bool
+	overlayRequest  uint64
+	overlayProfile  string
+	overlayNodeID   string
+	overlayNotice   string
 
 	quitting bool
 }
@@ -218,8 +227,56 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.nodes = msg.value
 		m.nodesReady, m.nodesError = true, false
+		if m.nodesRestoreID != "" {
+			for i, node := range m.nodes.Nodes {
+				if node.NodeID == m.nodesRestoreID {
+					m.nodesScroll = i
+					break
+				}
+			}
+			m.nodesRestoreID = ""
+		}
 		return m, nil
+	case overlaySaved:
+		if !m.overlayInFlight || msg.request != m.overlayRequest ||
+			msg.profileID != m.overlayProfile || msg.nodeID != m.overlayNodeID {
+			return m, nil
+		}
+		m.overlayInFlight = false
+		m.overlayProfile, m.overlayNodeID = "", ""
+		if msg.err != nil {
+			// The request may have reached the daemon. Never assume rollback.
+			m.overlayNotice = "Overlay result uncertain; inspect reloaded node state before retrying."
+		} else {
+			m.overlayNotice = "Overlay saved in daemon; declaration and running core unchanged."
+		}
+		cmd := m.requestNodes(m.nodesOffset)
+		m.nodesRestoreID = msg.nodeID
+		return m, cmd
 	case tea.KeyMsg:
+		if m.overlayInFlight && msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.overlayConfirm != nil {
+			switch msg.String() {
+			case "y":
+				proposal := *m.overlayConfirm
+				m.overlayConfirm = nil
+				m.overlayRequest++
+				m.overlayInFlight = true
+				m.overlayProfile, m.overlayNodeID = proposal.profileID, proposal.nodeID
+				m.overlayNotice = ""
+				return m, writeOverlay(m.ctx, m.api, m.overlayRequest, proposal)
+			case "esc":
+				m.overlayConfirm = nil
+				m.overlayNotice = "Overlay change cancelled; no write was sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Quitting does not send a write.
+			default:
+				return m, nil
+			}
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
@@ -265,6 +322,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.page == profilesPage && m.selectedProfileID() != "" {
 				return m, m.switchPage(nodesPage)
 			}
+		case "f":
+			m.proposeOverlay(true)
+		case "d":
+			m.proposeOverlay(false)
 		case "n":
 			if m.page == nodesPage && m.nodesReady && m.nodesOffset+nodePageSize < m.nodes.Total &&
 				m.nodesOffset+nodePageSize <= maxNodeOffset {
@@ -291,6 +352,8 @@ func (m *Model) selectedProfileID() string {
 }
 
 func (m *Model) switchPage(to page) tea.Cmd {
+	m.overlayConfirm = nil
+	m.overlayNotice = ""
 	m.page = to
 	if to == nodesPage && m.selectedProfileID() != "" &&
 		(m.nodesProfile != m.selectedProfileID() || !m.nodesReady) {
@@ -303,6 +366,8 @@ func (m *Model) requestNodes(offset int) tea.Cmd {
 	m.nodesRequest++
 	m.nodesReady, m.nodesError = false, false
 	m.nodes = apiv1.ProfileNodeListResponse{}
+	m.nodesRestoreID = ""
+	m.overlayConfirm = nil
 	m.nodesProfile = m.selectedProfileID()
 	m.nodesOffset = offset
 	m.nodesScroll = 0
@@ -353,7 +418,7 @@ func (m Model) View() string {
 		}
 	}
 	lines := []string{
-		"karing-tui v2 | Read-only TUI | daemon/core run independently",
+		"karing-tui v2 | TUI client | daemon/core run independently",
 		"[1] Dashboard  [2] Profiles  [3] Nodes",
 		"",
 	}
@@ -361,7 +426,15 @@ func (m Model) View() string {
 		lines = append(lines, safeText(line, width))
 	}
 	lines = append(lines, "")
-	lines = append(lines, "Tab: page  j/k: select/scroll  Enter: nodes  n/p: page  r: reload  q: quit")
+	help := "Tab: page  j/k: select  n/p: page  f: favorite  d: disable  r: reload  q: quit"
+	if m.overlayConfirm != nil {
+		help = "y: CONFIRM " + m.overlayConfirm.action + "  Esc: cancel  (daemon only; no core apply)"
+	} else if m.overlayInFlight {
+		help = "Saving node overlay; q exits TUI but a daemon-accepted write may finish."
+	} else if m.overlayNotice != "" {
+		help = m.overlayNotice
+	}
+	lines = append(lines, help)
 	for i, line := range lines {
 		lines[i] = safeText(line, width)
 	}
@@ -433,13 +506,17 @@ func (m Model) pageLines() []string {
 		}
 		result := []string{fmt.Sprintf("Nodes for %s  total=%d  offset=%d  snapshot=%s",
 			id, m.nodes.Total, m.nodesOffset, generationLabel(m.nodes.SnapshotID))}
-		for _, item := range m.nodes.Nodes {
+		for i, item := range m.nodes.Nodes {
 			mark := " "
 			if item.Favorite {
 				mark = "*"
 			}
-			result = append(result, fmt.Sprintf("%s %s [%s] disabled=%t",
-				mark, item.DisplayName, item.NodeID, item.Disabled))
+			cursor := "  "
+			if i == m.nodesScroll {
+				cursor = "> "
+			}
+			result = append(result, fmt.Sprintf("%s%s %s [%s] disabled=%t",
+				cursor, mark, item.DisplayName, item.NodeID, item.Disabled))
 		}
 		if len(m.nodes.Nodes) == 0 {
 			result = append(result, "No nodes in this page.")

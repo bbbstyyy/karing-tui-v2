@@ -22,6 +22,10 @@ The UI caps the displayed profile list at 200 and the node API page size at 20, 
 
 Unit tests cover status display without raw core errors, terminal-escape/bidi injection, Chinese width, narrow screens, page navigation, bounded lists, asynchronous request timeouts and stale-response suppression. CI must run Go format, vet, full tests, race tests and build, plus existing managed-core integration.
 
+## Follow-up
+
+ADR 0073 adds explicitly confirmed, CAS-protected node favorite/disabled changes to this initial read-only screen. Only these node overlays are writable; all daemon/core/configuration lifecycle operations remain outside the TUI.
+
 ## Remaining M4 work
 
 - Display routing and DNS with original layer/provenance semantics and explicit unknowns.

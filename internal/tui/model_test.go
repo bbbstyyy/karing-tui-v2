@@ -24,6 +24,9 @@ type fakeAPI struct {
 	profileCalls     int
 	nodeCalls        int
 	observedDeadline bool
+	overlayCalls     int
+	overlayErr       error
+	lastOverlay      apiv1.ProfileNodeOverlayPutRequest
 }
 
 func (f *fakeAPI) Status(ctx context.Context) (apiv1.StatusResponse, error) {
