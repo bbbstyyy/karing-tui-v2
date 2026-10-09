@@ -199,3 +199,98 @@ func TestHistoricalRuleSetPinRejectsArbitraryManifestPath(t *testing.T) {
 		t.Fatalf("arbitrary external path was pinned: pins=%v err=%v", pins, err)
 	}
 }
+
+
+func TestHistoricalCoreCheckStagesAndCleansIsolatedTargetFallbackCopies(t *testing.T) {
+	store, core, runtime, sourceID, root, fallback, fallbackBytes := historicalRuleSetHarness(t)
+	ctx := context.Background()
+	snapshotsDir := filepath.Join(root, "core", "historical-check-snapshots")
+	// A callback observes the scoped copies while Check is running; it
+	// cannot activate the core or change the real config reference paths.
+	core.checkFn = func(context.Context, Generation) error {
+		entries, err := os.ReadDir(snapshotsDir)
+		if err != nil || len(entries) != 1 || !entries[0].IsDir() {
+			return fmt.Errorf("expected exactly one isolated recovery check: entries=%v err=%v", entries, err)
+		}
+		copyPath := filepath.Join(snapshotsDir, entries[0].Name(), filepath.Base(fallback))
+		copyBytes, err := os.ReadFile(copyPath)
+		if err != nil || !bytes.Equal(copyBytes, fallbackBytes) {
+			return fmt.Errorf("fallback snapshot missing/wrong: err=%v", err)
+		}
+		copyInfo, err := os.Lstat(copyPath)
+		if err != nil || copyInfo.Mode().Perm() != 0o400 {
+			return fmt.Errorf("fallback snapshot is not private read-only: %v", err)
+		}
+		originInfo, err := os.Lstat(fallback)
+		if err != nil || os.SameFile(originInfo, copyInfo) {
+			return fmt.Errorf("snapshot is a hard link to mutable shared file")
+		}
+		parts, err := os.ReadDir(filepath.Dir(copyPath))
+		if err != nil || len(parts) != 2 {
+			return fmt.Errorf("target and fallback snapshots not both retained: %v %v", parts, err)
+		}
+		return nil
+	}
+	before, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := runtime.CheckHistoricalGeneration(ctx, store, root, sourceID)
+	if err != nil || !evidence.CoreChecked || evidence.Applied || evidence.RestoreReady {
+		t.Fatalf("isolated historical core check failed: evidence=%+v err=%v", evidence, err)
+	}
+	entries, err := os.ReadDir(snapshotsDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("completed check leaked temporary copies: entries=%v err=%v", entries, err)
+	}
+	after, err := store.Snapshot(ctx)
+	if err != nil || !sameRecoveryAuditSnapshot(before, after) || after.ActiveAttemptID != nil {
+		t.Fatalf("isolated copy check mutated confirmed state: %+v err=%v", after, err)
+	}
+}
+
+func TestHistoricalCoreCheckRejectsMutatedIsolatedCopyAndCleansIt(t *testing.T) {
+	store, core, runtime, sourceID, root, fallback, _ := historicalRuleSetHarness(t)
+	ctx := context.Background()
+	snapshotsDir := filepath.Join(root, "core", "historical-check-snapshots")
+	core.checkFn = func(context.Context, Generation) error {
+		entries, err := os.ReadDir(snapshotsDir)
+		if err != nil || len(entries) != 1 {
+			return fmt.Errorf("snapshot directory missing: %v", err)
+		}
+		copyPath := filepath.Join(snapshotsDir, entries[0].Name(), filepath.Base(fallback))
+		if err := os.Chmod(copyPath, 0o600); err != nil {
+			return err
+		}
+		return os.WriteFile(copyPath, []byte("tampered"), 0o600)
+	}
+	initialEvents := len(core.events)
+	evidence, err := runtime.CheckHistoricalGeneration(ctx, store, root, sourceID)
+	if !errors.Is(err, ErrHistoricalCheckChanged) || evidence.CoreChecked ||
+		len(core.events) != initialEvents+1 || core.events[len(core.events)-1] != "check" {
+		t.Fatalf("tampered isolated snapshot accepted: evidence=%+v err=%v events=%v", evidence, err, core.events)
+	}
+	entries, err := os.ReadDir(snapshotsDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("modified but same-inode copy left behind: entries=%v err=%v", entries, err)
+	}
+	if state, err := store.Snapshot(ctx); err != nil || state.ActiveAttemptID != nil {
+		t.Fatalf("failed isolated check retained active journal: %+v err=%v", state, err)
+	}
+}
+
+func TestHistoricalCoreCheckRejectsUnsafeSnapshotDirectoryBeforeCoreIO(t *testing.T) {
+	store, core, runtime, sourceID, root, _, _ := historicalRuleSetHarness(t)
+	path := filepath.Join(root, "core", "historical-check-snapshots")
+	if err := os.WriteFile(path, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := len(core.events)
+	_, err := runtime.CheckHistoricalGeneration(context.Background(), store, root, sourceID)
+	if !errors.Is(err, ErrHistoricalCheckRejected) || len(core.events) != before {
+		t.Fatalf("unsafe snapshot root reached core: err=%v events=%v", err, core.events)
+	}
+	if state, err := store.Snapshot(context.Background()); err != nil || state.ActiveAttemptID != nil {
+		t.Fatalf("unsafe path changed journal state: %+v err=%v", state, err)
+	}
+}
