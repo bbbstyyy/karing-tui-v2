@@ -284,6 +284,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		managedApplyRuntime := runtime != nil && runtime.ManagedApplyReady()
 		declarationCompileRuntime := runtime != nil && runtime.DeclarationCompilerReady()
 		declarationApplyRuntime := runtime != nil && runtime.DeclarationApplyReady()
+		checkedApplyRuntime := declarationApplyRuntime && runtime.gate != nil
 		currentSelectionLive := runtime != nil && runtime.CurrentSelectionReady()
 		connectionObservation := runtime != nil && runtime.ConnectionsReady()
 		routingModeLive := runtime != nil && runtime.RoutingModeReady()
@@ -311,6 +312,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"route_edit_preflight":        declarationCompileRuntime,
 				"route_edit_stage":            declarationCompileRuntime,
 				"declaration_apply_api":       declarationApplyRuntime,
+				"checked_declaration_apply_api": checkedApplyRuntime,
 				"config_inspection_api":       true,
 				"apply_journal":               true,
 				"apply_coordinator":           true,

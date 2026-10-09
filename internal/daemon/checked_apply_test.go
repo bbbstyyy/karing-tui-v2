@@ -230,3 +230,18 @@ func TestCheckedApplyRejectsUnknownAndOversizedRequestsAndMissingRuntime(t *test
 		}
 	}
 }
+
+func TestCheckedApplyCapabilityAdvertisedOnlyWithRuntime(t *testing.T) {
+	store, _, _, handler := checkedApplyHarness(t)
+	defer store.Close()
+	inspect := func(h http.Handler) bool {
+		rec := routeEditCall(t, h, http.MethodGet, "/v1/capabilities", nil)
+		if rec.Code != http.StatusOK { t.Fatalf("capabilities: %d", rec.Code) }
+		var caps apiv1.CapabilitiesResponse
+		if err := json.NewDecoder(rec.Body).Decode(&caps); err != nil { t.Fatal(err) }
+		return caps.Capabilities["checked_declaration_apply_api"]
+	}
+	if !inspect(handler) || inspect(New(runtimepath.Paths{}).handler(store, nil)) {
+		t.Fatal("checked apply advertised without compiler, core or gate")
+	}
+}
