@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	maxObservedRows = 30
+	maxObservedRows      = 30
 	maxConnectionUnknown = 2
 )
 
@@ -133,9 +133,9 @@ func loadSelectionObservation(ctx context.Context, api API, sequence uint64) tea
 			return msg
 		}
 		result := selectionSummary{
-			target: routeProbeTarget(&raw.Target),
+			target:    routeProbeTarget(&raw.Target),
 			persisted: raw.Persisted,
-			live: "not observed (core stopped or unavailable)",
+			live:      "not observed (core stopped or unavailable)",
 		}
 		if raw.LiveRuntimeTag != "" {
 			if raw.Applied {
@@ -178,13 +178,13 @@ func (m Model) selectionObservationLines() []string {
 		return append(lines, "Press r to inspect persisted and live selection.")
 	}
 	s := m.selection.result
-	lines = append(lines, "Selected typed target: " + s.target)
+	lines = append(lines, "Selected typed target: "+s.target)
 	if s.persisted {
 		lines = append(lines, "Intent: persisted (survives core restarts)")
 	} else {
 		lines = append(lines, "Intent: bound declaration default (not explicitly persisted)")
 	}
-	lines = append(lines, "Live selector readback: " + s.live)
+	lines = append(lines, "Live selector readback: "+s.live)
 	return append(lines, "No core or declaration was changed by this page.")
 }
 
@@ -227,11 +227,11 @@ func loadConnectionsObservation(ctx context.Context, api API, sequence uint64) t
 
 func projectObservedConnections(raw apiv1.ObservedConnectionsResponse) (connectionsSummary, error) {
 	result := connectionsSummary{
-		generationID: raw.GenerationID,
+		generationID:   raw.GenerationID,
 		configRevision: raw.ConfigRevision,
-		total: len(raw.Connections),
-		upload: raw.UploadTotal,
-		download: raw.DownloadTotal,
+		total:          len(raw.Connections),
+		upload:         raw.UploadTotal,
+		download:       raw.DownloadTotal,
 	}
 	limit := min(len(raw.Connections), maxObservedRows)
 	result.rows = make([]connectionSummary, 0, limit)
@@ -252,12 +252,12 @@ func projectObservedConnections(raw apiv1.ObservedConnectionsResponse) (connecti
 			return connectionsSummary{}, errors.New("unsupported source evidence")
 		}
 		row := connectionSummary{
-			destination: safeConnectionDestination(rawRow.Host, rawRow.DestinationIP),
-			port: safeConnectionPort(rawRow.DestinationPort),
-			inbound: safeConnectionInbound(rawRow.Inbound),
-			network: safeConnectionNetwork(rawRow.Network),
-			upload: rawRow.Upload,
-			download: rawRow.Download,
+			destination:    safeConnectionDestination(rawRow.Host, rawRow.DestinationIP),
+			port:           safeConnectionPort(rawRow.DestinationPort),
+			inbound:        safeConnectionInbound(rawRow.Inbound),
+			network:        safeConnectionNetwork(rawRow.Network),
+			upload:         rawRow.Upload,
+			download:       rawRow.Download,
 			sourceEvidence: rawRow.SourceEvidence,
 		}
 		if rawRow.SourceEvidence == "simulated" {
@@ -408,7 +408,7 @@ func (m Model) connectionsObservationLines() []string {
 			if row.unknownOmitted > 0 {
 				reasons += fmt.Sprintf(" +%d more", row.unknownOmitted)
 			}
-			lines = append(lines, "   source[UNKNOWN]: " + reasons + " (no source inferred)")
+			lines = append(lines, "   source[UNKNOWN]: "+reasons+" (no source inferred)")
 		}
 	}
 	return lines

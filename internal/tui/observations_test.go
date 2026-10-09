@@ -15,12 +15,12 @@ import (
 
 type observationsTestAPI struct {
 	*fakeAPI
-	selection apiv1.CurrentSelectionResponse
-	selectionError error
-	selectionCalls int
-	connections apiv1.ObservedConnectionsResponse
+	selection        apiv1.CurrentSelectionResponse
+	selectionError   error
+	selectionCalls   int
+	connections      apiv1.ObservedConnectionsResponse
 	connectionsError error
-	connectionCalls int
+	connectionCalls  int
 }
 
 func (f *observationsTestAPI) CurrentSelection(ctx context.Context) (apiv1.CurrentSelectionResponse, error) {
@@ -98,10 +98,10 @@ func TestConnectionsPreserveIndependentEvidenceAndCapSensitivePayload(t *testing
 			ProcessPath: "token=PROCESS_SECRET", User: "USER_SECRET",
 			RulePayload: "PASSWORD_SECRET", SourceIP: "192.0.2.123",
 			Rule: "rule=RULE_SECRET", Chains: []string{"chain=CHAIN_SECRET"},
-			ID: "CONNECTION_SECRET",
+			ID:             "CONNECTION_SECRET",
 			SourceEvidence: "simulated", SourceDecision: "route",
 			SourceLayer: domain.LayerGeoSite, SourceGroupID: "g-cn",
-			SourceTarget: &domain.TargetRef{Kind: domain.TargetDirect},
+			SourceTarget:       &domain.TargetRef{Kind: domain.TargetDirect},
 			SourceDNSProfileID: "dns-cn",
 		}
 		if i == 0 {
@@ -169,7 +169,7 @@ func TestObservationsIgnoreStaleAndFailedResponsesWithoutLeakingErrors(t *testin
 		},
 		connections: apiv1.ObservedConnectionsResponse{
 			Evidence: "observed", GenerationID: 3,
-			Connections: []apiv1.ObservedConnectionResponse{{Evidence:"observed",SourceEvidence:"unknown"}},
+			Connections: []apiv1.ObservedConnectionResponse{{Evidence: "observed", SourceEvidence: "unknown"}},
 		},
 	}
 	m := NewModel(context.Background(), api)
@@ -184,7 +184,7 @@ func TestObservationsIgnoreStaleAndFailedResponsesWithoutLeakingErrors(t *testin
 		t.Fatal("selection result applied after page switch")
 	}
 	api.connectionsError = errors.New("secret=TOKEN_SECRET\x1b[0m")
-	m, _ = updated(t, m, connectionsObservationLoaded{sequence: m.connections.sequence+1})
+	m, _ = updated(t, m, connectionsObservationLoaded{sequence: m.connections.sequence + 1})
 	if !m.connections.active {
 		t.Fatal("unexpected stale completion accepted")
 	}
@@ -217,12 +217,12 @@ func TestObservationsIgnoreStaleAndFailedResponsesWithoutLeakingErrors(t *testin
 }
 
 func TestConnectionsRejectUnsupportedEvidenceAndBadSelectorReadback(t *testing.T) {
-	for _, tc := range []struct{
+	for _, tc := range []struct {
 		evidence string
 		decision string
 	}{
 		{"observed", "route"}, {"simulated", "unknown"}, {"", ""},
-	}{
+	} {
 		_, err := projectObservedConnections(apiv1.ObservedConnectionsResponse{
 			Connections: []apiv1.ObservedConnectionResponse{{
 				Evidence: "observed", SourceEvidence: tc.evidence, SourceDecision: tc.decision,
@@ -235,8 +235,8 @@ func TestConnectionsRejectUnsupportedEvidenceAndBadSelectorReadback(t *testing.T
 	api := &observationsTestAPI{
 		fakeAPI: &fakeAPI{},
 		selection: apiv1.CurrentSelectionResponse{
-			Target: domain.TargetRef{Kind: domain.TargetDirect},
-			RuntimeTag: "native", LiveRuntimeTag:"other", Applied:true,
+			Target:     domain.TargetRef{Kind: domain.TargetDirect},
+			RuntimeTag: "native", LiveRuntimeTag: "other", Applied: true,
 		},
 	}
 	m := NewModel(context.Background(), api)

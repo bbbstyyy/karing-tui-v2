@@ -85,8 +85,8 @@ type Model struct {
 	overlayNodeID   string
 	overlayNotice   string
 
-	route routeProbeState
-	selection selectionObservation
+	route       routeProbeState
+	selection   selectionObservation
 	connections connectionsObservation
 
 	quitting bool
