@@ -235,3 +235,10 @@ There is **no CLI, HTTP or TUI invocation** for this path. Manual restore remain
 
 
 Historical non-activating core checks additionally hold bounded, no-follow file descriptor pins for the target and BOTH applied/last-known-good rule resources. The check compares inode identity and original SQLite payloads after `core Check`, catching same-content file replacement or changes to fallback metadata that path-only SHA checks missed. These pins do **not** provide a durable activation lease or defend against every pathname ABA race. Manual restore remains unavailable; see [ADR 0088](docs/adr/0088-descriptor-pinned-historical-rule-resources.md).
+
+
+### Historical dry-run storage reclamation (internal)
+
+An internal historical core compatibility check uses an immutable SQLite candidate and never activates it. On completion, the daemon now performs a second bounded SQLite transaction to **archive its explicit prepared-only failure journal and reclaim only that candidate payload**. Current applied, LKG and confirmed generations are not globally pruned to make space. Repeated checks should not consume the generation payload quota; interrupted, active, rollback-failed, referenced or unmarked candidates are never reclaimed through this shortcut. Cleanup errors fail closed. See [ADR 0089](docs/adr/0089-reclaim-historical-check-candidates.md).
+
+This is **not** a user-accessible restore operation: `restore_supported=false`, `restore_ready=false`, no manual rollback route, no core activation.
