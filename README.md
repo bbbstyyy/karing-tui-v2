@@ -242,3 +242,8 @@ Historical non-activating core checks additionally hold bounded, no-follow file 
 An internal historical core compatibility check uses an immutable SQLite candidate and never activates it. On completion, the daemon now performs a second bounded SQLite transaction to **archive its explicit prepared-only failure journal and reclaim only that candidate payload**. Current applied, LKG and confirmed generations are not globally pruned to make space. Repeated checks should not consume the generation payload quota; interrupted, active, rollback-failed, referenced or unmarked candidates are never reclaimed through this shortcut. Cleanup errors fail closed. See [ADR 0089](docs/adr/0089-reclaim-historical-check-candidates.md).
 
 This is **not** a user-accessible restore operation: `restore_supported=false`, `restore_ready=false`, no manual rollback route, no core activation.
+
+
+### Ephemeral isolated historical rule-resource copies
+
+The internal-only historical core compatibility check now stages **independent private copies** of its pinned target/applied/LKG rule sets (up to 128 files / 128 MiB), rather than relying solely on shared source inode observation. Each source descriptor is reverified before/after the copy; every scoped file is SHA-256 checked, fsynced and owner-read-only. Copies are verified again after core `Check` and removed through an identity-checked cleanup. No native paths are rebound yet: **core Check still uses the original native rule paths**, so this is not an activation-ready isolated resource lease. A hard crash can leave a bounded orphan directory until safe scavenging exists. See [ADR 0090](docs/adr/0090-isolated-historical-rule-snapshots.md). Manual restore remains disabled.
