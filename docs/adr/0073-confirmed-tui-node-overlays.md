@@ -24,4 +24,4 @@ TUI tests exercise cancellation/no-write, confirmation, stable row selection, fu
 
 ## Open follow-up
 
-Add user-confirmed current-selection mutations, read-only routing/DNS provenance screens, and controlled diagnostics. Continue M3 per-field import/protocol compatibility and CN offline resource/license closure as explicit release blockers.
+Add user-confirmed current-selection mutations and controlled diagnostics. ADR 0074 provides a bounded applied-generation route/DNS-binding probe but is not a complete DNS observation UI. Continue M3 per-field import/protocol compatibility and CN offline resource/license closure as explicit release blockers.

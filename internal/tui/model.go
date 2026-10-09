@@ -23,6 +23,7 @@ type API interface {
 	ProfileSources(context.Context) (apiv1.ProfileSourceListResponse, error)
 	ProfileNodes(context.Context, string, int, int) (apiv1.ProfileNodeListResponse, error)
 	PutProfileNodeOverlay(context.Context, string, string, apiv1.ProfileNodeOverlayPutRequest) (apiv1.ProfileNodeOverlayResponse, error)
+	RouteExplain(context.Context, apiv1.RouteExplainRequest) (apiv1.RouteExplainResponse, error)
 }
 
 type page uint8
@@ -31,6 +32,7 @@ const (
 	dashboardPage page = iota
 	profilesPage
 	nodesPage
+	routePage
 )
 
 // profileView contains only fields explicitly safe for a terminal to retain.
@@ -79,6 +81,8 @@ type Model struct {
 	overlayNodeID   string
 	overlayNotice   string
 
+	route routeProbeState
+
 	quitting bool
 }
 
@@ -110,6 +114,7 @@ func NewModel(ctx context.Context, api API) Model {
 		ctx: ctx, api: api,
 		page: dashboardPage, width: 80, height: 24,
 		statusRequest: 1, profilesRequest: 1,
+		route: routeProbeState{entry: "rule"},
 	}
 }
 
@@ -253,7 +258,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.requestNodes(m.nodesOffset)
 		m.nodesRestoreID = msg.nodeID
 		return m, cmd
+	case routeProbeLoaded:
+		m.acceptRouteProbe(msg)
+		return m, nil
 	case tea.KeyMsg:
+		if m.page == routePage && m.route.editing {
+			return m.updateRouteProbeEditing(msg)
+		}
 		if m.overlayInFlight && msg.String() != "q" && msg.String() != "ctrl+c" {
 			return m, nil
 		}
@@ -282,6 +293,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "r":
+			if m.page == routePage {
+				return m, m.startRouteProbe()
+			}
 			m.statusRequest++
 			m.profilesRequest++
 			m.statusReady, m.profilesReady = false, false
@@ -295,25 +309,39 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(commands...)
 		case "tab":
-			return m, m.switchPage(page((int(m.page) + 1) % 3))
+			return m, m.switchPage(page((int(m.page) + 1) % 4))
 		case "1":
 			return m, m.switchPage(dashboardPage)
 		case "2":
 			return m, m.switchPage(profilesPage)
 		case "3":
 			return m, m.switchPage(nodesPage)
+		case "4":
+			return m, m.switchPage(routePage)
+		case "e":
+			if m.page == routePage {
+				m.beginRouteProbeEditing()
+			}
+		case "t":
+			if m.page == routePage {
+				m.cycleRouteProbeEntry()
+			}
 		case "esc":
 			if m.page == nodesPage {
 				return m, m.switchPage(profilesPage)
 			}
 		case "up", "k":
-			if m.page == profilesPage && m.selected > 0 {
+			if m.page == routePage && m.route.scroll > 0 {
+				m.route.scroll--
+			} else if m.page == profilesPage && m.selected > 0 {
 				m.selected--
 			} else if m.page == nodesPage && m.nodesScroll > 0 {
 				m.nodesScroll--
 			}
 		case "down", "j":
-			if m.page == profilesPage && m.selected+1 < len(m.profiles) {
+			if m.page == routePage && m.route.scroll+1 < len(m.routeProbeLines()) {
+				m.route.scroll++
+			} else if m.page == profilesPage && m.selected+1 < len(m.profiles) {
 				m.selected++
 			} else if m.page == nodesPage && m.nodesReady && m.nodesScroll+1 < len(m.nodes.Nodes) {
 				m.nodesScroll++
@@ -354,6 +382,14 @@ func (m *Model) selectedProfileID() string {
 func (m *Model) switchPage(to page) tea.Cmd {
 	m.overlayConfirm = nil
 	m.overlayNotice = ""
+	if m.page == routePage || to == routePage {
+		m.route.discard = true
+		m.route.editing = false
+		m.route.ready = false
+		m.route.failed = false
+		m.route.invalid = false
+		m.route.scroll = 0
+	}
 	m.page = to
 	if to == nodesPage && m.selectedProfileID() != "" &&
 		(m.nodesProfile != m.selectedProfileID() || !m.nodesReady) {
@@ -413,13 +449,16 @@ func (m Model) View() string {
 			} else {
 				body = body[:limit]
 			}
+		case routePage:
+			start := min(m.route.scroll, len(body)-limit)
+			body = body[start:min(len(body), start+limit)]
 		default:
 			body = body[:limit]
 		}
 	}
 	lines := []string{
 		"karing-tui v2 | TUI client | daemon/core run independently",
-		"[1] Dashboard  [2] Profiles  [3] Nodes",
+		"[1] Dashboard  [2] Profiles  [3] Nodes  [4] Route Probe",
 		"",
 	}
 	for _, line := range body {
@@ -429,6 +468,13 @@ func (m Model) View() string {
 	help := "Tab: page  j/k: select  n/p: page  f: favorite  d: disable  r: reload  q: quit"
 	if m.overlayConfirm != nil {
 		help = "y: CONFIRM " + m.overlayConfirm.action + "  Esc: cancel  (daemon only; no core apply)"
+	} else if m.page == routePage {
+		help = "e: edit address  t: entry  r: simulate  j/k: scroll  Tab: page  q: quit"
+		if m.route.editing {
+			help = "Enter: simulate  Esc: cancel edit  Ctrl+U: clear  Ctrl+C: quit"
+		} else if m.route.active {
+			help = "Simulation request in progress; exit TUI with q if needed."
+		}
 	} else if m.overlayInFlight {
 		help = "Saving node overlay; q exits TUI but a daemon-accepted write may finish."
 	} else if m.overlayNotice != "" {
@@ -443,6 +489,8 @@ func (m Model) View() string {
 
 func (m Model) pageLines() []string {
 	switch m.page {
+	case routePage:
+		return m.routeProbeLines()
 	case dashboardPage:
 		if !m.statusReady {
 			if m.statusError {
