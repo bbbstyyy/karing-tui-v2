@@ -195,7 +195,10 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	registerProfileDeclarationStageRoutes(mux, store, profileOperations)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
-		selectionCore = runtime
+		// The HTTP handlers hold runtime.gate for the entire read/validate/
+		// persist/live-readback operation. Use the underlying core directly:
+		// runtime.SelectCurrent itself acquires the same non-reentrant gate.
+		selectionCore = runtime.core.(currentSelectionCore)
 	}
 	selection, _ := NewCurrentSelectionCoordinator(store, selectionCore)
 	// Serialize selector writes with core start/stop/apply/restore and with
