@@ -93,7 +93,13 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	// harmless, but no future activation may be planned when its fallback
 	// configurations or local rule resources have already disappeared.
 	budget := maxRecoveryAuditRuleBytes
+	fallbackArtifacts := make([]historicalStoredArtifact, 0, 2)
+	seenFallback := make(map[int64]bool, 2)
 	for _, id := range []int64{*before.AppliedGenerationID, *before.LastKnownGoodGenerationID} {
+		if seenFallback[id] {
+			continue
+		}
+		seenFallback[id] = true
 		current := inspectRetainedGeneration(ctx, store, stateRoot,
 			apiv1.RecoveryGenerationAudit{GenerationID: id, PayloadRetained: true},
 			before, intent, persisted, &budget)
@@ -101,6 +107,11 @@ func (r *serverRuntime) checkHistoricalGeneration(
 			current.PreflightStatus != recoveryPreflightConsistentOnly {
 			return evidence, ErrHistoricalCheckRejected
 		}
+		fallback, readErr := store.GenerationArtifacts(ctx, id)
+		if readErr != nil {
+			return evidence, ErrHistoricalCheckChanged
+		}
+		fallbackArtifacts = append(fallbackArtifacts, historicalStoredArtifact{id: id, artifacts: fallback})
 	}
 
 	source, err := store.GenerationArtifacts(ctx, sourceID)
@@ -128,6 +139,24 @@ func (r *serverRuntime) checkHistoricalGeneration(
 		!bytes.Equal(sourceMapJSON, source.SourceMapJSON) ||
 		recompiled.SHA256 != source.ConfigSHA256 {
 		return evidence, ErrHistoricalCheckRejected
+	}
+
+	// Keep the historical and both fallback resource inodes open across
+	// candidate preparation and core Check. This detects path replacements
+	// and in-place corruption that a before/after path-only hash can miss.
+	originals := append([]historicalStoredArtifact{{id: sourceID, artifacts: source}}, fallbackArtifacts...)
+	pins, err := pinHistoricalRuleSets(ctx, stateRoot, originals)
+	if err != nil {
+		return evidence, ErrHistoricalCheckRejected
+	}
+	defer func() {
+		if closeErr := pins.Close(); closeErr != nil {
+			err = errors.Join(err, ErrHistoricalCheckUnavailable)
+			evidence = HistoricalCheckEvidence{}
+		}
+	}()
+	if !historicalPayloadsUnchanged(ctx, store, originals) || pins.Reverify(ctx) != nil {
+		return evidence, ErrHistoricalCheckChanged
 	}
 
 	precondition := storage.HistoricalRestorePrecondition{
@@ -164,7 +193,8 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	if !bytes.Equal(sealed.ConfigJSON, recompiled.JSON) ||
 		!bytes.Equal(sealed.ManifestJSON, manifestJSON) ||
 		!bytes.Equal(sealed.SourceMapJSON, sourceMapJSON) ||
-		!historicalCheckStillBound(ctx, store, precondition, attempt.ID) {
+		!historicalCheckStillBound(ctx, store, precondition, attempt.ID) ||
+		!historicalPayloadsUnchanged(ctx, store, originals) || pins.Reverify(ctx) != nil {
 		return evidence, ErrHistoricalCheckChanged
 	}
 
@@ -176,10 +206,10 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	}); err != nil {
 		return evidence, fmt.Errorf("%w: core rejected historical candidate", ErrHistoricalCheckRejected)
 	}
-	// Check all mutable bindings and resource hashes again AFTER core Check.
-	budget = maxRecoveryAuditRuleBytes
+	// Re-read original SQLite payloads and all pinned source/fallback file
+	// descriptors AFTER core Check, not only the target's pathname.
 	if !historicalCheckStillBound(ctx, store, precondition, attempt.ID) ||
-		!auditRuleSetResources(ctx, stateRoot, historicalManifest.RuleSets, &budget) {
+		!historicalPayloadsUnchanged(ctx, store, originals) || pins.Reverify(ctx) != nil {
 		return evidence, ErrHistoricalCheckChanged
 	}
 
