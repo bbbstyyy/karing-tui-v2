@@ -22,19 +22,19 @@ var (
 // precise state observed by a future gated coordinator. It is not a public
 // restore token, and does not authorize core activation.
 type HistoricalRestorePrecondition struct {
-	SourceGenerationID                 int64
-	SourceConfigSHA256                  string
-	SourceManifestSHA256                string
-	SourceMapSHA256                     string
-	ExpectedConfigRevision             uint64
-	ExpectedAppliedGenerationID        int64
-	ExpectedLastKnownGoodGenerationID  int64
-	ExpectedDeclarationRevision        uint64
-	ExpectedDeclarationSHA256          string
-	ExpectedSelectionRevision          uint64
-	ExpectedRoutingMode                RoutingMode
-	ExpectedPrivateDirect              bool
-	ExpectedCoreDesiredState           CoreDesiredState
+	SourceGenerationID                int64
+	SourceConfigSHA256                string
+	SourceManifestSHA256              string
+	SourceMapSHA256                   string
+	ExpectedConfigRevision            uint64
+	ExpectedAppliedGenerationID       int64
+	ExpectedLastKnownGoodGenerationID int64
+	ExpectedDeclarationRevision       uint64
+	ExpectedDeclarationSHA256         string
+	ExpectedSelectionRevision         uint64
+	ExpectedRoutingMode               RoutingMode
+	ExpectedPrivateDirect             bool
+	ExpectedCoreDesiredState          CoreDesiredState
 }
 
 func validHistoricalSHA(value string) bool {
@@ -94,11 +94,11 @@ func (s *Store) PrepareHistoricalRestore(
 	defer tx.Rollback()
 
 	var (
-		configRevision, selectionRevision int64
+		configRevision, selectionRevision           int64
 		applied, lastKnownGood, declarationRevision sql.NullInt64
-		declarationSHA sql.NullString
-		recoveryRequired, privateDirect int
-		coreDesired, routingMode string
+		declarationSHA                              sql.NullString
+		recoveryRequired, privateDirect             int
+		coreDesired, routingMode                    string
 	)
 	if err := tx.QueryRowContext(ctx, `SELECT
 		d.config_revision, d.applied_generation_id, d.last_known_good_generation_id,
@@ -253,7 +253,7 @@ func (s *Store) PrepareHistoricalRestore(
 	return Attempt{
 		ID: attemptID, GenerationID: generationID,
 		PreviousGenerationID: &p.ExpectedAppliedGenerationID,
-		BaseRevision: p.ExpectedConfigRevision, TargetRevision: p.ExpectedConfigRevision+1,
+		BaseRevision:         p.ExpectedConfigRevision, TargetRevision: p.ExpectedConfigRevision + 1,
 		Phase: PhasePrepared, ConfigSHA256: source.ConfigSHA256,
 		StartedAt: now, UpdatedAt: now,
 	}, source, nil

@@ -57,19 +57,19 @@ func historicalRestoreFixture(t *testing.T) (*Store, HistoricalRestorePreconditi
 		t.Fatal(err)
 	}
 	p := HistoricalRestorePrecondition{
-		SourceGenerationID: first.GenerationID,
-		SourceConfigSHA256: source.ConfigSHA256,
-		SourceManifestSHA256: source.ManifestSHA256,
-		SourceMapSHA256: source.SourceMapSHA256,
-		ExpectedConfigRevision: 2,
-		ExpectedAppliedGenerationID: second.GenerationID,
+		SourceGenerationID:                first.GenerationID,
+		SourceConfigSHA256:                source.ConfigSHA256,
+		SourceManifestSHA256:              source.ManifestSHA256,
+		SourceMapSHA256:                   source.SourceMapSHA256,
+		ExpectedConfigRevision:            2,
+		ExpectedAppliedGenerationID:       second.GenerationID,
 		ExpectedLastKnownGoodGenerationID: second.GenerationID,
-		ExpectedDeclarationRevision: head.Revision,
-		ExpectedDeclarationSHA256: head.SHA256,
-		ExpectedSelectionRevision: selection.Revision,
-		ExpectedRoutingMode: RoutingModeRule,
-		ExpectedPrivateDirect: false,
-		ExpectedCoreDesiredState: CoreDesiredStopped,
+		ExpectedDeclarationRevision:       head.Revision,
+		ExpectedDeclarationSHA256:         head.SHA256,
+		ExpectedSelectionRevision:         selection.Revision,
+		ExpectedRoutingMode:               RoutingModeRule,
+		ExpectedPrivateDirect:             false,
+		ExpectedCoreDesiredState:          CoreDesiredStopped,
 	}
 	return store, p, first, second
 }
@@ -145,9 +145,9 @@ func TestHistoricalRestorePrepareCopiesCommittedPayloadWithoutActivating(t *test
 
 func TestHistoricalRestorePrepareRejectsAllStaleBindingsWithoutMutation(t *testing.T) {
 	cases := []struct {
-		name string
+		name   string
 		change func(context.Context, *Store, *HistoricalRestorePrecondition) error
-		want error
+		want   error
 	}{
 		{"config revision", func(_ context.Context, _ *Store, p *HistoricalRestorePrecondition) error {
 			p.ExpectedConfigRevision++
