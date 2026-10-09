@@ -13,6 +13,10 @@ import (
 // to guess a different generation or prune all retained history instead.
 var ErrHistoricalCheckCleanupUnsafe = errors.New("historical check candidate cannot be safely reclaimed")
 
+// HistoricalCheckAbortReason is a durable marker written only by the dry-run
+// path when PhasePrepared is directly aborted, without core activation.
+const HistoricalCheckAbortReason = "historical core-check completed without activation"
+
 // ReclaimAbortedHistoricalCheck reclaims ONLY an aborted pre-activation
 // historical dry-run candidate. It archives the failed journal entry before
 // removing the unconfirmed candidate bytes, in the same SQLite transaction.
@@ -36,22 +40,24 @@ func (s *Store) ReclaimAbortedHistoricalCheck(ctx context.Context, attemptID int
 	var (
 		generationID int64
 		phase string
+		abortReason string
 		activeSlot sql.NullInt64
 		restoreOrigin sql.NullInt64
 	)
 	err = tx.QueryRowContext(ctx, `SELECT
-		j.generation_id, j.phase, j.active_slot, g.restore_origin_generation_id
+		j.generation_id, j.phase, j.error, j.active_slot, g.restore_origin_generation_id
 		FROM apply_journal j
 		JOIN generations g ON g.id = j.generation_id
 		WHERE j.id = ?`, attemptID).
-		Scan(&generationID, &phase, &activeSlot, &restoreOrigin)
+		Scan(&generationID, &phase, &abortReason, &activeSlot, &restoreOrigin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrHistoricalCheckCleanupUnsafe
 	}
 	if err != nil {
 		return fmt.Errorf("read historical check cleanup journal: %w", err)
 	}
-	if phase != string(PhaseFailed) || activeSlot.Valid || generationID <= 0 ||
+	if phase != string(PhaseFailed) || abortReason != HistoricalCheckAbortReason ||
+		activeSlot.Valid || generationID <= 0 ||
 		!restoreOrigin.Valid || restoreOrigin.Int64 <= 0 ||
 		restoreOrigin.Int64 == generationID {
 		return ErrHistoricalCheckCleanupUnsafe
@@ -105,16 +111,16 @@ func (s *Store) ReclaimAbortedHistoricalCheck(ctx context.Context, attemptID int
 		j.error, j.started_at, j.updated_at, g.created_at, ?
 	FROM apply_journal j
 	JOIN generations g ON g.id = j.generation_id
-	WHERE j.id = ? AND j.phase = ? AND j.active_slot IS NULL
+	WHERE j.id = ? AND j.phase = ? AND j.error = ? AND j.active_slot IS NULL
 		AND g.restore_origin_generation_id = ?
-	`, archivedAt, attemptID, PhaseFailed, restoreOrigin.Int64)
+	`, archivedAt, attemptID, PhaseFailed, HistoricalCheckAbortReason, restoreOrigin.Int64)
 	if err != nil {
 		return fmt.Errorf("archive aborted historical check: %w", err)
 	}
 
 	deletedJournal, err := tx.ExecContext(ctx, `DELETE FROM apply_journal
-		WHERE id = ? AND generation_id = ? AND phase = ? AND active_slot IS NULL`,
-		attemptID, generationID, PhaseFailed)
+		WHERE id = ? AND generation_id = ? AND phase = ? AND error = ? AND active_slot IS NULL`,
+		attemptID, generationID, PhaseFailed, HistoricalCheckAbortReason)
 	if err != nil {
 		return fmt.Errorf("delete aborted historical check journal: %w", err)
 	}
