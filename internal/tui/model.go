@@ -28,6 +28,9 @@ type API interface {
 	SetCurrentSelectionChecked(context.Context, apiv1.CurrentSelectionCheckedRequest) (apiv1.CurrentSelectionResponse, error)
 	ObservedConnections(context.Context) (apiv1.ObservedConnectionsResponse, error)
 	InspectConfig(context.Context) (apiv1.ConfigInspectionResponse, error)
+	RouteEditContext(context.Context) (apiv1.RouteEditContext, error)
+	PreviewRouteEdit(context.Context, apiv1.RouteEditRequest) (apiv1.RouteEditPreviewResponse, error)
+	StageRouteEdit(context.Context, apiv1.RouteEditStageRequest) (apiv1.RouteEditStageResponse, error)
 }
 
 type page uint8
@@ -283,7 +286,29 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case configInspectionLoaded:
 		m.acceptConfigInspection(msg)
 		return m, nil
+	case routeTogglePreviewLoaded:
+		m.acceptRouteTogglePreview(msg)
+		return m, nil
+	case routeToggleWriteLoaded:
+		return m, m.acceptRouteToggleWrite(msg)
 	case tea.KeyMsg:
+		if m.inspection.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.inspection.pending != nil {
+			switch msg.String() {
+			case "y":
+				return m, m.confirmRouteToggle()
+			case "esc":
+				m.inspection.pending = nil
+				m.inspection.notice = "Route change cancelled; no stage sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Exit cancels unconfirmed stage.
+			default:
+				return m, nil
+			}
+		}
 		if m.selection.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
 			return m, nil
 		}
@@ -375,6 +400,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "e":
 			if m.page == routePage {
 				m.beginRouteProbeEditing()
+			} else if m.page == routingInspectPage {
+				return m, m.startRouteToggle()
 			}
 		case "t":
 			if m.page == routePage {
@@ -385,7 +412,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.switchPage(profilesPage)
 			}
 		case "up", "k":
-			if (m.page == routingInspectPage || m.page == dnsInspectPage) && m.inspection.scroll > 0 {
+			if m.page == routingInspectPage && len(m.inspection.routeRows) > 0 {
+				m.moveRouteToggle(-1)
+			} else if (m.page == routingInspectPage || m.page == dnsInspectPage) && m.inspection.scroll > 0 {
 				m.inspection.scroll--
 			} else if m.page == selectionPage && m.selection.ready && m.selection.selected > 0 {
 				m.selection.selected--
@@ -399,7 +428,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.nodesScroll--
 			}
 		case "down", "j":
-			if (m.page == routingInspectPage || m.page == dnsInspectPage) &&
+			if m.page == routingInspectPage && len(m.inspection.routeRows) > 0 {
+				m.moveRouteToggle(1)
+			} else if (m.page == routingInspectPage || m.page == dnsInspectPage) &&
 				m.inspection.scroll+1 < len(m.configInspectionLines()) {
 				m.inspection.scroll++
 			} else if m.page == selectionPage && m.selection.ready && m.selection.selected+1 < len(m.selection.result.candidates) {
@@ -452,6 +483,11 @@ func (m *Model) switchPage(to page) tea.Cmd {
 	m.overlayConfirm = nil
 	m.overlayNotice = ""
 	if m.page != to {
+		if m.page == routingInspectPage {
+			m.inspection.previewSeq++
+			m.inspection.previewing = false
+			m.inspection.pending = nil
+		}
 		if (m.page == routingInspectPage || m.page == dnsInspectPage) &&
 			to != routingInspectPage && to != dnsInspectPage {
 			m.inspection.discardAndForget()
@@ -590,7 +626,23 @@ func (m Model) View() string {
 		}
 	} else if m.page == connectionsPage {
 		help = "Snapshot only (no polling); r: reload  j/k: scroll  Tab: page  q: quit"
-	} else if m.page == routingInspectPage || m.page == dnsInspectPage {
+	} else if m.page == routingInspectPage {
+		help = "Applied declaration; r: reload  Tab: page  q: quit"
+		if m.inspection.writing {
+			help = "Staging only; q exits. The daemon may finish an accepted stage."
+		} else if m.inspection.pending != nil {
+			help = "y: CONFIRM staging route toggle (NOT core apply)  Esc: cancel  q: quit"
+		} else if m.inspection.previewing {
+			help = "Compiling preview; no write sent. r: reload  q: quit"
+		} else if len(m.inspection.routeRows) > 0 {
+			help = "j/k: select route  e: preview enable toggle  r: reload  Tab: page"
+		} else {
+			help = "Read-only (staged/truncated/unavailable); r: reload  Tab: page"
+		}
+		if m.inspection.notice != "" && m.inspection.pending == nil {
+			help = m.inspection.notice
+		}
+	} else if m.page == dnsInspectPage {
 		help = "Read-only bound declaration; j/k: scroll  r: reload  Tab: page  q: quit"
 	} else if m.page == routePage {
 		help = "e: edit address  t: entry  r: simulate  j/k: scroll  Tab: page  q: quit"

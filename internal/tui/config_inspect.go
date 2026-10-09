@@ -28,20 +28,40 @@ type configInspectionState struct {
 	scroll   int
 	routing  []string
 	dns      []string
+
+	routeRows           []routeToggleRow
+	routeSelected       int
+	declarationRevision uint64
+	configRevision      uint64
+	generationID        int64
+	previewSeq          uint64
+	previewing          bool
+	pending             *routeToggleReceipt
+	writeSeq            uint64
+	writing             bool
+	notice              string
 }
 
 type configInspectionLoaded struct {
-	sequence uint64
-	failed   bool
-	routing  []string
-	dns      []string
+	sequence            uint64
+	failed              bool
+	routing             []string
+	dns                 []string
+	routeRows           []routeToggleRow
+	declarationRevision uint64
+	configRevision      uint64
+	generationID        int64
 }
 
 func (s *configInspectionState) discardAndForget() {
 	s.sequence++
+	s.previewSeq++
 	s.active, s.ready, s.failed = false, false, false
-	s.scroll = 0
-	s.routing, s.dns = nil, nil
+	s.previewing, s.writing = false, false
+	s.pending = nil
+	s.scroll, s.routeSelected = 0, 0
+	s.routing, s.dns, s.routeRows = nil, nil, nil
+	s.notice = ""
 }
 
 func (m *Model) requestConfigInspection() tea.Cmd {
@@ -51,7 +71,12 @@ func (m *Model) requestConfigInspection() tea.Cmd {
 	m.inspection.sequence++
 	m.inspection.active = true
 	m.inspection.ready, m.inspection.failed = false, false
-	m.inspection.routing, m.inspection.dns = nil, nil
+	m.inspection.routing, m.inspection.dns, m.inspection.routeRows = nil, nil, nil
+	m.inspection.previewSeq++
+	m.inspection.previewing = false
+	m.inspection.pending = nil
+	m.inspection.routeSelected = 0
+	m.inspection.notice = ""
 	m.inspection.scroll = 0
 	return loadConfigInspection(m.ctx, m.api, m.inspection.sequence)
 }
@@ -74,6 +99,10 @@ func loadConfigInspection(ctx context.Context, api API, seq uint64) tea.Cmd {
 		}
 		msg.failed = false
 		msg.routing, msg.dns = routing, dns
+		msg.routeRows = projectRouteToggleRows(raw, routing)
+		msg.declarationRevision = raw.CurrentDeclarationRevision
+		msg.configRevision = raw.ConfigRevision
+		msg.generationID = raw.GenerationID
 		return msg
 	}
 }
@@ -89,6 +118,10 @@ func (m *Model) acceptConfigInspection(msg configInspectionLoaded) {
 	m.inspection.scroll = 0
 	if !msg.failed {
 		m.inspection.routing, m.inspection.dns = msg.routing, msg.dns
+		m.inspection.routeRows = msg.routeRows
+		m.inspection.declarationRevision = msg.declarationRevision
+		m.inspection.configRevision = msg.configRevision
+		m.inspection.generationID = msg.generationID
 	}
 }
 
@@ -108,7 +141,14 @@ func (m Model) configInspectionLines() []string {
 	case m.page == dnsInspectPage:
 		return m.inspection.dns
 	default:
-		return m.inspection.routing
+		lines := append([]string(nil), m.inspection.routing...)
+		if m.inspection.routeSelected < len(m.inspection.routeRows) {
+			row := m.inspection.routeRows[m.inspection.routeSelected]
+			if row.line >= 0 && row.line < len(lines) {
+				lines[row.line] = "> " + strings.TrimPrefix(lines[row.line], "  ")
+			}
+		}
+		return lines
 	}
 }
 
