@@ -60,21 +60,24 @@ func (f *routeToggleFakeAPI) RouteEditContext(ctx context.Context) (apiv1.RouteE
 func (f *routeToggleFakeAPI) PreviewRouteEdit(ctx context.Context, r apiv1.RouteEditRequest) (apiv1.RouteEditPreviewResponse, error) {
 	f.previewCalls++
 	f.lastPreview = r
-	if f.previewError != nil {
-		return apiv1.RouteEditPreviewResponse{}, f.previewError
-	}
-	target := domain.TargetRef{Kind: domain.TargetCurrentSelected}
+	if f.previewError != nil { return apiv1.RouteEditPreviewResponse{}, f.previewError }
+	old:=f.value.Layers[0].Groups[0]
+	before,afterEnabled,afterTarget,afterDNS:=old.Enabled,old.Enabled,old.Target,old.DNSProfile
+	if r.Enabled != nil { afterEnabled=*r.Enabled }
+	if r.Target != nil { afterTarget=*r.Target }
+	if r.DNSProfileID != nil { afterDNS=*r.DNSProfileID }
 	return apiv1.RouteEditPreviewResponse{
-		APIVersion: apiv1.Version, Request: r, Origin: "cn_preset",
-		BeforeEnabled: true, AfterEnabled: false,
-		BeforeTarget: target, AfterTarget: target,
-		BeforeDNSProfileID: "group-dns", AfterDNSProfileID: "group-dns",
-		CandidateSHA256:    strings.Repeat("b", 64),
-		NativeConfigSHA256: strings.Repeat("c", 64), NativeSchemaID: "native",
-		RouteEntryCount: 1, DNSServerCount: 2, RuleSetCount: 0,
-		CompilerValidated: true,
-	}, nil
+		APIVersion:apiv1.Version,Request:r,Origin:"cn_preset_override",
+		BeforeEnabled:before,AfterEnabled:afterEnabled,
+		BeforeTarget:old.Target,AfterTarget:afterTarget,
+		BeforeDNSProfileID:old.DNSProfile,AfterDNSProfileID:afterDNS,
+		CandidateSHA256:strings.Repeat("b",64),
+		NativeConfigSHA256:strings.Repeat("c",64),NativeSchemaID:"native",
+		RouteEntryCount:1,DNSServerCount:2,RuleSetCount:0,
+		CompilerValidated:true,
+	},nil
 }
+
 func (f *routeToggleFakeAPI) StageRouteEdit(ctx context.Context, r apiv1.RouteEditStageRequest) (apiv1.RouteEditStageResponse, error) {
 	f.stageCalls++
 	f.lastStage = r
