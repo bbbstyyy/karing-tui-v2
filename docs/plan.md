@@ -1257,3 +1257,11 @@ docs/
 - 确认界面必须完整显示声明/配置修订、声明 SHA 与原生配置 SHA 摘要、已应用代际、CurrentSelected 修订、内核可能重启及连接中断警告；终端小于 64×16 或缩小到不满足尺寸时禁止确认，过期/跨页预览失效。
 - 调用已有 `/v1/config/apply/confirm` 受保护 API，单次、限时、异步，不在 Bubble Tea `Update/View` 中阻塞；写入后对响应和状态回读执行同一代际/修订核验，失败或超时标记不确定且不自动重试。运行中禁止第二次请求；TUI 退出不停止 daemon/core，已被 daemon 接收的应用仍可能完成。
 - 此切片**不提供手动历史代际回滚或备份恢复**。现有应用 journal 的自动失败回滚保留；真正的恢复目标选择、旧配置的完整原生资源闭包、T10 DNS 实际路径验证与长期稳定门槛仍待完成。详见 ADR 0083。
+
+
+### 2026-10-09 M4 已确认历史代际只读完整性审计切片
+
+- SQLite 按成功 `committed` 的 journal + archived history 生成有界（最多 12 条）去重代际目录，记录已持久化修订号与 payload 是否被 retention 清理，绝不把 prepared/rolled_back/failed 候选当作可恢复配置。
+- 新增 `GET /v1/config/recovery/audit` 和 `config recovery-audit` 只读入口：逐代际复核原生配置、manifest、source-map 的 SHA-256 与 JSON、原生 schema、声明 revision/hash 及声明本体，并对 manifest 指向的私有 content-addressed 规则资源复用 no-follow/owner/hash 验证；禁止将任意存储路径当作规则文件打开。
+- 返回只有脱敏状态枚举、代际、修订号及完整性布尔值；配置、DNS 上游、节点密钥、rule-set 路径或原始错误不输出。状态与声明在采集前后变化则 409 拒绝拼接快照；资源已经清理或损坏时标记不可用，不悄悄回退为直连。
+- **所有 `restore_ready=false`，`restore_supported=false`**：哈希验证仅说明存储内容与规则文件在该时刻可核查，并不代表该历史配置现在可应用。手动历史代际回滚必须先补齐 CurrentSelected/运行路由策略绑定、规则资源闭包的应用时再校验、可恢复代际 CAS、内核严格检查/事务激活与故障注入测试，不能绕过保护直接复用历史 native JSON。见 ADR 0084。

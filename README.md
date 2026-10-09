@@ -23,6 +23,8 @@ karing-tui status
 karing-tui status --json
 karing-tui config apply-preview --out="$HOME/apply-receipt.json"
 karing-tui config apply --receipt="$HOME/apply-receipt.json" --confirm
+# Read-only confirmed generation and resource integrity report; NO restore performed
+karing-tui config recovery-audit
 karing-tui capabilities
 karing-tui version
 ```
@@ -212,3 +214,10 @@ karing-tui status --json
 The second command is **explicitly disruptive**: the daemon strictly recompiles the current declaration, validates the exact receipt, performs managed-core check, activation, behavior verification and a durable config-generation commit. It may restart/replace the running core and interrupt existing connections. The CLI verifies the daemon acknowledgement against the receipt and reads back the new durable generation/revision before reporting success. Receipt files must be regular, owner-owned, private, bounded and not symlinks; no existing receipt is overwritten.
 
 The guard rejects stale declaration content, changed config revision/generation, changed CurrentSelected intent or a new native SHA-256, and rejects an already-applied declaration. `config apply-preview` **does not** check or start the real core; no core changes happen until the deliberate `--confirm`. A timed-out/closed-client confirmation may have succeeded, failed or entered rollback; **never retry automatically**. Query `status --json` and investigate recovery state first. On check/activation/verification failure the pre-existing apply journal retains its transactional rollback semantics; this feature does not provide a manually selectable historical-generation rollback. Legacy `/v1/declaration/apply` can apply historical immutable revisions, but it is **not** the checked current-head UX described here. See [ADR 0082](docs/adr/0082-checked-current-declaration-apply-cli.md). Manual historical-generation rollback, consistent backups and real DNS detour observation remain outstanding.
+
+
+## Historical generation recovery audit (read-only, no rollback)
+
+Use `karing-tui config recovery-audit` after checking `karing-tui status --json`. The command reads `GET /v1/config/recovery/audit` over the private Unix socket. It enumerates at most twelve committed generation references from live and archived SQLite journal history, newest first. Entries distinguish whether the generation payload was pruned by retention, whether retained original native JSON/manifest/source-map and the exact immutable declaration still match SHA-256, and whether manifest-listed local content-addressed rule files still pass ownership/symlink and hash checks. Unconfirmed candidates are excluded. A read does not change the daemon, SQLite generations, desired core state or the currently running core.
+
+**Important:** even an entry with `status=stored_integrity_verified_only` has `restore_ready=false`; the entire response has `restore_supported=false`. Hash integrity only proves stored bytes and referenced rule file checks at audit time. It is **not** proof that the historical generation is compatible with the currently running core, CurrentSelected state, routing mode, runtime resources or pending recovery journal. Metadata for already pruned generations is useful for diagnosis, but their native payload is not available. A concurrent apply/declaration change rejects the audit instead of returning a mixed view. **There is no new manual restore or rollback command.** Failure recovery continues to be owned by the existing apply coordinator. See [ADR 0084](docs/adr/0084-read-only-confirmed-generation-audit.md).
