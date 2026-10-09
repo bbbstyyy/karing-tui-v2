@@ -123,6 +123,16 @@ func (c *Client) RouteExplain(
 // accidentally fetch full declarations, core configs or DNS credentials.
 const maxInspectionResponseBytes = 1 << 20
 
+// RecoveryAudit is a non-authorizing read-only generation inventory.
+// It returns metadata and status enums, never native configs or file paths.
+func (c *Client) RecoveryAudit(ctx context.Context) (apiv1.RecoveryAuditResponse, error) {
+	var response apiv1.RecoveryAuditResponse
+	if err := c.getWithClient(ctx, c.applyClient, "/v1/config/recovery/audit", &response); err != nil {
+		return apiv1.RecoveryAuditResponse{}, err
+	}
+	return response, nil
+}
+
 // CheckedApplyPreview compiles the current unapplied declaration, without
 // touching a running generation or returning secret-bearing artifacts.
 func (c *Client) CheckedApplyPreview(ctx context.Context) (apiv1.CheckedApplyPreviewResponse, error) {

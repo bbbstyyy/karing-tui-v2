@@ -62,6 +62,9 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	api := client.New(paths.Socket)
+	if len(args) > 0 && args[0] == "recovery-audit" {
+		return runRecoveryAuditCLI(context.Background(), api, args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && (args[0] == "apply-preview" || args[0] == "apply") {
 		return runCheckedApplyCLI(context.Background(), api, args, stdout, stderr)
 	}
@@ -264,6 +267,7 @@ Usage:
   karing-tui config route-stage --receipt=FILE --confirm  stage previewed edit only
   karing-tui config apply-preview [--out=FILE]  inspect current unapplied declaration
   karing-tui config apply --receipt=FILE --confirm  apply checked receipt (disruptive)
+  karing-tui config recovery-audit  read-only historical generation verification (no rollback)
   karing-tui profiles help     list safe profile and node-management commands
   karing-tui version           show build version
 
