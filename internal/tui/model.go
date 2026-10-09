@@ -63,13 +63,13 @@ type Model struct {
 	profilesRequest   uint64
 	selected          int
 
-	nodes        apiv1.ProfileNodeListResponse
-	nodesReady   bool
-	nodesError   bool
-	nodesProfile string
-	nodesOffset  int
-	nodesScroll  int
-	nodesRequest uint64
+	nodes          apiv1.ProfileNodeListResponse
+	nodesReady     bool
+	nodesError     bool
+	nodesProfile   string
+	nodesOffset    int
+	nodesScroll    int
+	nodesRequest   uint64
 	nodesRestoreID string
 
 	overlayConfirm  *overlayProposal

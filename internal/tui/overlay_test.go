@@ -35,7 +35,7 @@ func (f *fakeAPI) PutProfileNodeOverlay(
 			return apiv1.ProfileNodeOverlayResponse{
 				ProfileID: profileID, NodeID: nodeID,
 				Revision: data.Nodes[i].OverlayRevision,
-				Overlay: request.Overlay,
+				Overlay:  request.Overlay,
 			}, nil
 		}
 	}
