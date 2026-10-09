@@ -1249,3 +1249,11 @@ docs/
 - 新增 `POST /v1/config/apply/confirm`：接收预览签认的固定标识与原生哈希，在同一 Gate 内复验、重新编译，调用既有原子代际应用协调器完成 `check -> activate -> verify -> commit`，失败交由既有 journal/rollback/recovery。冲突回执不得再应用；超时/断链不盲重试。
 - CLI 提供 `config apply-preview [--out=0600_FILE]`、`config apply --receipt=PRIVATE_FILE --confirm`，拒绝 symlink、非私有/非本人文件、失效摘要或缺少明确确认；成功后校验代际与配置修订回读。应用可能替换 core 并影响连接，不因预览或 TUI 页面切换而自动发生。
 - 当前仅是 **CLI 当前头版本应用闭环**，不能宣称 TUI 版本回滚、历史代际主动恢复、一致性备份或 M4 完成。五层路由/CN 预置/订阅 ISP 排除、Linux 普通用户和无 TUN 不变。详见 ADR 0082。
+
+
+### 2026-10-09 M4 Dashboard 受保护应用交互切片
+
+- Dashboard (TUI 页面 `1`) 增加 `a` 编译预览当前**未应用**的声明；按用户明确 `y` 才请求应用，`Esc` 放弃；预览只读取验证过的声明摘要、已应用代际、选择修订与资源计数，`core_validated=false`，无写入。
+- 确认界面必须完整显示声明/配置修订、声明 SHA 与原生配置 SHA 摘要、已应用代际、CurrentSelected 修订、内核可能重启及连接中断警告；终端小于 64×16 或缩小到不满足尺寸时禁止确认，过期/跨页预览失效。
+- 调用已有 `/v1/config/apply/confirm` 受保护 API，单次、限时、异步，不在 Bubble Tea `Update/View` 中阻塞；写入后对响应和状态回读执行同一代际/修订核验，失败或超时标记不确定且不自动重试。运行中禁止第二次请求；TUI 退出不停止 daemon/core，已被 daemon 接收的应用仍可能完成。
+- 此切片**不提供手动历史代际回滚或备份恢复**。现有应用 journal 的自动失败回滚保留；真正的恢复目标选择、旧配置的完整原生资源闭包、T10 DNS 实际路径验证与长期稳定门槛仍待完成。详见 ADR 0083。
