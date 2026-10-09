@@ -76,6 +76,66 @@ type DeclarationCompileResponse struct {
 	RuleSetCount      int      `json:"rule_set_count"`
 }
 
+// ConfigInspection is a bounded privacy-safe *declaration* projection.
+// It does not claim any packet, DNS request or rule match was observed.
+// A later staged declaration is compared for semantic drift only.
+type ConfigInspectionResponse struct {
+	APIVersion                 string                      `json:"api_version"`
+	Evidence                   string                      `json:"evidence"`
+	ConfigRevision             uint64                      `json:"config_revision"`
+	GenerationID               int64                       `json:"generation_id"`
+	AppliedDeclarationRevision uint64                      `json:"applied_declaration_revision"`
+	CurrentDeclarationRevision uint64                      `json:"current_declaration_revision"`
+	StagedUnapplied            bool                        `json:"staged_unapplied"`
+	RoutingChanged             bool                        `json:"routing_changed"`
+	DNSChanged                 bool                        `json:"dns_changed"`
+	RuleSetsChanged            bool                        `json:"rule_sets_changed"`
+	CNPreset                   bool                        `json:"cn_preset"`
+	RegionAppend               bool                        `json:"region_append"`
+	RouteTotal                 int                         `json:"route_total"`
+	RouteTruncated             bool                        `json:"route_truncated"`
+	Layers                     []ConfigInspectionLayer     `json:"layers"`
+	DNS                        ConfigInspectionDNS         `json:"dns"`
+}
+
+type ConfigInspectionLayer struct {
+	Layer          domain.RoutingLayer           `json:"layer"`
+	Enabled        bool                          `json:"enabled"`
+	GroupCount     int                           `json:"group_count"`
+	ActiveCount    int                           `json:"active_count"`
+	Groups         []ConfigInspectionRouteGroup  `json:"groups"`
+}
+
+type ConfigInspectionRouteGroup struct {
+	ID          string           `json:"id"`
+	Order       uint32           `json:"order"`
+	Enabled     bool             `json:"enabled"`
+	Origin      string           `json:"origin"`
+	MatchKinds  []string         `json:"match_kinds,omitempty"`
+	Target      domain.TargetRef `json:"target"`
+	DNSProfile  string           `json:"dns_profile_id,omitempty"`
+}
+
+type ConfigInspectionDNS struct {
+	OutboundProfile string                       `json:"outbound_profile_id"`
+	DirectProfile   string                       `json:"direct_profile_id,omitempty"`
+	ProxyProfile    string                       `json:"proxy_profile_id,omitempty"`
+	FallbackProfile string                       `json:"fallback_profile_id,omitempty"`
+	ProfileCount    int                          `json:"profile_count"`
+	Truncated       bool                         `json:"truncated"`
+	Profiles        []ConfigInspectionDNSProfile `json:"profiles"`
+}
+
+type ConfigInspectionDNSProfile struct {
+	ID          string           `json:"id"`
+	Role        domain.DNSRole   `json:"role"`
+	Transport   domain.DNSTransport `json:"transport"`
+	Port        uint16           `json:"port"`
+	UpstreamKind string          `json:"upstream_kind"`
+	BootstrapID string           `json:"bootstrap_id,omitempty"`
+	Detour      *domain.TargetRef `json:"detour,omitempty"`
+}
+
 type DeclarationApplyRequest struct {
 	DeclarationRevision    uint64 `json:"declaration_revision"`
 	ExpectedConfigRevision uint64 `json:"expected_config_revision"`

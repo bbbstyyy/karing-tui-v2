@@ -1,0 +1,29 @@
+name: temporary-config-inspection-gofmt
+on:
+  push:
+    branches:
+      - feat/m0-m1-foundation
+    paths:
+      - .github/workflows/temporary-config-inspection-gofmt.yml
+permissions:
+  contents: write
+jobs:
+  format:
+    if: github.repository == 'bbbstyyy/karing-tui-v2'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - name: Format configuration inspection
+        run: |
+          gofmt -w internal/apiv1/types.go internal/declaration/compiler.go internal/daemon/server.go internal/daemon/config_inspect.go internal/daemon/config_inspect_test.go internal/daemon/selection_checked_test.go internal/client/client.go internal/client/config_inspect_test.go internal/tui/model.go internal/tui/config_inspect.go internal/tui/config_inspect_test.go
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add internal/apiv1/types.go internal/declaration/compiler.go internal/daemon/server.go internal/daemon/config_inspect.go internal/daemon/config_inspect_test.go internal/daemon/selection_checked_test.go internal/client/client.go internal/client/config_inspect_test.go internal/tui/model.go internal/tui/config_inspect.go internal/tui/config_inspect_test.go
+            git commit -m "style(m4): gofmt bounded routing and DNS inspection"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi

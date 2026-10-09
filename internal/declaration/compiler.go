@@ -288,6 +288,12 @@ func ParseV1(document []byte) (Model, error) {
 	}, nil
 }
 
+// EffectiveRouting uses the exact CN interleaving and region-append path
+// used by the native compiler. Inspection must not flatten the five layers.
+func EffectiveRouting(model Model) (domain.RoutingPlan, error) {
+	return applyDeclarationRoutingPolicies(model.Routing, model.CNPreset, model.RegionAppend)
+}
+
 func applyDeclarationRoutingPolicies(
 	routing domain.RoutingPlan,
 	cnPreset *CNPresetPlan,

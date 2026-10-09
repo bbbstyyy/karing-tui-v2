@@ -307,6 +307,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"declaration_commit_api":      true,
 				"declaration_compile_preview": declarationCompileRuntime,
 				"declaration_apply_api":       declarationApplyRuntime,
+				"config_inspection_api":       true,
 				"apply_journal":               true,
 				"apply_coordinator":           true,
 				"managed_apply":               declarationApplyRuntime,
@@ -596,6 +597,21 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 			Format: format,
 			Bytes:  size,
 		})
+	})
+	mux.HandleFunc("GET /v1/config/inspection", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+		defer cancel()
+		response, err := inspectConfiguration(ctx, store)
+		if err != nil {
+			status := http.StatusServiceUnavailable
+			if errors.Is(err, ErrConfigInspectionUnavailable) {
+				status = http.StatusConflict
+			}
+			// Do not echo parsing, DNS or declaration error content.
+			writeJSON(w, status, apiv1.ErrorResponse{Error: "configuration inspection unavailable; reload status and retry"})
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
 	})
 	mux.HandleFunc("GET /v1/declaration/current", func(w http.ResponseWriter, r *http.Request) {
 		current, err := store.CurrentDeclaration(r.Context())

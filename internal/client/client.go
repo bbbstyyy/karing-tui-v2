@@ -117,6 +117,37 @@ func (c *Client) RouteExplain(
 	return response, nil
 }
 
+// InspectConfig is intentionally bounded before JSON decoding: it must never
+// accidentally fetch full declarations, core configs or DNS credentials.
+const maxInspectionResponseBytes = 1 << 20
+
+func (c *Client) InspectConfig(ctx context.Context) (apiv1.ConfigInspectionResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/config/inspection", nil)
+	if err != nil {
+		return apiv1.ConfigInspectionResponse{}, err
+	}
+	resp, err := c.queryClient.Do(req)
+	if err != nil {
+		return apiv1.ConfigInspectionResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return apiv1.ConfigInspectionResponse{}, responseError(resp)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxInspectionResponseBytes+1))
+	if err != nil {
+		return apiv1.ConfigInspectionResponse{}, fmt.Errorf("read bounded inspection: %w", err)
+	}
+	if len(body) > maxInspectionResponseBytes {
+		return apiv1.ConfigInspectionResponse{}, fmt.Errorf("inspection response exceeds %d bytes", maxInspectionResponseBytes)
+	}
+	var response apiv1.ConfigInspectionResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return apiv1.ConfigInspectionResponse{}, fmt.Errorf("decode inspection: %w", err)
+	}
+	return response, nil
+}
+
 func (c *Client) RoutingMode(ctx context.Context) (apiv1.RoutingModeResponse, error) {
 	var response apiv1.RoutingModeResponse
 	if err := c.get(ctx, "/v1/routing/mode", &response); err != nil {

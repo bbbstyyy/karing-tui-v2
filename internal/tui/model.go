@@ -27,6 +27,7 @@ type API interface {
 	CurrentSelection(context.Context) (apiv1.CurrentSelectionResponse, error)
 	SetCurrentSelectionChecked(context.Context, apiv1.CurrentSelectionCheckedRequest) (apiv1.CurrentSelectionResponse, error)
 	ObservedConnections(context.Context) (apiv1.ObservedConnectionsResponse, error)
+	InspectConfig(context.Context) (apiv1.ConfigInspectionResponse, error)
 }
 
 type page uint8
@@ -38,6 +39,8 @@ const (
 	routePage
 	selectionPage
 	connectionsPage
+	routingInspectPage
+	dnsInspectPage
 )
 
 // profileView contains only fields explicitly safe for a terminal to retain.
@@ -89,6 +92,7 @@ type Model struct {
 	route       routeProbeState
 	selection   selectionObservation
 	connections connectionsObservation
+	inspection  configInspectionState
 
 	quitting bool
 }
@@ -276,6 +280,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case connectionsObservationLoaded:
 		m.acceptConnectionsObservation(msg)
 		return m, nil
+	case configInspectionLoaded:
+		m.acceptConfigInspection(msg)
+		return m, nil
 	case tea.KeyMsg:
 		if m.selection.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
 			return m, nil
@@ -332,6 +339,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.requestSelectionObservation()
 			case connectionsPage:
 				return m, m.requestConnectionsObservation()
+			case routingInspectPage, dnsInspectPage:
+				return m, m.requestConfigInspection()
 			}
 			m.statusRequest++
 			m.profilesRequest++
@@ -346,7 +355,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(commands...)
 		case "tab":
-			return m, m.switchPage(page((int(m.page) + 1) % 6))
+			return m, m.switchPage(page((int(m.page) + 1) % 8))
 		case "1":
 			return m, m.switchPage(dashboardPage)
 		case "2":
@@ -359,6 +368,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchPage(selectionPage)
 		case "6":
 			return m, m.switchPage(connectionsPage)
+		case "7":
+			return m, m.switchPage(routingInspectPage)
+		case "8":
+			return m, m.switchPage(dnsInspectPage)
 		case "e":
 			if m.page == routePage {
 				m.beginRouteProbeEditing()
@@ -372,7 +385,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.switchPage(profilesPage)
 			}
 		case "up", "k":
-			if m.page == selectionPage && m.selection.ready && m.selection.selected > 0 {
+			if (m.page == routingInspectPage || m.page == dnsInspectPage) && m.inspection.scroll > 0 {
+				m.inspection.scroll--
+			} else if m.page == selectionPage && m.selection.ready && m.selection.selected > 0 {
 				m.selection.selected--
 			} else if m.page == connectionsPage && m.connections.scroll > 0 {
 				m.connections.scroll--
@@ -384,7 +399,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.nodesScroll--
 			}
 		case "down", "j":
-			if m.page == selectionPage && m.selection.ready && m.selection.selected+1 < len(m.selection.result.candidates) {
+			if (m.page == routingInspectPage || m.page == dnsInspectPage) &&
+				m.inspection.scroll+1 < len(m.configInspectionLines()) {
+				m.inspection.scroll++
+			} else if m.page == selectionPage && m.selection.ready && m.selection.selected+1 < len(m.selection.result.candidates) {
 				m.selection.selected++
 			} else if m.page == connectionsPage && m.connections.scroll+1 < len(m.connectionsObservationLines()) {
 				m.connections.scroll++
@@ -434,6 +452,10 @@ func (m *Model) switchPage(to page) tea.Cmd {
 	m.overlayConfirm = nil
 	m.overlayNotice = ""
 	if m.page != to {
+		if (m.page == routingInspectPage || m.page == dnsInspectPage) &&
+			to != routingInspectPage && to != dnsInspectPage {
+			m.inspection.discardAndForget()
+		}
 		if m.page == selectionPage {
 			m.selection.discardAndForget()
 		}
@@ -450,6 +472,13 @@ func (m *Model) switchPage(to page) tea.Cmd {
 		m.route.scroll = 0
 	}
 	m.page = to
+	if to == routingInspectPage || to == dnsInspectPage {
+		m.inspection.scroll = 0
+		if m.inspection.ready || m.inspection.active {
+			return nil
+		}
+		return m.requestConfigInspection()
+	}
 	switch to {
 	case selectionPage:
 		return m.requestSelectionObservation()
@@ -529,13 +558,16 @@ func (m Model) View() string {
 		case connectionsPage:
 			start := min(m.connections.scroll, len(body)-limit)
 			body = body[start:min(len(body), start+limit)]
+		case routingInspectPage, dnsInspectPage:
+			start := min(m.inspection.scroll, len(body)-limit)
+			body = body[start:min(len(body), start+limit)]
 		default:
 			body = body[:limit]
 		}
 	}
 	lines := []string{
 		"karing-tui v2 | TUI client | daemon/core run independently",
-		"[1] Status  [2] Profiles  [3] Nodes  [4] Probe  [5] Selector  [6] Connections",
+		"[1] Status  [2] Profiles  [3] Nodes  [4] Probe  [5] Select  [6] Conn  [7] Routing  [8] DNS",
 		"",
 	}
 	for _, line := range body {
@@ -558,6 +590,8 @@ func (m Model) View() string {
 		}
 	} else if m.page == connectionsPage {
 		help = "Snapshot only (no polling); r: reload  j/k: scroll  Tab: page  q: quit"
+	} else if m.page == routingInspectPage || m.page == dnsInspectPage {
+		help = "Read-only bound declaration; j/k: scroll  r: reload  Tab: page  q: quit"
 	} else if m.page == routePage {
 		help = "e: edit address  t: entry  r: simulate  j/k: scroll  Tab: page  q: quit"
 		if m.route.editing {
@@ -585,6 +619,8 @@ func (m Model) pageLines() []string {
 		return m.selectionObservationLines()
 	case connectionsPage:
 		return m.connectionsObservationLines()
+	case routingInspectPage, dnsInspectPage:
+		return m.configInspectionLines()
 	case dashboardPage:
 		if !m.statusReady {
 			if m.statusError {

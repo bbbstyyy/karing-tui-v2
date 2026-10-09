@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -27,9 +29,11 @@ func appliedSelectionFixture(t *testing.T) (*storage.Store, []byte, *fakeSelecti
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A verified generation must bind the actual native config bytes.
+	configSum := sha256.Sum256([]byte("{}"))
 	manifest, err := json.Marshal(compiler.NativeManifest{
 		SchemaID:            compiler.NativeSchemaID,
-		ConfigSHA256:        strings.Repeat("a", 64),
+		ConfigSHA256:        hex.EncodeToString(configSum[:]),
 		DeclarationRevision: decl.Revision,
 		DeclarationSHA256:   decl.SHA256,
 	})
