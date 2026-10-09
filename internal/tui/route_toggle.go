@@ -15,19 +15,19 @@ import (
 // routeToggleRow holds safe route identity and typed binding references.
 // No raw matcher, upstream DNS address or credentials are retained.
 type routeToggleRow struct {
-	layer   domain.RoutingLayer
-	id      string
-	origin  string
-	enabled bool
-	target domain.TargetRef
+	layer      domain.RoutingLayer
+	id         string
+	origin     string
+	enabled    bool
+	target     domain.TargetRef
 	dnsProfile string
-	line    int
+	line       int
 }
 
 type routeToggleReceipt struct {
-	row routeToggleRow
+	row    routeToggleRow
 	choice routeBindingChoice
-	stage apiv1.RouteEditStageRequest
+	stage  apiv1.RouteEditStageRequest
 }
 
 type routeTogglePreviewLoaded struct {
@@ -77,8 +77,8 @@ func projectRouteToggleRows(raw apiv1.ConfigInspectionResponse, lines []string) 
 			if layer.Layer == domain.LayerFinal || group.Origin == "region_append" ||
 				(group.Origin != "custom" && group.Origin != "cn_preset") ||
 				group.ID == "" || inspectionSafeID(group.ID) != group.ID ||
-			!routeBindingSafeRef(group.Target) ||
-			(group.DNSProfile != "" && inspectionSafeID(group.DNSProfile) != group.DNSProfile) {
+				!routeBindingSafeRef(group.Target) ||
+				(group.DNSProfile != "" && inspectionSafeID(group.DNSProfile) != group.DNSProfile) {
 				continue
 			}
 			rows = append(rows, routeToggleRow{
