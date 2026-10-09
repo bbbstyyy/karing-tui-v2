@@ -18,7 +18,7 @@ func historicalCoreCheckHarness(t *testing.T) (*storage.Store, *fakeApplyCore, *
 	t.Helper()
 	ctx := context.Background()
 	store, core, runtime, handler := checkedApplyHarness(t)
-	t.Cleanup(func(){ store.Close() })
+	t.Cleanup(func() { store.Close() })
 	firstReceipt := checkedPreviewTest(t, handler).Receipt
 	first := routeEditCall(t, handler, http.MethodPost, "/v1/config/apply/confirm", firstReceipt)
 	if first.Code != http.StatusOK {
@@ -83,9 +83,9 @@ func TestHistoricalCoreCheckPassesWithoutActivationAndLeavesConfirmedState(t *te
 func TestHistoricalCoreCheckRejectsCompilerControlSecretDriftBeforeCoreIO(t *testing.T) {
 	store, core, runtime, sourceID := historicalCoreCheckHarness(t)
 	engine, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
-		Inbounds:domain.DefaultInboundSet(),
-		ControlAddress:netip.MustParseAddrPort("127.0.0.1:3057"),
-		ControlSecret:strings.Repeat("b",64),
+		Inbounds:       domain.DefaultInboundSet(),
+		ControlAddress: netip.MustParseAddrPort("127.0.0.1:3057"),
+		ControlSecret:  strings.Repeat("b", 64),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -106,26 +106,32 @@ func TestHistoricalCoreCheckRejectsCompilerControlSecretDriftBeforeCoreIO(t *tes
 }
 
 func TestHistoricalCoreCheckRejectsStaleSelectorAndFallbackCorruption(t *testing.T) {
-	t.Run("selector",func(t *testing.T){
+	t.Run("selector", func(t *testing.T) {
 		store, core, runtime, sourceID := historicalCoreCheckHarness(t)
 		_, err := store.SetCurrentSelectionIntent(context.Background(),
 			[]byte(`{"kind":"specific_node","profile_id":"p1","node_id":"missing"}`))
-		if err != nil {t.Fatal(err)}
+		if err != nil {
+			t.Fatal(err)
+		}
 		before := len(core.events)
 		_, err = runtime.CheckHistoricalGeneration(context.Background(), store, "", sourceID)
-		if !errors.Is(err, ErrHistoricalCheckRejected) || len(core.events)!=before {
-			t.Fatalf("stale selector reached core check: %v, events=%v",err,core.events)
+		if !errors.Is(err, ErrHistoricalCheckRejected) || len(core.events) != before {
+			t.Fatalf("stale selector reached core check: %v, events=%v", err, core.events)
 		}
 	})
-	t.Run("fallback corruption",func(t *testing.T){
+	t.Run("fallback corruption", func(t *testing.T) {
 		store, core, runtime, sourceID := historicalCoreCheckHarness(t)
 		snap, err := store.Snapshot(context.Background())
-		if err != nil || snap.AppliedGenerationID == nil {t.Fatal("missing current generation")}
-		if err := corruptStoredGenerationManifestHash(store.Path(), *snap.AppliedGenerationID); err != nil {t.Fatal(err)}
+		if err != nil || snap.AppliedGenerationID == nil {
+			t.Fatal("missing current generation")
+		}
+		if err := corruptStoredGenerationManifestHash(store.Path(), *snap.AppliedGenerationID); err != nil {
+			t.Fatal(err)
+		}
 		before := len(core.events)
 		_, err = runtime.CheckHistoricalGeneration(context.Background(), store, "", sourceID)
-		if !errors.Is(err, ErrHistoricalCheckRejected) || len(core.events)!=before {
-			t.Fatalf("corrupted fallback reached core check: %v events=%v",err,core.events)
+		if !errors.Is(err, ErrHistoricalCheckRejected) || len(core.events) != before {
+			t.Fatalf("corrupted fallback reached core check: %v events=%v", err, core.events)
 		}
 	})
 }
@@ -144,7 +150,7 @@ func TestHistoricalCoreCheckCoreFailureNeverActivates(t *testing.T) {
 		t.Fatalf("core activated despite check failure: %v", core.events)
 	}
 	current, _ := store.Snapshot(ctx)
-	if !sameRecoveryAuditSnapshot(previous,current) || current.ActiveAttemptID != nil {
+	if !sameRecoveryAuditSnapshot(previous, current) || current.ActiveAttemptID != nil {
 		t.Fatalf("core check failure damaged confirmed state: %+v", current)
 	}
 }
@@ -157,7 +163,7 @@ func TestHistoricalCoreCheckRejectsStateChangesDuringCheck(t *testing.T) {
 	}
 	before := len(core.events)
 	_, err := runtime.CheckHistoricalGeneration(ctx, store, "", sourceID)
-	if !errors.Is(err, ErrHistoricalCheckChanged) || len(core.events)!=before+1 {
+	if !errors.Is(err, ErrHistoricalCheckChanged) || len(core.events) != before+1 {
 		t.Fatalf("routing state changed mid-check but accepted: %v events=%v", err, core.events)
 	}
 	snap, err := store.Snapshot(ctx)
@@ -171,8 +177,8 @@ func TestHistoricalCoreCheckOperationGateBlocksConcurrentCoreCheck(t *testing.T)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	finished := make(chan error, 1)
-	go func(){
-		finished <- runtime.gate.Do(context.Background(), "test-lock", func(context.Context)error{
+	go func() {
+		finished <- runtime.gate.Do(context.Background(), "test-lock", func(context.Context) error {
 			close(started)
 			<-release
 			return nil
@@ -180,26 +186,39 @@ func TestHistoricalCoreCheckOperationGateBlocksConcurrentCoreCheck(t *testing.T)
 	}()
 	<-started
 	before := len(core.events)
-	ctx,cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	_, err := runtime.CheckHistoricalGeneration(ctx, store, "", sourceID)
 	close(release)
-	if lockErr := <-finished; lockErr != nil {t.Fatal(lockErr)}
+	if lockErr := <-finished; lockErr != nil {
+		t.Fatal(lockErr)
+	}
 	if !errors.Is(err, context.DeadlineExceeded) || len(core.events) != before {
 		t.Fatalf("operation gate did not reject queued check: %v events=%v", err, core.events)
 	}
-	if snap, err := store.Snapshot(context.Background()); err!=nil || snap.ActiveAttemptID !=nil {
-		t.Fatalf("queued check mutated state: %+v err=%v",snap,err)
+	if snap, err := store.Snapshot(context.Background()); err != nil || snap.ActiveAttemptID != nil {
+		t.Fatalf("queued check mutated state: %+v err=%v", snap, err)
 	}
 }
 
-func TestHistoricalCoreCheckUnavailableRejectsNilRuntimeAndStore(t *testing.T){
-	store,_,runtime,sourceID := historicalCoreCheckHarness(t)
-	for _,call := range []func()error{
-		func()error{_,err:=(*serverRuntime)(nil).CheckHistoricalGeneration(context.Background(),store,"",sourceID);return err},
-		func()error{_,err:=runtime.CheckHistoricalGeneration(context.Background(),nil,"",sourceID);return err},
-		func()error{_,err:=runtime.CheckHistoricalGeneration(context.Background(),store,"",0);return err},
-	}{
-		if err:=call();!errors.Is(err,ErrHistoricalCheckUnavailable){t.Fatalf("unavailable access accepted: %v",err)}
+func TestHistoricalCoreCheckUnavailableRejectsNilRuntimeAndStore(t *testing.T) {
+	store, _, runtime, sourceID := historicalCoreCheckHarness(t)
+	for _, call := range []func() error{
+		func() error {
+			_, err := (*serverRuntime)(nil).CheckHistoricalGeneration(context.Background(), store, "", sourceID)
+			return err
+		},
+		func() error {
+			_, err := runtime.CheckHistoricalGeneration(context.Background(), nil, "", sourceID)
+			return err
+		},
+		func() error {
+			_, err := runtime.CheckHistoricalGeneration(context.Background(), store, "", 0)
+			return err
+		},
+	} {
+		if err := call(); !errors.Is(err, ErrHistoricalCheckUnavailable) {
+			t.Fatalf("unavailable access accepted: %v", err)
+		}
 	}
 }

@@ -14,17 +14,17 @@ import (
 
 var (
 	ErrHistoricalCheckUnavailable = errors.New("historical generation core-check unavailable")
-	ErrHistoricalCheckRejected = errors.New("historical generation is not compatible with current runtime")
-	ErrHistoricalCheckChanged = errors.New("historical generation check binding changed")
+	ErrHistoricalCheckRejected    = errors.New("historical generation is not compatible with current runtime")
+	ErrHistoricalCheckChanged     = errors.New("historical generation check binding changed")
 )
 
 // HistoricalCheckEvidence is deliberately private to the daemon package.
 // A successful core Check is NOT a restore receipt or durable resource lease.
 type HistoricalCheckEvidence struct {
 	SourceGenerationID int64
-	CoreChecked bool
-	Applied bool
-	RestoreReady bool
+	CoreChecked        bool
+	Applied            bool
+	RestoreReady       bool
 }
 
 // CheckHistoricalGeneration performs an internal, non-activating dry run.
@@ -95,7 +95,7 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	budget := maxRecoveryAuditRuleBytes
 	for _, id := range []int64{*before.AppliedGenerationID, *before.LastKnownGoodGenerationID} {
 		current := inspectRetainedGeneration(ctx, store, stateRoot,
-			apiv1.RecoveryGenerationAudit{GenerationID:id, PayloadRetained:true},
+			apiv1.RecoveryGenerationAudit{GenerationID: id, PayloadRetained: true},
 			before, intent, persisted, &budget)
 		if current.Status != "stored_integrity_verified_only" ||
 			current.PreflightStatus != recoveryPreflightConsistentOnly {
@@ -131,19 +131,19 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	}
 
 	precondition := storage.HistoricalRestorePrecondition{
-		SourceGenerationID: sourceID,
-		SourceConfigSHA256: source.ConfigSHA256,
-		SourceManifestSHA256: source.ManifestSHA256,
-		SourceMapSHA256: source.SourceMapSHA256,
-		ExpectedConfigRevision: before.Revision,
-		ExpectedAppliedGenerationID: *before.AppliedGenerationID,
+		SourceGenerationID:                sourceID,
+		SourceConfigSHA256:                source.ConfigSHA256,
+		SourceManifestSHA256:              source.ManifestSHA256,
+		SourceMapSHA256:                   source.SourceMapSHA256,
+		ExpectedConfigRevision:            before.Revision,
+		ExpectedAppliedGenerationID:       *before.AppliedGenerationID,
 		ExpectedLastKnownGoodGenerationID: *before.LastKnownGoodGenerationID,
-		ExpectedDeclarationRevision: head.Revision,
-		ExpectedDeclarationSHA256: head.SHA256,
-		ExpectedSelectionRevision: intent.Revision,
-		ExpectedRoutingMode: before.RoutingMode,
-		ExpectedPrivateDirect: before.PrivateDirect,
-		ExpectedCoreDesiredState: before.CoreDesiredState,
+		ExpectedDeclarationRevision:       head.Revision,
+		ExpectedDeclarationSHA256:         head.SHA256,
+		ExpectedSelectionRevision:         intent.Revision,
+		ExpectedRoutingMode:               before.RoutingMode,
+		ExpectedPrivateDirect:             before.PrivateDirect,
+		ExpectedCoreDesiredState:          before.CoreDesiredState,
 	}
 	attempt, sealed, err := store.PrepareHistoricalRestore(ctx, precondition)
 	if err != nil {
@@ -169,8 +169,8 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	}
 
 	// Core Check can stage private files, but cannot bind or activate them.
-	candidate := Generation{ID:attempt.GenerationID,
-		Config:append([]byte(nil), sealed.ConfigJSON...), SHA256:attempt.ConfigSHA256}
+	candidate := Generation{ID: attempt.GenerationID,
+		Config: append([]byte(nil), sealed.ConfigJSON...), SHA256: attempt.ConfigSHA256}
 	if err := r.apply.withTimeout(ctx, r.apply.policy.CheckTimeout, func(checkCtx context.Context) error {
 		return r.apply.core.Check(checkCtx, candidate)
 	}); err != nil {
@@ -184,9 +184,9 @@ func (r *serverRuntime) checkHistoricalGeneration(
 	}
 
 	return HistoricalCheckEvidence{
-		SourceGenerationID:sourceID,
-		CoreChecked:true,
-		Applied:false, RestoreReady:false,
+		SourceGenerationID: sourceID,
+		CoreChecked:        true,
+		Applied:            false, RestoreReady: false,
 	}, nil
 }
 
