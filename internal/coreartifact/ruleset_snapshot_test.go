@@ -206,7 +206,6 @@ func TestRuleSetSnapshotRejectsInvalidInputsAndSupportsEmptyClosure(t *testing.T
 	}
 }
 
-
 func TestRuleSetSnapshotFailureAfterFirstCopyReclaimsPartialScope(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "core")
 	store, err := NewStore(root)
