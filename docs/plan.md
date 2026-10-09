@@ -1273,3 +1273,11 @@ docs/
 - 在与 core 生命周期和配置应用共享的 OperationGate 内，先核查成功提交的历史代际和当前应用/LKG 资源闭包、CurrentSelected、routing mode 与目标状态；旧声明必须由**当前编译器及控制面参数**重新编译，要求原生 JSON、manifest、source-map 和历史存档逐字节一致。
 - 单个 SQLite CAS 事务将历史代际复制为新候选，使用现有 journal/配额/崩溃恢复机制；只调用 core.Check，不进入 activate/verify/commit。检查后即使连接取消或 core.Check 失败，也以独立清理超时回收 prepared 活动槽，检测变更/回收失败时报错；成功回执永远不表示可恢复。
 - 自动失败回滚及配置生效路径不变。**仍然未开放手动历史代际恢复**，`restore_supported=false`、所有 `restore_ready=false`。后续必须完成真实资源 inode/lease 固定、核验与激活间的隔离、可验证的双层回滚、操作回执、T15/T23 断点故障注入和实际流量健康验证；此切片不等同于 M4 完成。详见 ADR 0087。
+
+
+### 2026-10-09 M4 历史恢复规则资源 inode 钉住检查切片
+
+- 在仅 daemon 内部执行、无激活的历史代际 core Check（ADR 0087）中，针对目标代际与已应用/LKG 回退代际，建立去重且受文件数/累计字节预算约束的源/二进制规则集文件句柄。
+- 打开时坚持 content-addressed 私有根目录、Linux no-follow、普通文件、属主、权限及 SHA-256；Check 前后在**同一打开文件描述符**上核查哈希、大小、权限及路径是否仍指向原 inode，拒绝“同内容新 inode 替换”。
+- 同时对历史目标、当前应用及 LKG 在 SQLite 中的原生 JSON、manifest、source-map 的内容与 SHA-256 作前后快照对比，拒绝检查过程中的回退代际元数据变化，并确保检查结束撤销 prepared 活动 journal。
+- 此改进仍只是进程内检测：无法凭文件描述符阻止路径短暂替换再还原（ABA），不代表已经获得真实激活期间的资源租约，更不支持手动恢复。下一步仍需隔离恢复资源、核验与激活之间的状态/权限锁、双层回滚故障注入及一致备份；M4/T15/T23 未验收。详见 ADR 0088。
