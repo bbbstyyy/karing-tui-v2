@@ -358,3 +358,70 @@ func TestHistoricalRestorePreconditionCannotBeForgedWithInvalidFields(t *testing
 		t.Fatalf("zero expected revision accepted: %v", err)
 	}
 }
+
+
+func TestHistoricalRestorePreparedCrashKeepsConfirmedGeneration(t *testing.T) {
+	store, precondition, _, live := historicalRestoreFixture(t)
+	ctx := context.Background()
+	attempt, _, err := store.PrepareHistoricalRestore(ctx, precondition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := store.RecoverInterrupted(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovery.NeedsReconcile || len(recovery.InterruptedAttemptIDs) != 1 ||
+		recovery.InterruptedAttemptIDs[0] != attempt.ID {
+		t.Fatalf("prepared-only interruption incorrectly requested core recovery: %+v", recovery)
+	}
+	journal, err := store.Attempt(ctx, attempt.ID)
+	if err != nil || journal.Phase != PhaseInterrupted {
+		t.Fatalf("interrupted restore journal lost: %+v err=%v", journal, err)
+	}
+	snapshot, err := store.Snapshot(ctx)
+	if err != nil || snapshot.RecoveryRequired || snapshot.ActiveAttemptID != nil ||
+		snapshot.Revision != precondition.ExpectedConfigRevision ||
+		snapshot.AppliedGenerationID == nil || *snapshot.AppliedGenerationID != live.GenerationID ||
+		snapshot.LastKnownGoodGenerationID == nil || *snapshot.LastKnownGoodGenerationID != live.GenerationID {
+		t.Fatalf("prepared crash altered confirmed state: %+v err=%v", snapshot, err)
+	}
+	refs, _, err := store.ConfirmedGenerationRefs(ctx, 12)
+	if err != nil || len(refs) != 2 {
+		t.Fatalf("interrupted attempt became committed history: %+v err=%v", refs, err)
+	}
+}
+
+func TestHistoricalRestoreOriginNullableForOrdinaryAndLegacyGenerations(t *testing.T) {
+	store, precondition, first, second := historicalRestoreFixture(t)
+	ctx := context.Background()
+	for _, id := range []int64{first.GenerationID, second.GenerationID} {
+		var origin sql.NullInt64
+		if err := store.db.QueryRowContext(ctx, "SELECT restore_origin_generation_id FROM generations WHERE id = ?", id).Scan(&origin); err != nil {
+			t.Fatal(err)
+		}
+		if origin.Valid {
+			t.Fatalf("ordinary generation %d incorrectly marked as a historical restoration", id)
+		}
+	}
+	// Migration v17 must be idempotent on reopening the database. Both
+	// already confirmed generations keep their nullable provenance fields.
+	path := store.Path()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	snapshot, err := reopened.Snapshot(ctx)
+	if err != nil || snapshot.Revision != precondition.ExpectedConfigRevision ||
+		snapshot.AppliedGenerationID == nil || *snapshot.AppliedGenerationID != second.GenerationID {
+		t.Fatalf("reopen changed confirmed state: %+v err=%v", snapshot, err)
+	}
+	var origin sql.NullInt64
+	if err := reopened.db.QueryRowContext(ctx, "SELECT restore_origin_generation_id FROM generations WHERE id = ?", first.GenerationID).Scan(&origin); err != nil || origin.Valid {
+		t.Fatalf("reopened original generation origin=%+v err=%v", origin, err)
+	}
+}
