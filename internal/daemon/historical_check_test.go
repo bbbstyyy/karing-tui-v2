@@ -222,3 +222,39 @@ func TestHistoricalCoreCheckUnavailableRejectsNilRuntimeAndStore(t *testing.T) {
 		}
 	}
 }
+
+
+func TestHistoricalCoreCheckReclaimsDryRunQuotaWithoutTouchingConfirmedHistory(t *testing.T) {
+	store, core, runtime, sourceID := historicalCoreCheckHarness(t)
+	ctx := context.Background()
+	initial, err := store.RetentionStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		evidence, err := runtime.CheckHistoricalGeneration(ctx, store, "", sourceID)
+		if err != nil || !evidence.CoreChecked || evidence.Applied || evidence.RestoreReady {
+			t.Fatalf("dry-run %d: evidence=%+v err=%v", i, evidence, err)
+		}
+		report, err := store.RetentionStatus(ctx)
+		if err != nil || report.LiveGenerationBytes != initial.LiveGenerationBytes ||
+			report.LiveGenerationCount != initial.LiveGenerationCount || report.ActiveAttemptCount != 0 {
+			t.Fatalf("dry-run %d leaked candidate quota: initial=%+v now=%+v err=%v", i, initial, report, err)
+		}
+	}
+	// Reclaim on core check failure as well. Failed attempts keep a small
+	// terminal audit tombstone, not their large native config payloads.
+	core.checkErr = errors.New("injected failed core check")
+	if _, err := runtime.CheckHistoricalGeneration(ctx, store, "", sourceID); !errors.Is(err, ErrHistoricalCheckRejected) {
+		t.Fatalf("core check error not returned: %v", err)
+	}
+	after, err := store.RetentionStatus(ctx)
+	if err != nil || after.LiveGenerationBytes != initial.LiveGenerationBytes ||
+		after.LiveGenerationCount != initial.LiveGenerationCount || after.ActiveAttemptCount != 0 {
+		t.Fatalf("failed dry-run leaked quota: before=%+v after=%+v err=%v", initial, after, err)
+	}
+	refs, _, err := store.ConfirmedGenerationRefs(ctx, 12)
+	if err != nil || len(refs) != 2 {
+		t.Fatalf("dry-run reclamation pruned confirmed generations: %+v err=%v", refs, err)
+	}
+}
