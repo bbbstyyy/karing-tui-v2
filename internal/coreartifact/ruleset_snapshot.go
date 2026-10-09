@@ -220,6 +220,9 @@ func (s *RuleSetSnapshot) Verify(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if s != nil && !s.closed && s.dir == "" {
+		return nil // no rule resources; no filesystem side effects
+	}
 	if err := s.verifyDirectory(); err != nil {
 		return err
 	}
