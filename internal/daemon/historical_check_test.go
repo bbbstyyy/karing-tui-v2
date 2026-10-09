@@ -223,7 +223,6 @@ func TestHistoricalCoreCheckUnavailableRejectsNilRuntimeAndStore(t *testing.T) {
 	}
 }
 
-
 func TestHistoricalCoreCheckReclaimsDryRunQuotaWithoutTouchingConfirmedHistory(t *testing.T) {
 	store, core, runtime, sourceID := historicalCoreCheckHarness(t)
 	ctx := context.Background()

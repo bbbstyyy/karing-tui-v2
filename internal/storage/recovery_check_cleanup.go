@@ -38,10 +38,10 @@ func (s *Store) ReclaimAbortedHistoricalCheck(ctx context.Context, attemptID int
 	defer tx.Rollback()
 
 	var (
-		generationID int64
-		phase string
-		abortReason string
-		activeSlot sql.NullInt64
+		generationID  int64
+		phase         string
+		abortReason   string
+		activeSlot    sql.NullInt64
 		restoreOrigin sql.NullInt64
 	)
 	err = tx.QueryRowContext(ctx, `SELECT
@@ -64,8 +64,8 @@ func (s *Store) ReclaimAbortedHistoricalCheck(ctx context.Context, attemptID int
 	}
 
 	var (
-		applied sql.NullInt64
-		lkg sql.NullInt64
+		applied          sql.NullInt64
+		lkg              sql.NullInt64
 		recoveryRequired int
 	)
 	if err := tx.QueryRowContext(ctx, `SELECT

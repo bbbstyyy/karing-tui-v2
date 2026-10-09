@@ -89,7 +89,7 @@ func TestReclaimAbortedHistoricalCheckKeepsQuotaAvailableAfterRepeatedChecks(t *
 
 func TestReclaimAbortedHistoricalCheckRejectsUnsafeJournalStates(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		setup func(context.Context, *Store, HistoricalRestorePrecondition) (int64, error)
 	}{
 		{"active historical candidate", func(ctx context.Context, s *Store, p HistoricalRestorePrecondition) (int64, error) {
