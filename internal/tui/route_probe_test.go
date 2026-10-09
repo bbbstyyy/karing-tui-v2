@@ -57,10 +57,10 @@ func routeKey(t *testing.T, m Model, key string) (Model, tea.Cmd) {
 
 func TestRouteProbeShowsAppliedSourceAndDNSWithoutObservedClaim(t *testing.T) {
 	api := &fakeRouteProbeAPI{fakeAPI: &fakeAPI{}, response: apiv1.RouteExplainResponse{
-		Evidence: "simulated", Decision: "reject", GenerationID: 82,
+		Evidence: "simulated", Decision: "route", GenerationID: 82,
 		ConfigRevision: 7, DeclarationRevision: 5, RoutingMode: "rule",
 		Source: "group", Layer: domain.LayerCustom, GroupID: "ads",
-		Action: "reject", Target: &domain.TargetRef{Kind: domain.TargetBlock},
+		Action: "route", Target: &domain.TargetRef{Kind: domain.TargetDirect},
 		DNSProfileID: "group-dns", RuleIndex: func() *int { n := 30; return &n }(),
 		Trace: func() []apiv1.RouteExplainStep {
 			steps := make([]apiv1.RouteExplainStep, 35)
@@ -70,7 +70,7 @@ func TestRouteProbeShowsAppliedSourceAndDNSWithoutObservedClaim(t *testing.T) {
 			steps[30] = apiv1.RouteExplainStep{
 				RuleIndex: 30, Result: "true", Source: "group",
 				Layer: domain.LayerCustom, GroupID: "ads",
-				Action: "reject", DNSProfileID: "group-dns",
+				Action: "route", DNSProfileID: "group-dns",
 			}
 			return steps
 		}(),
@@ -94,9 +94,9 @@ func TestRouteProbeShowsAppliedSourceAndDNSWithoutObservedClaim(t *testing.T) {
 	}
 	view := strings.Join(m.routeProbeLines(), "\n")
 	for _, wanted := range []string{
-		"SIMULATION", "Evidence: simulated", "Decision: reject",
+		"SIMULATION", "Evidence: simulated", "Decision: route",
 		"generation: 82", "declaration rev: 5", "layer: custom",
-		"group: ads", "target: block", "DNS profile binding: group-dns",
+		"group: ads", "target: direct", "DNS profile binding: group-dns",
 		"NOT observed DNS use", "#30 true", "18 intermediate trace rules omitted",
 	} {
 		if !strings.Contains(view, wanted) {
@@ -110,7 +110,7 @@ func TestRouteProbeShowsAppliedSourceAndDNSWithoutObservedClaim(t *testing.T) {
 		t.Fatal("trace total lost")
 	}
 	m, _ = updated(t, m, tea.WindowSizeMsg{Width: 36, Height: 8})
-	m, _ = updated(t, m, tea.KeyDown)
+	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if m.route.scroll != 1 {
 		t.Fatal("route scrolling did not advance")
 	}
