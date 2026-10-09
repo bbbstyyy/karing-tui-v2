@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
@@ -31,6 +32,7 @@ type currentSelectionStore interface {
 	CurrentDeclaration(context.Context) (storage.DeclarationRevision, error)
 	CurrentSelectionIntent(context.Context) (storage.SelectionIntent, bool, error)
 	SetCurrentSelectionIntent(context.Context, []byte) (storage.SelectionIntent, error)
+	SetCurrentSelectionIntentChecked(context.Context, []byte, storage.SelectionPrecondition) (storage.SelectionIntent, error)
 }
 
 type currentSelectionCore interface {
@@ -40,17 +42,23 @@ type currentSelectionCore interface {
 }
 
 type CurrentSelectionState struct {
-	Target         domain.TargetRef
-	RuntimeTag     string
-	Persisted      bool
-	UpdatedAt      time.Time
-	Applied        bool
-	LiveRuntimeTag string
+	Target              domain.TargetRef
+	RuntimeTag          string
+	Persisted           bool
+	UpdatedAt           time.Time
+	Applied             bool
+	LiveRuntimeTag      string
+	SelectionRevision   uint64
+	ConfigRevision      uint64
+	AppliedGenerationID *int64
+	DeclarationRevision uint64
+	DeclarationSHA256   string
 }
 
 type CurrentSelectionCoordinator struct {
 	store currentSelectionStore
 	core  currentSelectionCore
+	mu    sync.Mutex // Serialize legacy and checked writes through live readback.
 }
 
 func NewCurrentSelectionCoordinator(
@@ -64,7 +72,11 @@ func NewCurrentSelectionCoordinator(
 }
 
 func (c *CurrentSelectionCoordinator) Get(ctx context.Context) (CurrentSelectionState, error) {
-	current, err := c.selectionDeclaration(ctx)
+	snapshot, err := c.store.Snapshot(ctx)
+	if err != nil {
+		return CurrentSelectionState{}, err
+	}
+	current, err := c.selectionDeclarationForSnapshot(ctx, snapshot)
 	if err != nil {
 		return CurrentSelectionState{}, err
 	}
@@ -94,10 +106,15 @@ func (c *CurrentSelectionCoordinator) Get(ctx context.Context) (CurrentSelection
 		return CurrentSelectionState{}, fmt.Errorf("%w: %v", ErrCurrentSelectionTarget, err)
 	}
 	state := CurrentSelectionState{
-		Target:     target,
-		RuntimeTag: runtimeTag,
-		Persisted:  persisted,
-		UpdatedAt:  updatedAt,
+		Target:              target,
+		RuntimeTag:          runtimeTag,
+		Persisted:           persisted,
+		UpdatedAt:           updatedAt,
+		SelectionRevision:   intent.Revision,
+		ConfigRevision:      snapshot.Revision,
+		AppliedGenerationID: snapshot.AppliedGenerationID,
+		DeclarationRevision: current.Revision,
+		DeclarationSHA256:   current.SHA256,
 	}
 	if c.core == nil || c.core.Snapshot().State != core.StateRunning {
 		return state, nil
@@ -115,7 +132,14 @@ func (c *CurrentSelectionCoordinator) Set(
 	ctx context.Context,
 	target domain.TargetRef,
 ) (CurrentSelectionState, error) {
-	current, err := c.selectionDeclaration(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	snapshot, err := c.store.Snapshot(ctx)
+	if err != nil {
+		return CurrentSelectionState{}, err
+	}
+	current, err := c.selectionDeclarationForSnapshot(ctx, snapshot)
 	if err != nil {
 		return CurrentSelectionState{}, err
 	}
@@ -132,10 +156,15 @@ func (c *CurrentSelectionCoordinator) Set(
 		return CurrentSelectionState{}, err
 	}
 	state := CurrentSelectionState{
-		Target:     target,
-		RuntimeTag: runtimeTag,
-		Persisted:  true,
-		UpdatedAt:  intent.UpdatedAt,
+		Target:              target,
+		RuntimeTag:          runtimeTag,
+		Persisted:           true,
+		UpdatedAt:           intent.UpdatedAt,
+		SelectionRevision:   intent.Revision,
+		ConfigRevision:      snapshot.Revision,
+		AppliedGenerationID: snapshot.AppliedGenerationID,
+		DeclarationRevision: current.Revision,
+		DeclarationSHA256:   current.SHA256,
 	}
 	if c.core == nil || c.core.Snapshot().State != core.StateRunning {
 		return state, nil
@@ -160,6 +189,12 @@ func (c *CurrentSelectionCoordinator) selectionDeclaration(ctx context.Context) 
 	if err != nil {
 		return storage.DeclarationRevision{}, fmt.Errorf("read applied generation for current selection: %w", err)
 	}
+	return c.selectionDeclarationForSnapshot(ctx, snapshot)
+}
+
+func (c *CurrentSelectionCoordinator) selectionDeclarationForSnapshot(
+	ctx context.Context, snapshot storage.Snapshot,
+) (storage.DeclarationRevision, error) {
 	if snapshot.AppliedGenerationID == nil {
 		current, err := c.store.CurrentDeclaration(ctx)
 		if err != nil {

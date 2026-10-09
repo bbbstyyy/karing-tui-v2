@@ -165,6 +165,18 @@ func (c *Client) CurrentSelection(ctx context.Context) (apiv1.CurrentSelectionRe
 	return response, nil
 }
 
+// Checked selection commits require the revision and applied-generation
+// binding read from GET. A 409 must trigger a new GET, never a blind retry.
+func (c *Client) SetCurrentSelectionChecked(
+	ctx context.Context, request apiv1.CurrentSelectionCheckedRequest,
+) (apiv1.CurrentSelectionResponse, error) {
+	var response apiv1.CurrentSelectionResponse
+	if err := c.sendJSON(ctx, c.controlClient, http.MethodPut, "/v1/selection/current/checked", request, &response); err != nil {
+		return apiv1.CurrentSelectionResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) SetCurrentSelection(
 	ctx context.Context,
 	target domain.TargetRef,

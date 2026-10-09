@@ -799,7 +799,7 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 15
+const currentSchemaVersion = 16
 
 func (s *Store) migrate(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1159,6 +1159,19 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(15, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 15: %w", err)
+		}
+	}
+
+	if !version.Valid || version.Int64 < 16 {
+		if _, err := tx.ExecContext(ctx, `
+			ALTER TABLE selection_state
+			ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
+			CHECK(revision >= 0)
+		`); err != nil {
+			return fmt.Errorf("apply sqlite migration 16: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(16, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 16: %w", err)
 		}
 	}
 

@@ -198,6 +198,21 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		selectionCore = runtime
 	}
 	selection, _ := NewCurrentSelectionCoordinator(store, selectionCore)
+	// Serialize selector writes with core start/stop/apply/restore and with
+	// other selector writes. The database CAS remains authoritative across
+	// concurrent clients and persists across daemon restarts.
+	runSelectionWrite := func(ctx context.Context, operation func(context.Context) (CurrentSelectionState, error)) (CurrentSelectionState, error) {
+		if runtime == nil || runtime.gate == nil {
+			return operation(ctx)
+		}
+		var state CurrentSelectionState
+		err := runtime.gate.Do(ctx, "current-selection", func(inner context.Context) error {
+			var runErr error
+			state, runErr = operation(inner)
+			return runErr
+		})
+		return state, err
+	}
 	routeExplain, _ := NewRouteExplainCoordinator(store)
 	var observedConnections *ObservedConnectionsCoordinator
 	if runtime != nil && runtime.ConnectionsReady() {
@@ -336,6 +351,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 				"selection_group_lowerer":     true,
 				"current_selection_intent":    true,
 				"current_selection_api":       true,
+				"current_selection_checked":   true,
 				"current_selection_live":      currentSelectionLive,
 				"basic_node_model":            true,
 				"basic_node_lowerer":          true,
@@ -480,7 +496,42 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
 		defer cancel()
-		state, err := selection.Set(ctx, request.Target)
+		state, err := runSelectionWrite(ctx, func(inner context.Context) (CurrentSelectionState, error) {
+			return selection.Set(inner, request.Target)
+		})
+		if err != nil {
+			writeCurrentSelectionError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, currentSelectionResponse(state))
+	})
+	mux.HandleFunc("PUT /v1/selection/current/checked", func(w http.ResponseWriter, r *http.Request) {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, storage.MaxSelectionTargetBytes+4096))
+		decoder.DisallowUnknownFields()
+		var request apiv1.CurrentSelectionCheckedRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid checked selection request"})
+			return
+		}
+		if err := requireJSONEOF(decoder); err != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid checked selection request"})
+			return
+		}
+		if request.ExpectedDeclarationRevision == 0 || len(request.ExpectedDeclarationSHA256) != 64 {
+			writeJSON(w, http.StatusUnprocessableEntity, apiv1.ErrorResponse{Error: "missing or invalid checked selection binding"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancel()
+		state, err := runSelectionWrite(ctx, func(inner context.Context) (CurrentSelectionState, error) {
+			return selection.SetChecked(inner, request.Target, CheckedSelectionExpectation{
+				SelectionRevision: request.ExpectedSelectionRevision,
+				ConfigRevision: request.ExpectedConfigRevision,
+				AppliedGenerationID: request.ExpectedGenerationID,
+				DeclarationRevision: request.ExpectedDeclarationRevision,
+				DeclarationSHA256: request.ExpectedDeclarationSHA256,
+			})
+		})
 		if err != nil {
 			writeCurrentSelectionError(w, err)
 			return
@@ -759,6 +810,11 @@ func currentSelectionResponse(value CurrentSelectionState) apiv1.CurrentSelectio
 		Persisted:      value.Persisted,
 		Applied:        value.Applied,
 		LiveRuntimeTag: value.LiveRuntimeTag,
+		SelectionRevision: value.SelectionRevision,
+		ConfigRevision: value.ConfigRevision,
+		AppliedGenerationID: value.AppliedGenerationID,
+		DeclarationRevision: value.DeclarationRevision,
+		DeclarationSHA256: value.DeclarationSHA256,
 	}
 	if !value.UpdatedAt.IsZero() {
 		response.UpdatedAt = value.UpdatedAt.Format(time.RFC3339Nano)
@@ -769,7 +825,9 @@ func currentSelectionResponse(value CurrentSelectionState) apiv1.CurrentSelectio
 func writeCurrentSelectionError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, ErrCurrentSelectionUnavailable):
+	case errors.Is(err, ErrCurrentSelectionUnavailable),
+		errors.Is(err, ErrCurrentSelectionConflict),
+		errors.Is(err, storage.ErrSelectionRevisionConflict):
 		status = http.StatusConflict
 	case errors.Is(err, ErrCurrentSelectionTarget),
 		errors.Is(err, storage.ErrInvalidSelectionIntent):

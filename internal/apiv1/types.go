@@ -215,13 +215,29 @@ type CurrentSelectionRequest struct {
 	Target domain.TargetRef `json:"target"`
 }
 
+// This is a distinct guarded endpoint: legacy unqualified PUT remains
+// compatible but never silently upgrades into a checked mutation.
+type CurrentSelectionCheckedRequest struct {
+	Target                      domain.TargetRef `json:"target"`
+	ExpectedSelectionRevision   uint64           `json:"expected_selection_revision"`
+	ExpectedConfigRevision      uint64           `json:"expected_config_revision"`
+	ExpectedGenerationID        *int64           `json:"expected_generation_id"`
+	ExpectedDeclarationRevision uint64           `json:"expected_declaration_revision"`
+	ExpectedDeclarationSHA256   string           `json:"expected_declaration_sha256"`
+}
+
 type CurrentSelectionResponse struct {
-	Target         domain.TargetRef `json:"target"`
-	RuntimeTag     string           `json:"runtime_tag"`
-	Persisted      bool             `json:"persisted"`
-	UpdatedAt      string           `json:"updated_at,omitempty"`
-	Applied        bool             `json:"applied"`
-	LiveRuntimeTag string           `json:"live_runtime_tag,omitempty"`
+	Target              domain.TargetRef `json:"target"`
+	RuntimeTag          string           `json:"runtime_tag"`
+	Persisted           bool             `json:"persisted"`
+	UpdatedAt           string           `json:"updated_at,omitempty"`
+	Applied             bool             `json:"applied"`
+	LiveRuntimeTag      string           `json:"live_runtime_tag,omitempty"`
+	SelectionRevision   uint64           `json:"selection_revision"`
+	ConfigRevision      uint64           `json:"config_revision"`
+	AppliedGenerationID *int64           `json:"applied_generation_id"`
+	DeclarationRevision uint64           `json:"declaration_revision"`
+	DeclarationSHA256   string           `json:"declaration_sha256"`
 }
 
 type RouteExplainRequest struct {
