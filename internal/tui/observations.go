@@ -37,15 +37,15 @@ type selectionObservation struct {
 }
 
 type selectionSummary struct {
-	target       string
-	targetRef    domain.TargetRef
-	persisted    bool
-	live         string
-	candidates   []domain.TargetRef
-	total        int
-	truncated    bool
-	editable     bool
-	expected     apiv1.CurrentSelectionCheckedRequest
+	target     string
+	targetRef  domain.TargetRef
+	persisted  bool
+	live       string
+	candidates []domain.TargetRef
+	total      int
+	truncated  bool
+	editable   bool
+	expected   apiv1.CurrentSelectionCheckedRequest
 }
 
 type selectionObservationLoaded struct {

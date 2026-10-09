@@ -19,11 +19,11 @@ func (f *fakeAPI) SetCurrentSelectionChecked(context.Context, apiv1.CurrentSelec
 
 type selectionSwitchAPI struct {
 	*observationsTestAPI
-	writes         int
-	last           apiv1.CurrentSelectionCheckedRequest
-	err            error
-	commitOnError  bool
-	spoofResponse  bool
+	writes        int
+	last          apiv1.CurrentSelectionCheckedRequest
+	err           error
+	commitOnError bool
+	spoofResponse bool
 }
 
 func (f *selectionSwitchAPI) SetCurrentSelectionChecked(ctx context.Context, req apiv1.CurrentSelectionCheckedRequest) (apiv1.CurrentSelectionResponse, error) {
@@ -62,7 +62,7 @@ func (f *selectionSwitchAPI) SetCurrentSelectionChecked(ctx context.Context, req
 func selectorFixture() apiv1.CurrentSelectionResponse {
 	id := int64(14)
 	return apiv1.CurrentSelectionResponse{
-		Target: domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-1", NodeID: "node-a"},
+		Target:            domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-1", NodeID: "node-a"},
 		SelectionRevision: 7, ConfigRevision: 9, AppliedGenerationID: &id,
 		DeclarationRevision: 11, DeclarationSHA256: strings.Repeat("a", 64),
 		RuntimeTag: "native-secret-a", LiveRuntimeTag: "native-secret-a",
@@ -167,7 +167,7 @@ func TestSelectorConflictAndPostCommitErrorAlwaysReloadWithoutRetry(t *testing.T
 	m, write := selectionKey(t, m, "y")
 	// Another client commits while this UI's user is confirming.
 	api.selection.SelectionRevision++
-	api.selection.Target = domain.TargetRef{Kind: domain.TargetSpecificNode,ProfileID:"profile-1",NodeID:"node-b"}
+	api.selection.Target = domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: "profile-1", NodeID: "node-b"}
 	m, reread := updated(t, m, write())
 	if api.writes != 1 || reread == nil {
 		t.Fatal("conflicted CAS did not issue a readback")
@@ -290,7 +290,7 @@ func TestSelectorStaleResponseAndNarrowScreenSafety(t *testing.T) {
 func TestSelectorMalformedSuccessfulWriteTriggersReconciliation(t *testing.T) {
 	api := &selectionSwitchAPI{
 		observationsTestAPI: &observationsTestAPI{fakeAPI: &fakeAPI{}, selection: selectorFixture()},
-		spoofResponse: true,
+		spoofResponse:       true,
 	}
 	m := enterSelectionTest(t, api)
 	m, _ = selectionKey(t, m, "j")

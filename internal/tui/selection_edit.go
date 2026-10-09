@@ -66,19 +66,19 @@ func projectSelectionObservation(raw apiv1.CurrentSelectionResponse) (selectionS
 		return selectionSummary{}, errors.New("selected target absent from complete candidate list")
 	}
 	result := selectionSummary{
-		target:    safeText(routeProbeTarget(&raw.Target), 120),
-		targetRef: raw.Target,
-		persisted: raw.Persisted,
-		live:      "not observed (core stopped or unavailable)",
+		target:     safeText(routeProbeTarget(&raw.Target), 120),
+		targetRef:  raw.Target,
+		persisted:  raw.Persisted,
+		live:       "not observed (core stopped or unavailable)",
 		candidates: append([]domain.TargetRef(nil), raw.Candidates...),
-		total: raw.CandidateCount,
-		truncated: raw.CandidatesTruncated,
+		total:      raw.CandidateCount,
+		truncated:  raw.CandidatesTruncated,
 		expected: apiv1.CurrentSelectionCheckedRequest{
-			ExpectedSelectionRevision: raw.SelectionRevision,
-			ExpectedConfigRevision: raw.ConfigRevision,
-			ExpectedGenerationID: cloneGenerationID(raw.AppliedGenerationID),
+			ExpectedSelectionRevision:   raw.SelectionRevision,
+			ExpectedConfigRevision:      raw.ConfigRevision,
+			ExpectedGenerationID:        cloneGenerationID(raw.AppliedGenerationID),
 			ExpectedDeclarationRevision: raw.DeclarationRevision,
-			ExpectedDeclarationSHA256: raw.DeclarationSHA256,
+			ExpectedDeclarationSHA256:   raw.DeclarationSHA256,
 		},
 	}
 	if raw.LiveRuntimeTag != "" {

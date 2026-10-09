@@ -227,16 +227,16 @@ type CurrentSelectionCheckedRequest struct {
 }
 
 type CurrentSelectionResponse struct {
-	Target              domain.TargetRef `json:"target"`
-	RuntimeTag          string           `json:"runtime_tag"`
-	Persisted           bool             `json:"persisted"`
-	UpdatedAt           string           `json:"updated_at,omitempty"`
-	Applied             bool             `json:"applied"`
-	LiveRuntimeTag      string           `json:"live_runtime_tag,omitempty"`
-	SelectionRevision   uint64           `json:"selection_revision"`
-	ConfigRevision      uint64           `json:"config_revision"`
-	AppliedGenerationID *int64           `json:"applied_generation_id"`
-	DeclarationRevision uint64           `json:"declaration_revision"`
+	Target              domain.TargetRef   `json:"target"`
+	RuntimeTag          string             `json:"runtime_tag"`
+	Persisted           bool               `json:"persisted"`
+	UpdatedAt           string             `json:"updated_at,omitempty"`
+	Applied             bool               `json:"applied"`
+	LiveRuntimeTag      string             `json:"live_runtime_tag,omitempty"`
+	SelectionRevision   uint64             `json:"selection_revision"`
+	ConfigRevision      uint64             `json:"config_revision"`
+	AppliedGenerationID *int64             `json:"applied_generation_id"`
+	DeclarationRevision uint64             `json:"declaration_revision"`
 	DeclarationSHA256   string             `json:"declaration_sha256"`
 	Candidates          []domain.TargetRef `json:"candidates,omitempty"`
 	CandidateCount      int                `json:"candidate_count"`
