@@ -44,7 +44,7 @@ func newCheckedApplyFakeAPI() *checkedApplyFakeAPI {
 		APIVersion: apiv1.Version, CoreConfigured: true, CoreState: "running",
 		ConfigRevision: 4, DeclarationRevision: 8,
 		AppliedGenerationID: &generation,
-		CoreLastError: "Bearer PASSWORD=NEVER_KEEP",
+		CoreLastError:       "Bearer PASSWORD=NEVER_KEEP",
 	}}
 	return &checkedApplyFakeAPI{
 		fakeAPI: base,
@@ -55,7 +55,7 @@ func newCheckedApplyFakeAPI() *checkedApplyFakeAPI {
 				ExpectedConfigRevision: 4, ExpectedAppliedGenerationID: &generation,
 				ExpectedSelectionRevision: 7, NativeConfigSHA256: strings.Repeat("b", 64),
 			},
-			NativeSchemaID: "sing-box-compatible",
+			NativeSchemaID:  "sing-box-compatible",
 			RouteEntryCount: 32, DNSServerCount: 5, RuleSetCount: 2,
 			CompilerValidated: true,
 		},
@@ -86,11 +86,11 @@ func (f *checkedApplyFakeAPI) CheckedApply(ctx context.Context, receipt apiv1.Ch
 	result := apiv1.CheckedApplyResponse{
 		DeclarationApplyResponse: apiv1.DeclarationApplyResponse{
 			DeclarationRevision: receipt.DeclarationRevision,
-			DeclarationSHA256: receipt.DeclarationSHA256,
-			ConfigSHA256: receipt.NativeConfigSHA256,
-			NativeSchemaID: f.preview.NativeSchemaID,
-			AttemptID: 17, GenerationID: 19,
-			BaseConfigRevision: receipt.ExpectedConfigRevision,
+			DeclarationSHA256:   receipt.DeclarationSHA256,
+			ConfigSHA256:        receipt.NativeConfigSHA256,
+			NativeSchemaID:      f.preview.NativeSchemaID,
+			AttemptID:           17, GenerationID: 19,
+			BaseConfigRevision:   receipt.ExpectedConfigRevision,
 			TargetConfigRevision: receipt.ExpectedConfigRevision + 1,
 		},
 		CoreChecked: true, Verified: true, Applied: true,
@@ -229,8 +229,8 @@ func TestTUICheckedApplyCancelQuitAndStalePreviewNeverWrite(t *testing.T) {
 }
 
 func TestTUICheckedApplyRejectsUnsafeOrDriftedReceipts(t *testing.T) {
-	for _, tc := range []struct{
-		name string
+	for _, tc := range []struct {
+		name   string
 		mutate func(*checkedApplyFakeAPI)
 	}{
 		{"wrong config revision", func(f *checkedApplyFakeAPI) {

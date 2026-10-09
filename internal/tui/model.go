@@ -94,10 +94,10 @@ type Model struct {
 	overlayNodeID   string
 	overlayNotice   string
 
-	route       routeProbeState
-	selection   selectionObservation
-	connections connectionsObservation
-	inspection  configInspectionState
+	route        routeProbeState
+	selection    selectionObservation
+	connections  connectionsObservation
+	inspection   configInspectionState
 	checkedApply checkedApplyState
 
 	quitting bool
