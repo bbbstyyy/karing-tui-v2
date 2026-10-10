@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const MaxRuleSetSnapshotRecoveryScopes = 32
@@ -47,6 +48,28 @@ func lockSnapshotDirectory(path string) (*os.File, error) {
 		return nil, err
 	}
 	return file, nil
+}
+
+// A short, context-bounded exclusive parent lock closes the gap between
+// MkdirTemp and locking the new scope. Reclamation holds the SAME parent
+// lock while it lists candidates: it can never mistake a just-created,
+// not-yet-locked scope for a crashed one.
+func lockSnapshotParent(ctx context.Context, path string) (*os.File, error) {
+	for attempt := 0; attempt < 40; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file, err := lockSnapshotDirectory(path)
+		if !errors.Is(err, ErrRuleSetSnapshotActive) {
+			return file, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	return nil, ErrRuleSetSnapshotActive
 }
 
 func verifyPrivateSnapshotDirectory(path string, opened *os.File) error {
@@ -180,12 +203,10 @@ func ReclaimOrphanedRuleSetSnapshots(
 			return result, ErrUnsafeRuleSetSnapshot
 		}
 	}
-	parentFD, err := syscall.Open(parent, syscall.O_RDONLY|
-		syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	parentFile, err := lockSnapshotParent(ctx, parent)
 	if err != nil {
-		return result, ErrUnsafeRuleSetSnapshot
+		return result, err
 	}
-	parentFile := os.NewFile(uintptr(parentFD), parent)
 	defer parentFile.Close()
 	if err := verifyPrivateSnapshotDirectory(parent, parentFile); err != nil {
 		return result, err
