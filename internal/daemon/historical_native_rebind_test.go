@@ -15,7 +15,6 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
-	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
 func historicalRebindFixture(t *testing.T) ([]byte, compiler.NativeManifest, *coreartifact.RuleSetSnapshot) {
