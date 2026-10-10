@@ -128,9 +128,8 @@ func inspectRecoverableSnapshot(
 		}
 		info, err := os.Lstat(filepath.Join(dir, entry.Name()))
 		if err != nil || !info.Mode().IsRegular() ||
-			info.Mode().Perm()&0o077 != 0 ||
-			info.Size() < 0 || info.Size() > MaxRuleSetUploadBytes ||
-			info.Mode().Perm()&0o200 != 0 && info.Mode().Perm() != 0o600 {
+			(info.Mode().Perm() != 0o400 && info.Mode().Perm() != 0o600) ||
+			info.Size() < 0 || info.Size() > MaxRuleSetUploadBytes {
 			return nil, ErrUnsafeRuleSetSnapshot
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
