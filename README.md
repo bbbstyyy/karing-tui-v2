@@ -254,3 +254,10 @@ The internal-only historical core compatibility check now stages **independent p
 Temporary historical rule-set snapshot scopes now hold Linux directory `flock` locks until cleanup. An internal, nonrecursive scavenger opportunistically removes only unlocked, private, bounded `.check-*` scopes before the next historical compatibility check, skipping another process's active scope. A short parent-directory lock prevents a scope from being reclaimed between creation and acquiring its own lock. Invalid/symlinked/unknown entries are not deleted; partial copies with safe `0600` permissions can be removed after an interruption. See [ADR 0091](docs/adr/0091-flock-guarded-orphan-snapshot-recovery.md).
 
 This is not an activation-ready resource lease and does not rebind original native runtime paths. No manual restore API/CLI/TUI is exposed and `restore_supported=false` remains unchanged.
+
+
+### Isolated native config check (internal-only)
+
+Historical compatibility checks with local rule sets now **rebind only native `route.rule_set[].path`** to independently copied resources inside the bounded, flock-held snapshot scope. The original committed native JSON and hashes remain immutable. A separately SHA-256-bound, owner-read-only temporary JSON is consumed by the internal `ManagedCore.CheckIsolated`, which validates the **original** generation metadata but does not stage a replacement generation, bind the running core, activate, or commit. A core adapter without isolated check support is rejected rather than silently checking shared paths. The temporary config and copies are verified and reclaimed together; empty rule closures retain the ordinary strict Check. See [ADR 0092](docs/adr/0092-isolated-native-check-rebinding.md).
+
+These checks **do not** enable manual historical restore or create cross-restart fallback leases; `restore_supported=false` and `restore_ready=false` remain in effect.
