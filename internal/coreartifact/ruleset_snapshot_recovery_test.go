@@ -202,13 +202,11 @@ func TestRuleSetSnapshotRecoveryIsBoundedAndCancellationSafe(t *testing.T) {
 	if _, err := os.Stat(first); err != nil {
 		t.Fatalf("bounded scan modified first scope: %v", err)
 	}
-	if _, err := ReclaimOrphanedRuleSetSnapshots(context.Background(), "relative");
-		!errors.Is(err, ErrUnsafeRuleSetSnapshot) {
+	if _, err := ReclaimOrphanedRuleSetSnapshots(context.Background(), "relative"); !errors.Is(err, ErrUnsafeRuleSetSnapshot) {
 		t.Fatalf("relative root accepted: %v", err)
 	}
 	missing := filepath.Join(t.TempDir(), "absent")
-	if report, err := ReclaimOrphanedRuleSetSnapshots(context.Background(), missing);
-		err != nil || report.Reclaimed != 0 {
+	if report, err := ReclaimOrphanedRuleSetSnapshots(context.Background(), missing); err != nil || report.Reclaimed != 0 {
 		t.Fatalf("missing root should be read-only no-op: %+v err=%v", report, err)
 	}
 }
