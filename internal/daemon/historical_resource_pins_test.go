@@ -23,6 +23,22 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
+// The fake adapter deliberately consumes the temporary, rebound JSON rather
+// than the original persisted Generation bytes, and preserves "check" only.
+func (c *fakeApplyCore) CheckIsolated(
+	ctx context.Context, original Generation, path, sha string,
+) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(content)
+	if hex.EncodeToString(sum[:]) != sha || sha == original.SHA256 {
+		return errors.New("isolated check config digest was not rebound")
+	}
+	return c.Check(ctx, Generation{ID: original.ID, Config: content, SHA256: sha})
+}
+
 func historicalRuleSetHarness(t *testing.T) (
 	*storage.Store, *fakeApplyCore, *serverRuntime, int64, string, string, []byte,
 ) {
@@ -225,8 +241,8 @@ func TestHistoricalCoreCheckStagesAndCleansIsolatedTargetFallbackCopies(t *testi
 			return fmt.Errorf("snapshot is a hard link to mutable shared file")
 		}
 		parts, err := os.ReadDir(filepath.Dir(copyPath))
-		if err != nil || len(parts) != 2 {
-			return fmt.Errorf("target and fallback snapshots not both retained: %v %v", parts, err)
+		if err != nil || len(parts) != 3 {
+			return fmt.Errorf("target, fallback and isolated native config not retained: %v %v", parts, err)
 		}
 		return nil
 	}
