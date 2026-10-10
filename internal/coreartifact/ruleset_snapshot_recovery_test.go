@@ -245,12 +245,12 @@ func TestRuleSetSnapshotParentLockPreventsCreationRecoveryRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 	if _, err := ReclaimOrphanedRuleSetSnapshots(ctx, root); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("recovery ignored a busy parent lock: %v", err)
 	}
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60 * time.Millisecond)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel2()
 	if _, err := StagePinnedRuleSetSnapshot(ctx2, root, []*RuleSetPin{pin}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("creation ignored a busy parent lock: %v", err)
