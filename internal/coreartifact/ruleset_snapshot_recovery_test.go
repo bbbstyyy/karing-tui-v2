@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func recoveryScopeFixture(t *testing.T) (*RuleSetSnapshot, *RuleSetPin, string) {
@@ -233,5 +234,40 @@ func TestRuleSetSnapshotStageReclaimsPriorCrashButNotOtherLiveScope(t *testing.T
 	}
 	if err := next.Verify(context.Background()); err != nil {
 		t.Fatalf("new snapshot was invalid after scavenging: %v", err)
+	}
+}
+
+
+func TestRuleSetSnapshotParentLockPreventsCreationRecoveryRace(t *testing.T) {
+	live, pin, root := recoveryScopeFixture(t)
+	defer live.Close()
+	parent := filepath.Join(root, "historical-check-snapshots")
+	parentLock, err := lockSnapshotDirectory(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	if _, err := ReclaimOrphanedRuleSetSnapshots(ctx, root); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("recovery ignored a busy parent lock: %v", err)
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel2()
+	if _, err := StagePinnedRuleSetSnapshot(ctx2, root, []*RuleSetPin{pin}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("creation ignored a busy parent lock: %v", err)
+	}
+	if err := parentLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	next, err := StagePinnedRuleSetSnapshot(context.Background(), root, []*RuleSetPin{pin})
+	if err != nil {
+		t.Fatalf("released parent lock prevented new snapshot: %v", err)
+	}
+	defer next.Close()
+	if err := live.Verify(context.Background()); err != nil {
+		t.Fatalf("parent lock contention destroyed a live scope: %v", err)
+	}
+	if next.dir == live.dir || next.lock == nil {
+		t.Fatal("new scope did not receive its own exclusive directory lock")
 	}
 }
