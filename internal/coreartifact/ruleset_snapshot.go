@@ -37,6 +37,7 @@ type RuleSetSnapshot struct {
 	identity os.FileInfo
 	files    []snapshotFile
 	lock     *os.File // exclusive flock on directory inode, held through Close
+	nativeConfigStaged bool // ephemeral native JSON only, not a generation file
 	closed   bool
 }
 
