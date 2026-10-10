@@ -247,3 +247,10 @@ This is **not** a user-accessible restore operation: `restore_supported=false`, 
 ### Ephemeral isolated historical rule-resource copies
 
 The internal-only historical core compatibility check now stages **independent private copies** of its pinned target/applied/LKG rule sets (up to 128 files / 128 MiB), rather than relying solely on shared source inode observation. Each source descriptor is reverified before/after the copy; every scoped file is SHA-256 checked, fsynced and owner-read-only. Copies are verified again after core `Check` and removed through an identity-checked cleanup. No native paths are rebound yet: **core Check still uses the original native rule paths**, so this is not an activation-ready isolated resource lease. A hard crash can leave a bounded orphan directory until safe scavenging exists. See [ADR 0090](docs/adr/0090-isolated-historical-rule-snapshots.md). Manual restore remains disabled.
+
+
+### Crash-safe bounded cleanup for internal historical rule snapshots
+
+Temporary historical rule-set snapshot scopes now hold Linux directory `flock` locks until cleanup. An internal, nonrecursive scavenger opportunistically removes only unlocked, private, bounded `.check-*` scopes before the next historical compatibility check, skipping another process's active scope. A short parent-directory lock prevents a scope from being reclaimed between creation and acquiring its own lock. Invalid/symlinked/unknown entries are not deleted; partial copies with safe `0600` permissions can be removed after an interruption. See [ADR 0091](docs/adr/0091-flock-guarded-orphan-snapshot-recovery.md).
+
+This is not an activation-ready resource lease and does not rebind original native runtime paths. No manual restore API/CLI/TUI is exposed and `restore_supported=false` remains unchanged.
