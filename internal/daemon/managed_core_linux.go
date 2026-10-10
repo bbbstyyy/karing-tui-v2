@@ -405,6 +405,30 @@ func (m *ManagedCore) Check(ctx context.Context, generation Generation) error {
 	return nil
 }
 
+// CheckIsolated performs a non-activating check of a rebound private native
+// config while binding its ORIGINAL candidate to immutable SQLite metadata.
+// The rebound SHA/path are intentionally ephemeral: never Stage under the
+// generation ID, bind the live config, activate or change the apply journal.
+func (m *ManagedCore) CheckIsolated(
+	ctx context.Context, original Generation, isolatedPath, isolatedSHA string,
+) error {
+	if m == nil || m.check == nil {
+		return ErrHistoricalCheckUnavailable
+	}
+	if err := m.verifyGenerationArtifacts(ctx, original); err != nil {
+		return err
+	}
+	if isolatedPath == "" || filepath.Base(isolatedPath) != isolatedSHA+".json" ||
+		len(filepath.Base(filepath.Dir(isolatedPath))) <= len(".check-") ||
+		filepath.Base(filepath.Dir(isolatedPath))[:len(".check-")] != ".check-" {
+		return ErrHistoricalCheckRejected
+	}
+	if err := coreartifact.VerifyRuleSet(isolatedPath, isolatedSHA); err != nil {
+		return ErrHistoricalCheckRejected
+	}
+	return m.check(ctx, isolatedPath, isolatedSHA, m.stdout, m.stderr)
+}
+
 func (m *ManagedCore) Activate(ctx context.Context, generation Generation) error {
 	m.transitionMu.Lock()
 	defer m.transitionMu.Unlock()
