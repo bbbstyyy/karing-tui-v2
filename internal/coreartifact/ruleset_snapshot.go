@@ -32,13 +32,13 @@ type snapshotFile struct {
 // RuleSetSnapshot owns a freshly created private directory. Call Close on
 // every path; the snapshot is not retained across process restarts.
 type RuleSetSnapshot struct {
-	dir      string
-	parent   string
-	identity os.FileInfo
-	files    []snapshotFile
-	lock     *os.File // exclusive flock on directory inode, held through Close
-	nativeConfigStaged bool // ephemeral native JSON only, not a generation file
-	closed   bool
+	dir                string
+	parent             string
+	identity           os.FileInfo
+	files              []snapshotFile
+	lock               *os.File // exclusive flock on directory inode, held through Close
+	nativeConfigStaged bool     // ephemeral native JSON only, not a generation file
+	closed             bool
 }
 
 // FileFor reports the isolated copy for an original pinned path. It is an

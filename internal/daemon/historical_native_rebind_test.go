@@ -100,7 +100,7 @@ func TestHistoricalNativeRebindChangesOnlyLocalRuleSetPath(t *testing.T) {
 func TestHistoricalNativeRebindRejectsMismatchedManifestAndConfig(t *testing.T) {
 	original, manifest, scope := historicalRebindFixture(t)
 	tests := []struct {
-		name string
+		name  string
 		alter func(*compiler.NativeManifest, *[]byte)
 	}{
 		{"stored config SHA", func(m *compiler.NativeManifest, _ *[]byte) {
@@ -134,8 +134,7 @@ func TestHistoricalNativeRebindRejectsMismatchedManifestAndConfig(t *testing.T) 
 			m := manifest
 			m.RuleSets = append([]compiler.NativeRuleSetManifest(nil), manifest.RuleSets...)
 			tc.alter(&m, &candidate)
-			if _, err := rebindHistoricalCheckJSON(context.Background(), candidate, m, scope);
-				!errors.Is(err, ErrHistoricalPathRebind) {
+			if _, err := rebindHistoricalCheckJSON(context.Background(), candidate, m, scope); !errors.Is(err, ErrHistoricalPathRebind) {
 				t.Fatalf("invalid historical native binding accepted: %v", err)
 			}
 		})
@@ -209,6 +208,7 @@ func TestHistoricalCoreCheckUsesReboundNativePathsNotSharedPaths(t *testing.T) {
 }
 
 type coreWithoutIsolatedCheck struct{ underlying *fakeApplyCore }
+
 func (c coreWithoutIsolatedCheck) Check(ctx context.Context, g Generation) error {
 	return c.underlying.Check(ctx, g)
 }
