@@ -36,6 +36,7 @@ type RuleSetSnapshot struct {
 	parent   string
 	identity os.FileInfo
 	files    []snapshotFile
+	lock     *os.File // exclusive flock on directory inode, held through Close
 	closed   bool
 }
 
@@ -76,6 +77,11 @@ func StagePinnedRuleSetSnapshot(
 	if err := ensurePrivateDir(coreRoot); err != nil {
 		return nil, err
 	}
+	// Recover only abandoned private scopes before reserving more disk.
+	// Another process's still-locked scope is always left untouched.
+	if _, err := ReclaimOrphanedRuleSetSnapshots(ctx, coreRoot); err != nil {
+		return nil, err
+	}
 	parent := filepath.Join(coreRoot, "historical-check-snapshots")
 	if err := ensurePrivateDir(parent); err != nil {
 		return nil, err
@@ -85,12 +91,19 @@ func StagePinnedRuleSetSnapshot(
 		return nil, fmt.Errorf("%w: create isolated snapshot", ErrUnsafeRuleSetSnapshot)
 	}
 	snapshot := &RuleSetSnapshot{dir: dir, parent: parent}
+	// Acquire the scope lock before copying the first byte, and hold it
+	// until cleanup. Failure before taking the lock removes only our empty
+	// freshly-created directory, never other scopes.
+	if snapshot.lock, err = lockSnapshotDirectory(dir); err != nil {
+		_ = os.Remove(dir)
+		return nil, err
+	}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, snapshot.Close())
 		}
 	}()
-	if snapshot.identity, err = os.Lstat(dir); err != nil {
+	if snapshot.identity, err = snapshot.lock.Stat(); err != nil {
 		return nil, err
 	}
 	if err := snapshot.verifyDirectory(); err != nil {
@@ -202,9 +215,11 @@ func (s *RuleSetSnapshot) verifyDirectory() error {
 	if s.dir == "" {
 		return nil
 	}
+	if err := verifyPrivateSnapshotDirectory(s.dir, s.lock); err != nil {
+		return err
+	}
 	info, err := os.Lstat(s.dir)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
-		info.Mode().Perm()&0o077 != 0 || !os.SameFile(info, s.identity) {
+	if err != nil || !os.SameFile(info, s.identity) {
 		return ErrUnsafeRuleSetSnapshot
 	}
 	uid, ok := info.Sys().(*syscall.Stat_t)
@@ -251,7 +266,7 @@ func (s *RuleSetSnapshot) Verify(ctx context.Context) error {
 // Close removes ONLY the directory and files created by this snapshot, after
 // verifying identity. Unexpected files or path replacement cause a hard error
 // rather than broad recursive deletion. A missing file also fails closed.
-func (s *RuleSetSnapshot) Close() error {
+func (s *RuleSetSnapshot) Close() (err error) {
 	if s == nil || s.closed {
 		return nil
 	}
@@ -259,6 +274,15 @@ func (s *RuleSetSnapshot) Close() error {
 		s.closed = true
 		return nil
 	}
+	// Never leak a directory lock on an unsafe/unrecognized snapshot.
+	// If cleanup cannot prove ownership, leave files intact and return an
+	// error; later recovery will refuse unknown entries too.
+	defer func() {
+		if s.lock != nil {
+			err = errors.Join(err, s.lock.Close())
+			s.lock = nil
+		}
+	}()
 	if err := s.verifyDirectory(); err != nil {
 		return err
 	}
