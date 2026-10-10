@@ -1,0 +1,26 @@
+name: one-time-orphan-recovery-format
+on:
+  push:
+    branches: [feat/m0-m1-foundation]
+    paths:
+      - .github/workflows/one-time-orphan-recovery-format.yml
+permissions:
+  contents: write
+jobs:
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+      - name: Format locked historical snapshot recovery and tests
+        run: |
+          gofmt -w internal/coreartifact/ruleset_snapshot_recovery.go internal/coreartifact/ruleset_snapshot.go internal/coreartifact/ruleset_snapshot_recovery_test.go
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/coreartifact/ruleset_snapshot_recovery.go internal/coreartifact/ruleset_snapshot.go internal/coreartifact/ruleset_snapshot_recovery_test.go
+            git commit -m "style(m4): gofmt locked orphan snapshot recovery"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
