@@ -29,6 +29,13 @@ type HistoricalCheckEvidence struct {
 	RestoreReady       bool
 }
 
+// historicalIsolatedChecker is intentionally NOT part of the normal apply
+// interface. Only explicitly supporting runtimes may check rebound native
+// JSON; a missing adapter rejects the dry-run before core I/O.
+type historicalIsolatedChecker interface {
+	CheckIsolated(context.Context, Generation, string, string) error
+}
+
 // CheckHistoricalGeneration performs an internal, non-activating dry run.
 // There is intentionally no HTTP, CLI, capability, or TUI route to invoke it.
 // The operation gate prevents another daemon core transition while checking.
@@ -227,12 +234,37 @@ func (r *serverRuntime) checkHistoricalGeneration(
 		return evidence, ErrHistoricalCheckChanged
 	}
 
-	// Core Check can stage private files, but cannot bind or activate them.
+	// Core Check never sees the original shared rule-set paths when this
+	// generation references rule sets. Its temporary native JSON is staged
+	// inside the SAME locked snapshot, under a different SHA, and is never
+	// stored as a generation or bound to the running proxy.
 	candidate := Generation{ID: attempt.GenerationID,
 		Config: append([]byte(nil), sealed.ConfigJSON...), SHA256: attempt.ConfigSHA256}
-	if err := r.apply.withTimeout(ctx, r.apply.policy.CheckTimeout, func(checkCtx context.Context) error {
-		return r.apply.core.Check(checkCtx, candidate)
-	}); err != nil {
+	var check func(context.Context) error
+	if len(historicalManifest.RuleSets) != 0 {
+		runner, supported := r.apply.core.(historicalIsolatedChecker)
+		if !supported {
+			return evidence, ErrHistoricalCheckUnavailable
+		}
+		rebound, rebindErr := rebindHistoricalCheckJSON(ctx, sealed.ConfigJSON, historicalManifest, isolated)
+		if rebindErr != nil {
+			return evidence, ErrHistoricalCheckRejected
+		}
+		configPath, isolatedSHA, stageErr := isolated.StageNativeCheckConfig(ctx, rebound)
+		if stageErr != nil || isolated.Verify(ctx) != nil {
+			return evidence, ErrHistoricalCheckRejected
+		}
+		check = func(checkCtx context.Context) error {
+			return runner.CheckIsolated(checkCtx, candidate, configPath, isolatedSHA)
+		}
+	} else {
+		// No local rule sets means there are no paths to rewrite; continue
+		// using the original strictly bound generation Check interface.
+		check = func(checkCtx context.Context) error {
+			return r.apply.core.Check(checkCtx, candidate)
+		}
+	}
+	if err := r.apply.withTimeout(ctx, r.apply.policy.CheckTimeout, check); err != nil {
 		return evidence, fmt.Errorf("%w: core rejected historical candidate", ErrHistoricalCheckRejected)
 	}
 	// Re-read original SQLite payloads and all pinned source/fallback file
