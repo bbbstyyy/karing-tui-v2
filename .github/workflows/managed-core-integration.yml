@@ -1,0 +1,50 @@
+name: managed-core-integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/managed-core-integration.yml'
+      - 'internal/daemon/**'
+      - 'internal/declaration/**'
+      - 'internal/compiler/**'
+      - 'internal/core/**'
+      - 'internal/coreapi/**'
+      - 'internal/coreartifact/**'
+      - 'internal/domain/**'
+      - 'internal/storage/**'
+      - 'resources/core-entry/**'
+      - 'resources/core.lock.json'
+      - 'scripts/verify-core-build.sh'
+      - 'scripts/smoke-core-runtime.sh'
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.12'
+          cache: false
+      - name: Build and verify approved core
+        env:
+          CORE_OUTPUT: ${{ runner.temp }}/karing-tui-core
+        run: bash scripts/verify-core-build.sh amd64
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Run managed-core integration
+        env:
+          KARING_TUI_TEST_CORE: ${{ runner.temp }}/karing-tui-core
+          DISPLAY: ''
+          WAYLAND_DISPLAY: ''
+        run: go test -tags=integration ./internal/daemon -run TestManagedCoreReal -count=1 -v

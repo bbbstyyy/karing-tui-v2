@@ -1209,3 +1209,106 @@ docs/
 [S26]: https://curl.se/docs/manpage.html
 [S27]: https://karing.app/clash
 [S28]: https://karing.app/tutorial/backup-sync
+
+### 2026-10-09 M4 只读 TUI 首个切片
+
+- 采用精确锁定的 Bubble Tea `v1.3.10`（v1 API，不混用 v2），`karing-tui tui` 启动终端界面。
+- 仅读取版本化 Unix Socket API：Dashboard、Profiles、Nodes 三个界面；异步、限时、可取消请求，不在 `Update/View` 中阻塞 IO。
+- 使用请求序号拒绝旧响应，列表展示数量和节点分页有界；窄屏、中文显示宽度、终端控制字符及 bidi 格式字符统一受保护。
+- `q`/Ctrl-C 只退出界面，不写 daemon/core 状态；错误安全概括，不输出订阅凭据或原始错误文本。
+- 仅为 M4 UI 基础，不表示 M3 协议支持、路由/DNS 编辑、CN 资源闭包或正式稳定门槛已完成。
+
+
+### 2026-10-09 M4 CurrentSelected CAS 与 TUI 候选切换切片
+
+- schema v16 的选择修订号与已应用代际/声明 SHA-256 条件更新已落地，旧 PUT 也递增相同 revision；409 冲突不写入，502/超时后先回读，不假定回滚。
+- TUI Selector 使用绑定到已应用声明的 CurrentSelected 成员列表，仅支持固定节点、Global URLTest 和 Custom URLTest；候选上限 128，超出时明确截断并禁用编辑。
+- Enter 提议、y 确认、Esc 取消；写入有界异步、单操作在途，提交后必须重新 GET 选择及 live readback；终端退出不停止 daemon/core。
+- 此切片不变更五层分流、订阅/ISP 排除策略、CN 28 组、DNS 或内核版本；仍不表示 M4 全功能和 M5 发布门槛完成。详见 ADR 0076、0077。
+
+### 2026-10-09 M4 Applied Routing/DNS 脱敏检查切片
+
+- 增加只读 `GET /v1/config/inspection`：验证应用代际 manifest、原生配置哈希与已应用声明 SHA-256 的一致性；恢复中、应用中、无已应用代际或竞态漂移时失败关闭。
+- Routing TUI 页 `7` 采用与编译器相同的 CN 28 组交错及地区自动追加机制重建声明分层，仅展示五层/组启用状态、顺序、目标和 DNS 绑定；不把重建信息误称为实际规则命中或原生配置全量验证。
+- DNS TUI 页 `8` 只展示角色、传输、引导引用、detour 目标、IP/主机名类型和绑定；不显示 DNS 上游地址、用户节点密钥，不把绑定等同于已观测的 DNS 解析路径。
+- 当前声明与应用声明不同版本时，仅展示 Routing/DNS/RuleSet 语义变化指标，不静默应用或声称已生效。接口与客户端双重限制输出数量/字节；终端异步刷新、旧结果失效且不保存原始载荷。
+- 本切片并未实现规则/DNS 安全编辑、完整差异预览、备份恢复，T10/T23 和正式长期稳定性门槛仍未关闭。见 ADR 0078。
+
+### 2026-10-09 M4 严格编译路由/DNS 绑定预览与 CAS 暂存切片
+
+- 增加窄范围的 `config route-preview`/`config route-stage` CLI 和版本化 `/v1/config/route-edit/{context,preview,stage}` 本地 API，不允许用户在此接口上传任意运行 JSON。
+- 单次仅修改已有组的一个字段：enabled、TargetRef 或 group-role DNS profile 绑定；CN 28 组通过 pinned `cn_preset.overrides` 表达；地区自动追加组、FINAL DNS、分流层/顺序、规则匹配及 DNS 服务器配置不可越权修改。
+- 预览基于权威当前声明和 CurrentSelected 状态生成候选，复用严格真实编译器和已有规则资源 resolver，返回候选声明与编译原生配置 SHA-256、可显示的变更摘要，`compiler_validated=true`、`core_validated=false`、`staged=false`、`applied=false`。
+- 确认时必须复验双 digest、声明修订/哈希、配置修订、应用代际、CurrentSelected revision，再原子提交一个新的声明修订。操作门闩序列化应用/选择切换，SQLite CAS 同时防止旧客户端覆盖；409 不写入，502/超时后回读而不盲目重试。
+- CLI 回执文件独占创建，`0600` 权限，stage 拒绝 symlink 和非私有/非本人普通文件。运行中 core、DNS 路径、五层顺序和订阅/ISP 排除策略均不受本次暂存直接改变。完整 TUI 编辑、显式代际应用/回滚、T10/T23 和长期稳定验收尚未关闭。见 ADR 0079。
+
+
+### 2026-10-09 M4 当前声明显式应用的校验回执切片
+
+- 新增 `GET /v1/config/apply/preview`：在 daemon OperationGate 中读取未应用的**当前声明头**，核对声明 SHA 与配置修订、已应用代际、CurrentSelected 修订，重新严格编译并返回无敏感内容的原生 SHA-256/规则资源统计；不进行真实 core check 或运行态变更。
+- 新增 `POST /v1/config/apply/confirm`：接收预览签认的固定标识与原生哈希，在同一 Gate 内复验、重新编译，调用既有原子代际应用协调器完成 `check -> activate -> verify -> commit`，失败交由既有 journal/rollback/recovery。冲突回执不得再应用；超时/断链不盲重试。
+- CLI 提供 `config apply-preview [--out=0600_FILE]`、`config apply --receipt=PRIVATE_FILE --confirm`，拒绝 symlink、非私有/非本人文件、失效摘要或缺少明确确认；成功后校验代际与配置修订回读。应用可能替换 core 并影响连接，不因预览或 TUI 页面切换而自动发生。
+- 当前仅是 **CLI 当前头版本应用闭环**，不能宣称 TUI 版本回滚、历史代际主动恢复、一致性备份或 M4 完成。五层路由/CN 预置/订阅 ISP 排除、Linux 普通用户和无 TUN 不变。详见 ADR 0082。
+
+
+### 2026-10-09 M4 Dashboard 受保护应用交互切片
+
+- Dashboard (TUI 页面 `1`) 增加 `a` 编译预览当前**未应用**的声明；按用户明确 `y` 才请求应用，`Esc` 放弃；预览只读取验证过的声明摘要、已应用代际、选择修订与资源计数，`core_validated=false`，无写入。
+- 确认界面必须完整显示声明/配置修订、声明 SHA 与原生配置 SHA 摘要、已应用代际、CurrentSelected 修订、内核可能重启及连接中断警告；终端小于 64×16 或缩小到不满足尺寸时禁止确认，过期/跨页预览失效。
+- 调用已有 `/v1/config/apply/confirm` 受保护 API，单次、限时、异步，不在 Bubble Tea `Update/View` 中阻塞；写入后对响应和状态回读执行同一代际/修订核验，失败或超时标记不确定且不自动重试。运行中禁止第二次请求；TUI 退出不停止 daemon/core，已被 daemon 接收的应用仍可能完成。
+- 此切片**不提供手动历史代际回滚或备份恢复**。现有应用 journal 的自动失败回滚保留；真正的恢复目标选择、旧配置的完整原生资源闭包、T10 DNS 实际路径验证与长期稳定门槛仍待完成。详见 ADR 0083。
+
+
+### 2026-10-09 M4 已确认历史代际只读完整性审计切片
+
+- SQLite 按成功 `committed` 的 journal + archived history 生成有界（最多 12 条）去重代际目录，记录已持久化修订号与 payload 是否被 retention 清理，绝不把 prepared/rolled_back/failed 候选当作可恢复配置。
+- 新增 `GET /v1/config/recovery/audit` 和 `config recovery-audit` 只读入口：逐代际复核原生配置、manifest、source-map 的 SHA-256 与 JSON、原生 schema、声明 revision/hash 及声明本体，并对 manifest 指向的私有 content-addressed 规则资源复用 no-follow/owner/hash 验证；禁止将任意存储路径当作规则文件打开。
+- 返回只有脱敏状态枚举、代际、修订号及完整性布尔值；配置、DNS 上游、节点密钥、rule-set 路径或原始错误不输出。状态与声明在采集前后变化则 409 拒绝拼接快照；资源已经清理或损坏时标记不可用，不悄悄回退为直连。
+- **所有 `restore_ready=false`，`restore_supported=false`**：哈希验证仅说明存储内容与规则文件在该时刻可核查，并不代表该历史配置现在可应用。手动历史代际回滚必须先补齐 CurrentSelected/运行路由策略绑定、规则资源闭包的应用时再校验、可恢复代际 CAS、内核严格检查/事务激活与故障注入测试，不能绕过保护直接复用历史 native JSON。见 ADR 0084。
+
+
+### 2026-10-09 M4 历史代际严格编译与内核 Check（无激活）切片
+
+- 在 ADR 0084/0085 的只读历史审计和 ADR 0086 的 SQLite 原子候选准备基础上，新增仅供 daemon 内部调用的 `CheckHistoricalGeneration`。不注册 HTTP、CLI、TUI 或能力开关，不允许终端直接触发历史配置替换。
+- 在与 core 生命周期和配置应用共享的 OperationGate 内，先核查成功提交的历史代际和当前应用/LKG 资源闭包、CurrentSelected、routing mode 与目标状态；旧声明必须由**当前编译器及控制面参数**重新编译，要求原生 JSON、manifest、source-map 和历史存档逐字节一致。
+- 单个 SQLite CAS 事务将历史代际复制为新候选，使用现有 journal/配额/崩溃恢复机制；只调用 core.Check，不进入 activate/verify/commit。检查后即使连接取消或 core.Check 失败，也以独立清理超时回收 prepared 活动槽，检测变更/回收失败时报错；成功回执永远不表示可恢复。
+- 自动失败回滚及配置生效路径不变。**仍然未开放手动历史代际恢复**，`restore_supported=false`、所有 `restore_ready=false`。后续必须完成真实资源 inode/lease 固定、核验与激活间的隔离、可验证的双层回滚、操作回执、T15/T23 断点故障注入和实际流量健康验证；此切片不等同于 M4 完成。详见 ADR 0087。
+
+
+### 2026-10-09 M4 历史恢复规则资源 inode 钉住检查切片
+
+- 在仅 daemon 内部执行、无激活的历史代际 core Check（ADR 0087）中，针对目标代际与已应用/LKG 回退代际，建立去重且受文件数/累计字节预算约束的源/二进制规则集文件句柄。
+- 打开时坚持 content-addressed 私有根目录、Linux no-follow、普通文件、属主、权限及 SHA-256；Check 前后在**同一打开文件描述符**上核查哈希、大小、权限及路径是否仍指向原 inode，拒绝“同内容新 inode 替换”。
+- 同时对历史目标、当前应用及 LKG 在 SQLite 中的原生 JSON、manifest、source-map 的内容与 SHA-256 作前后快照对比，拒绝检查过程中的回退代际元数据变化，并确保检查结束撤销 prepared 活动 journal。
+- 此改进仍只是进程内检测：无法凭文件描述符阻止路径短暂替换再还原（ABA），不代表已经获得真实激活期间的资源租约，更不支持手动恢复。下一步仍需隔离恢复资源、核验与激活之间的状态/权限锁、双层回滚故障注入及一致备份；M4/T15/T23 未验收。详见 ADR 0088。
+
+
+### 2026-10-09 M4 历史配置 Check 候选空间回收切片
+
+- 在 ADR 0086–0088 的内部安全检查基础上，修复重复检查可造成 SQLite `generations` 已失败候选积累、耗尽保留预算的问题；禁止以宽泛的历史清理来换取恢复检查空间。
+- 检查成功、失败或取消时，先使用独立超时将 prepared journal 标记为明确的未激活检查失败，再在**单个 SQLite 事务**内验证恢复来源、专用标记、无活动状态、无 recovery_required、无其他 journal/history 引用、不属于 applied/LKG，归档失败记录后仅删除这一失败候选的存储 payload。清理出错仍是硬失败，不会激活 core。
+- 测试覆盖重复检查、配额紧张、历史 tombstone 保留、普通失败应用/回滚失败/中断恢复和其他代际引用均不可误删，防止因只读兼容检查影响长期运行正常配置写入。进程在清理前崩溃时依赖既有 recovery/retention 清理遗留候选。
+- **仍不开放手动恢复或备份恢复**；继续优先实现隔离的不可变运行规则文件快照、跨重启租约、故障注入验证的双层回滚。M4/T15/T23 及长时间稳定性门槛尚未关闭。详见 ADR 0089。
+
+
+### 2026-10-10 M4 隔离规则资源快照（仅历史兼容检查）
+
+- 在 ADR 0088 的规则文件句柄钉住、ADR 0089 的检查候选回收基础上，新建只供 daemon 内部调用的隔离副本构建器 `coreartifact.StagePinnedRuleSetSnapshot`：对历史目标、当前已应用和 LKG 的规则文件闭包去重，限定 128 个文件、128 MiB 总量以及单个 64 MiB 上限。
+- 从此前已校验并保持打开的文件描述符复制，**不是硬链接**：复制前后重查来源 inode 与哈希；以私有随机目录、独占新文件、`0400` 权限、文件及目录 fsync 形成检查期临时副本。内核 Check 前后核对副本和来源，检测路径替换、内容和权限变化；成功/失败/取消均定向清理并拒绝清理未知文件或被替换目录。
+- 完整隔离运行配置尚未实现：当前内核 `Check` 的原生配置仍引用原始 content-addressed 路径，隔离副本目前**只用于验证可物化的资源闭包**，不能作为激活许可证。进程崩溃可留下临时目录，未来需完成带跨进程互斥和磁盘预算的孤儿回收，隔离副本的原生路径重绑定及恢复目标/回退链跨重启租约。
+- 无手动恢复 HTTP/CLI/TUI，无核心激活；`restore_supported=false`、所有 `restore_ready=false`，T15/T23/M4 未验收。参见 ADR 0090。
+
+
+### 2026-10-10 M4 跨进程快照锁与崩溃遗留目录安全回收
+
+- 对 ADR 0090 的临时规则文件副本，持有基于 Linux 目录文件描述符的独占 `flock` 直到 `core.Check` 完成并清理结束；回收仅对成功取得非阻塞独占锁的遗留 scope 动手，仍处于其它进程使用中的目录一律跳过。创建新 scope 与回收扫描还使用短时、支持 context 超时的**父目录锁**，防止新建和加锁之间的短暂窗口被误回收。
+- 回收严格限制：每批最多 32 个 scope；单个 scope 最多 128 个普通文件、128 MiB 总量、单文件 64 MiB；仅接受 `.check-` 随机目录及小写 SHA-256 `.json/.srs` 文件名、当前 UID 所有、私有 `0400/0600` 权限、独立 inode。使用锁定目录 fd 相对 `unlinkat` 和父目录 fsync，拒绝符号链接、未知额外文件、不安全权限/硬链接，绝不递归清空。进程崩溃留下的部分拷贝可按同一规则回收。
+- 仅在下一次**内部历史配置兼容检查**准备新快照前机会式扫描；不影响已运行 core，不要求停止代理，不建立公共清理 API。历史 native JSON 仍未绑定副本路径，手动恢复仍关闭；剩余跨重启资源租约、备份恢复、故障注入与 T15/T23/M4 验收均未完成。详见 ADR 0091。
+
+
+### 2026-10-10 M4 隔离原生配置规则路径重绑定及内核 Check（仍无激活）
+
+- 在 ADR 0090/0091 的目标/应用/LKG 私有规则副本及跨进程快照锁基础上，新增**只在内部历史兼容 Check 使用**的规则路径重绑定：先以当前编译器严格重编历史声明并验证原始 JSON/manifest/source-map 与 SQLite 哈希完全一致，再仅按 manifest 一一核对 native `route.rule_set` 的 local tag/format/原始 path，将 `path` 改成已独立复制并锁定的私有文件。DNS、outbound、分流规则、选择器及控制密钥不改，历史代际原始字节/哈希/manifest 不写回。
+- 为重绑定后的原生 JSON 单独计算 SHA-256，将最多**一份**检查配置独占创建到同一私有快照目录，以 `0400` 权限、文件和目录 fsync 及 inode/哈希复核管理；其文件数量和字节数计入原有单 scope 配额和崩溃孤儿清理。存在规则集时内核必须实现 `CheckIsolated`，否则安全拒绝；原有 ManagedCore 先验证**原始** SQLite 代际，直接对临时路径调用 core Check，不执行正常 `Stage/Bind/Activate/Verify`，不更新 applied/LKG/journal 中已确认的代际。空规则闭包保留原严格 Check。
+- 检查前后再次验证固定资源、临时 native 文件以及 SQLite/CAS 状态；退出时只删除锁定 scope 和失败的临时候选。新增原生字节不变性、路径精准替换、错误格式/Tag/SHA、缺失内核适配器、临时文件篡改与无激活回归测试。
+- **仍不允许手动历史恢复或备份恢复**：临时文件不持久化为可跨重启激活的资源租约，二次回滚及 T15/T23 断点故障注入尚未完成。保留 `restore_supported=false` 与所有 `restore_ready=false`。详见 ADR 0092。

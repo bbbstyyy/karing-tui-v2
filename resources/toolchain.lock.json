@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "management_plane": {
+    "language": "go",
+    "version": "1.27.1",
+    "source": "https://go.dev/dl/",
+    "linux_amd64_sha256": "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
+    "linux_arm64_sha256": "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec"
+  }
+}
