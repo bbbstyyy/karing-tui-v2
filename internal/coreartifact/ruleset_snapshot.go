@@ -86,17 +86,27 @@ func StagePinnedRuleSetSnapshot(
 	if err := ensurePrivateDir(parent); err != nil {
 		return nil, err
 	}
+	// Hold the parent flock from MkdirTemp until the child scope is
+	// exclusively locked. A concurrent scavenger cannot claim a new empty
+	// scope during the tiny creation-to-flock window.
+	parentLock, err := lockSnapshotParent(ctx, parent)
+	if err != nil {
+		return nil, err
+	}
 	dir, err := os.MkdirTemp(parent, ".check-")
 	if err != nil {
+		_ = parentLock.Close()
 		return nil, fmt.Errorf("%w: create isolated snapshot", ErrUnsafeRuleSetSnapshot)
 	}
 	snapshot := &RuleSetSnapshot{dir: dir, parent: parent}
-	// Acquire the scope lock before copying the first byte, and hold it
-	// until cleanup. Failure before taking the lock removes only our empty
-	// freshly-created directory, never other scopes.
-	if snapshot.lock, err = lockSnapshotDirectory(dir); err != nil {
-		_ = os.Remove(dir)
-		return nil, err
+	snapshot.lock, err = lockSnapshotDirectory(dir)
+	unlockErr := parentLock.Close()
+	if err != nil || unlockErr != nil {
+		if snapshot.lock != nil {
+			_ = snapshot.lock.Close()
+		}
+		_ = os.Remove(dir) // freshly created empty scope, parent was locked
+		return nil, errors.Join(err, unlockErr)
 	}
 	defer func() {
 		if err != nil {
