@@ -13,6 +13,15 @@ import (
 	"testing"
 )
 
+func privateSnapshotTestDir(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir()
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestDatabaseSnapshotCapturesCommittedWALAndStaysIndependent(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
@@ -27,7 +36,7 @@ func TestDatabaseSnapshotCapturesCommittedWALAndStaysIndependent(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&wal); err != nil || wal != "wal" {
 		t.Fatalf("WAL mode unexpectedly disabled: %q %v", wal, err)
 	}
-	parent := t.TempDir()
+	parent := privateSnapshotTestDir(t)
 	snap, err := store.CreateDatabaseSnapshot(ctx, parent)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +100,7 @@ func TestDatabaseSnapshotRejectsUnsafeParentsBudgetAndCancellation(t *testing.T)
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
 	defer store.Close()
-	parent := t.TempDir()
+	parent := privateSnapshotTestDir(t)
 	symlink := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(parent, symlink); err != nil {
 		t.Fatal(err)
@@ -140,7 +149,7 @@ func TestDatabaseSnapshotCloseRefusesUnknownEntriesAndHardlinks(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
 	defer store.Close()
-	parent := t.TempDir()
+	parent := privateSnapshotTestDir(t)
 	snap, err := store.CreateDatabaseSnapshot(ctx, parent)
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +190,7 @@ func TestDatabaseSnapshotCloseRefusesPathReplacement(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
 	defer store.Close()
-	parent := t.TempDir()
+	parent := privateSnapshotTestDir(t)
 	snap, err := store.CreateDatabaseSnapshot(ctx, parent)
 	if err != nil {
 		t.Fatal(err)
