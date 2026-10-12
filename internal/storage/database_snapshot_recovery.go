@@ -257,4 +257,3 @@ func ReclaimOrphanedDatabaseSnapshots(
 	}
 	return report, nil
 }
-
