@@ -237,3 +237,7 @@ TUI page `9` adds on-demand, bounded, cancellable display of the existing commit
 ## M4 internal consistent-database snapshot prerequisite
 
 The storage layer can now stage a private WAL-consistent SQLite copy with a bounded `VACUUM INTO` operation, offline read-only integrity validation and SHA-256, explicit temporary file ownership and guarded cleanup (ADR 0094). The method remains internal-only: it does not export or restore sensitive profile credentials, and does not include the immutable external rule-set/core resource closure. No backup/restore UI or public API is implemented, and `restore_supported=false` remains unchanged. Future portable backups require verified consistent resource inclusion, safe archive/encryption, crash recovery and transactional restore with rollback.
+
+## M4 cross-process safe SQLite snapshot orphan recovery
+
+Internal snapshot staging now coordinates scoped `flock` leases with a bounded private-parent reclamation scan (ADR 0095). Stale empty or one-file interrupted SQLite scopes can be reclaimed opportunistically without touching active snapshots; unexpected entries or replaced/unsafe paths are refused. This closes the **known orphan-scope cleanup gap only for future internal snapshot attempts**, not a periodic startup cleaner or portable backup. Product backups still require resource closure, manifest, encryption and safe restore; no API/CLI/TUI restore is enabled.

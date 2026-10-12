@@ -30,8 +30,10 @@ type DatabaseSnapshot struct {
 	SHA256            string
 	Size              int64
 	directory         string
+	parent            string
 	directoryIdentity os.FileInfo
 	fileIdentity      os.FileInfo
+	lock              *os.File // exclusive flock held until Close
 	closed            bool
 }
 
@@ -69,20 +71,25 @@ func (s *Store) createDatabaseSnapshot(ctx context.Context, parent string, limit
 		return nil, fmt.Errorf("%w: page budget", ErrUnsafeDatabaseSnapshot)
 	}
 
-	dir, err := os.MkdirTemp(parent, ".sqlite-snapshot-")
-	if err != nil {
-		return nil, fmt.Errorf("%w: create scope", ErrUnsafeDatabaseSnapshot)
+	// Refuse unknown, unbounded or corrupted orphan scopes. Active scopes
+	// are skipped under directory flock; no healthy proxy is restarted.
+	if _, err = ReclaimOrphanedDatabaseSnapshots(bounded, parent); err != nil {
+		return nil, err
 	}
-	snapshot = &DatabaseSnapshot{Path: filepath.Join(dir, "state.db"), directory: dir}
+	snapshot, err = newLockedDatabaseSnapshotScope(bounded, parent)
+	if err != nil {
+		if snapshot != nil {
+			err = errors.Join(err, snapshot.Close())
+		}
+		return nil, err
+	}
 	defer func() {
 		if err != nil {
-			closeErr := snapshot.Close()
-			err = errors.Join(err, closeErr)
+			err = errors.Join(err, snapshot.Close())
 			snapshot = nil
 		}
 	}()
-	snapshot.directoryIdentity, err = os.Lstat(dir)
-	if err != nil || !snapshot.directoryIdentity.IsDir() || snapshot.directoryIdentity.Mode().Perm() != 0o700 {
+	if err = snapshot.verifyDirectory(); err != nil {
 		return snapshot, fmt.Errorf("%w: scope identity", ErrUnsafeDatabaseSnapshot)
 	}
 	// SQLite explicitly permits an already-existing zero-byte INTO file.
@@ -150,13 +157,27 @@ func verifyPrivateSnapshotParent(path string) error {
 	return nil
 }
 
-func (s *DatabaseSnapshot) verifyFile() error {
-	if s == nil || s.closed || s.fileIdentity == nil || s.directoryIdentity == nil {
+func (s *DatabaseSnapshot) verifyDirectory() error {
+	if s == nil || s.closed || s.lock == nil || s.directoryIdentity == nil {
 		return ErrUnsafeDatabaseSnapshot
 	}
-	dirInfo, dirErr := os.Lstat(s.directory)
-	if dirErr != nil || !os.SameFile(dirInfo, s.directoryIdentity) || !dirInfo.IsDir() || dirInfo.Mode().Perm() != 0o700 {
+	if err := verifyLockedDatabaseSnapshotDirectory(s.directory, s.lock); err != nil {
+		return err
+	}
+	openInfo, err := s.lock.Stat()
+	if err != nil || !os.SameFile(openInfo, s.directoryIdentity) ||
+		openInfo.Mode().Perm() != 0o700 {
 		return ErrUnsafeDatabaseSnapshot
+	}
+	return nil
+}
+
+func (s *DatabaseSnapshot) verifyFile() error {
+	if s == nil || s.closed || s.fileIdentity == nil {
+		return ErrUnsafeDatabaseSnapshot
+	}
+	if err := s.verifyDirectory(); err != nil {
+		return err
 	}
 	info, err := os.Lstat(s.Path)
 	if err != nil || !info.Mode().IsRegular() || !os.SameFile(info, s.fileIdentity) || info.Mode().Perm() != 0o600 {
@@ -241,38 +262,49 @@ func syncDatabaseSnapshotDir(path string) error {
 // Close deletes only the exact private file and directory created by this
 // snapshot. Unexpected entries, inode replacement or unsafe permissions stop
 // cleanup rather than recursively removing caller-owned data.
-func (s *DatabaseSnapshot) Close() error {
+func (s *DatabaseSnapshot) Close() (err error) {
 	if s == nil || s.closed {
 		return nil
 	}
-	if s.directoryIdentity == nil {
+	if s.lock == nil || s.directoryIdentity == nil {
 		return ErrUnsafeDatabaseSnapshot
 	}
-	d, err := os.Lstat(s.directory)
-	if err != nil || !os.SameFile(d, s.directoryIdentity) || !d.IsDir() || d.Mode().Perm() != 0o700 {
-		return ErrUnsafeDatabaseSnapshot
+	// Coordinate with scavenging and other creators. This parent lock is
+	// not held across the snapshot's potentially slow SQLite copy.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	parentLock, lockErr := lockDatabaseSnapshotParent(ctx, s.parent)
+	if lockErr != nil {
+		return lockErr
 	}
-	entries, err := os.ReadDir(s.directory)
-	if err != nil {
-		return ErrUnsafeDatabaseSnapshot
+	defer func() {
+		err = errors.Join(err, parentLock.Close())
+	}()
+	if err := s.verifyDirectory(); err != nil {
+		return err
 	}
-	if len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != "state.db") {
+	entries, readErr := os.ReadDir(s.directory)
+	if readErr != nil || len(entries) > 1 ||
+		(len(entries) == 1 && entries[0].Name() != "state.db") {
 		return ErrUnsafeDatabaseSnapshot
 	}
 	if len(entries) == 1 {
 		if err := s.verifyFile(); err != nil {
 			return err
 		}
-		if err := os.Remove(s.Path); err != nil {
+		if err := syscall.Unlinkat(int(s.lock.Fd()), "state.db"); err != nil {
 			return ErrUnsafeDatabaseSnapshot
 		}
+	}
+	if err := s.verifyDirectory(); err != nil {
+		return err
 	}
 	if err := os.Remove(s.directory); err != nil {
 		return ErrUnsafeDatabaseSnapshot
 	}
-	if err := syncDatabaseSnapshotDir(filepath.Dir(s.directory)); err != nil {
-		return err
-	}
+	syncErr := syncDatabaseSnapshotDir(s.parent)
+	closeErr := s.lock.Close()
+	s.lock = nil
 	s.closed = true
-	return nil
+	return errors.Join(syncErr, closeErr)
 }
