@@ -1,0 +1,29 @@
+name: one-time-sqlite-recovery-gofmt
+on:
+  push:
+    paths:
+      - '.github/workflows/one-time-sqlite-recovery-gofmt.yml'
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Format exact recovery source
+        run: |
+          gofmt -w internal/storage/database_snapshot_recovery.go
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- internal/storage/database_snapshot_recovery.go; then
+            git add internal/storage/database_snapshot_recovery.go
+            git commit -m "style(m4): gofmt locked SQLite snapshot recovery"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
