@@ -104,7 +104,7 @@ func newLockedDatabaseSnapshotScope(ctx context.Context, parent string) (_ *Data
 	defer func() {
 		err = errors.Join(err, parentLock.Close())
 	}()
-	dir, err := os.MkdirTemp(parent, ".sqlite-snapshot-")
+	dir, err := os.MkdirTemp(parent, ".sqlite-snapshot-v2-")
 	if err != nil {
 		return nil, ErrUnsafeDatabaseSnapshot
 	}
@@ -124,7 +124,7 @@ func newLockedDatabaseSnapshotScope(ctx context.Context, parent string) (_ *Data
 }
 
 func isDatabaseSnapshotScopeName(name string) bool {
-	const prefix = ".sqlite-snapshot-"
+	const prefix = ".sqlite-snapshot-v2-"
 	if !strings.HasPrefix(name, prefix) || len(name) <= len(prefix) {
 		return false
 	}

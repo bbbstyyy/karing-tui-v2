@@ -14,7 +14,7 @@ import (
 
 func createOrphanDatabaseSnapshot(t *testing.T, parent, suffix string, content []byte) string {
 	t.Helper()
-	scope := filepath.Join(parent, ".sqlite-snapshot-"+suffix)
+	scope := filepath.Join(parent, ".sqlite-snapshot-v2-"+suffix)
 	if err := os.Mkdir(scope, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestDatabaseSnapshotCrashProcessReleasesFlock(t *testing.T) {
 	if os.Getenv("KARING_SNAPSHOT_CRASH_CHILD") == "yes" {
 		// The helper intentionally exits without closing its scope lock.
 		parent := os.Getenv("KARING_SNAPSHOT_PARENT")
-		dir := filepath.Join(parent, ".sqlite-snapshot-crashchild")
+		dir := filepath.Join(parent, ".sqlite-snapshot-v2-crashchild")
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -271,5 +271,32 @@ func TestDatabaseSnapshotRecoveryRefusesSymlinkedAndUnboundedParents(t *testing.
 	report, err := ReclaimOrphanedDatabaseSnapshots(context.Background(), missing)
 	if err != nil || report.Reclaimed != 0 || report.Active != 0 {
 		t.Fatalf("missing recovery parent should be no-op: %+v err=%v", report, err)
+	}
+}
+
+func TestDatabaseSnapshotLegacyUnleasedScopeNeverReclaimed(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	parent := privateSnapshotTestDir(t)
+	// Earlier M4 snapshots used this unversioned name WITHOUT flock.
+	// They may belong to an active older process and are never scavenged.
+	legacy := filepath.Join(parent, ".sqlite-snapshot-legacy123")
+	if err := os.Mkdir(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(legacy, "state.db")
+	if err := os.WriteFile(secret, []byte("legacy-possibly-active"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReclaimOrphanedDatabaseSnapshots(ctx, parent); !errors.Is(err, ErrUnsafeDatabaseSnapshot) {
+		t.Fatalf("legacy unleased scope was accepted by new scavenger: %v", err)
+	}
+	if _, err := store.CreateDatabaseSnapshot(ctx, parent); !errors.Is(err, ErrUnsafeDatabaseSnapshot) {
+		t.Fatalf("new snapshot ignored unleased legacy scope: %v", err)
+	}
+	content, err := os.ReadFile(secret)
+	if err != nil || string(content) != "legacy-possibly-active" {
+		t.Fatal("legacy scope was damaged")
 	}
 }

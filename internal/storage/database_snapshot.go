@@ -104,7 +104,7 @@ func (s *Store) createDatabaseSnapshot(ctx context.Context, parent string, limit
 	if err != nil {
 		return snapshot, ErrUnsafeDatabaseSnapshot
 	}
-	if err = syncDatabaseSnapshotDir(dir); err != nil {
+	if err = syncDatabaseSnapshotDir(snapshot.directory); err != nil {
 		return snapshot, fmt.Errorf("%w: sync scope", ErrUnsafeDatabaseSnapshot)
 	}
 
@@ -123,7 +123,7 @@ func (s *Store) createDatabaseSnapshot(ctx context.Context, parent string, limit
 	if err = checkDatabaseSnapshot(bounded, snapshot.Path); err != nil {
 		return snapshot, fmt.Errorf("%w: read-only quick_check", ErrUnsafeDatabaseSnapshot)
 	}
-	if err = syncDatabaseSnapshotDir(dir); err != nil {
+	if err = syncDatabaseSnapshotDir(snapshot.directory); err != nil {
 		return snapshot, fmt.Errorf("%w: sync scope", ErrUnsafeDatabaseSnapshot)
 	}
 	if err = syncDatabaseSnapshotDir(parent); err != nil {
