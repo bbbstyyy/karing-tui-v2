@@ -1,0 +1,29 @@
+name: one-time-recovery-history-format
+on:
+  push:
+    paths:
+      - '.github/workflows/one-time-recovery-history-format.yml'
+permissions:
+  contents: write
+jobs:
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Format history slice only
+        run: |
+          gofmt -w internal/tui/model.go internal/tui/recovery_audit.go internal/tui/recovery_audit_test.go internal/apiv1/recovery_audit_validation.go internal/app/recovery_audit_cli.go
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add internal/tui/model.go internal/tui/recovery_audit.go internal/tui/recovery_audit_test.go internal/apiv1/recovery_audit_validation.go internal/app/recovery_audit_cli.go
+            git commit -m "style(m4): gofmt recovery audit TUI slice"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
