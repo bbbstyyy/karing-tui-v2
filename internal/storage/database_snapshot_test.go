@@ -186,7 +186,7 @@ func TestDatabaseSnapshotCloseRefusesPathReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	displaced := snap.Path + "-original"
+	displaced := filepath.Join(parent, "displaced-original")
 	if err := os.Rename(snap.Path, displaced); err != nil {
 		t.Fatal(err)
 	}

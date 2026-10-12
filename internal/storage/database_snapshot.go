@@ -51,7 +51,7 @@ func (s *Store) createDatabaseSnapshot(ctx context.Context, parent string, limit
 		return nil, err
 	}
 	if err := verifyPrivateSnapshotParent(parent); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: private parent", ErrUnsafeDatabaseSnapshot)
 	}
 	bounded, cancel := context.WithTimeout(ctx, databaseSnapshotTimeout)
 	defer cancel()
@@ -60,18 +60,18 @@ func (s *Store) createDatabaseSnapshot(ctx context.Context, parent string, limit
 	// authority for final size; the output is checked again after VACUUM.
 	var pages, pageSize int64
 	if err := s.db.QueryRowContext(bounded, "PRAGMA main.page_count").Scan(&pages); err != nil {
-		return nil, ErrUnsafeDatabaseSnapshot
+		return nil, fmt.Errorf("%w: page count", ErrUnsafeDatabaseSnapshot)
 	}
 	if err := s.db.QueryRowContext(bounded, "PRAGMA main.page_size").Scan(&pageSize); err != nil {
-		return nil, ErrUnsafeDatabaseSnapshot
+		return nil, fmt.Errorf("%w: page size", ErrUnsafeDatabaseSnapshot)
 	}
 	if pages <= 0 || pageSize <= 0 || pages > limit/pageSize {
-		return nil, ErrUnsafeDatabaseSnapshot
+		return nil, fmt.Errorf("%w: page budget", ErrUnsafeDatabaseSnapshot)
 	}
 
 	dir, err := os.MkdirTemp(parent, ".sqlite-snapshot-")
 	if err != nil {
-		return nil, ErrUnsafeDatabaseSnapshot
+		return nil, fmt.Errorf("%w: create scope", ErrUnsafeDatabaseSnapshot)
 	}
 	snapshot = &DatabaseSnapshot{Path: filepath.Join(dir, "state.db"), directory: dir}
 	defer func() {
@@ -83,14 +83,14 @@ func (s *Store) createDatabaseSnapshot(ctx context.Context, parent string, limit
 	}()
 	snapshot.directoryIdentity, err = os.Lstat(dir)
 	if err != nil || !snapshot.directoryIdentity.IsDir() || snapshot.directoryIdentity.Mode().Perm() != 0o700 {
-		return snapshot, ErrUnsafeDatabaseSnapshot
+		return snapshot, fmt.Errorf("%w: scope identity", ErrUnsafeDatabaseSnapshot)
 	}
 	// SQLite explicitly permits an already-existing zero-byte INTO file.
 	// Pre-creation avoids inheriting the daemon's umask as a confidentiality
 	// boundary and makes symlink/hardlink substitution more difficult.
 	f, createErr := os.OpenFile(snapshot.Path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if createErr != nil {
-		return snapshot, ErrUnsafeDatabaseSnapshot
+		return snapshot, fmt.Errorf("%w: create file", ErrUnsafeDatabaseSnapshot)
 	}
 	snapshot.fileIdentity, err = f.Stat()
 	err = errors.Join(err, f.Close())
@@ -98,7 +98,7 @@ func (s *Store) createDatabaseSnapshot(ctx context.Context, parent string, limit
 		return snapshot, ErrUnsafeDatabaseSnapshot
 	}
 	if err = syncDatabaseSnapshotDir(dir); err != nil {
-		return snapshot, err
+		return snapshot, fmt.Errorf("%w: sync scope", ErrUnsafeDatabaseSnapshot)
 	}
 
 	// INTO runs on the store's single database connection and creates a
@@ -108,19 +108,19 @@ func (s *Store) createDatabaseSnapshot(ctx context.Context, parent string, limit
 		return snapshot, fmt.Errorf("%w: sqlite consistent copy unavailable", ErrUnsafeDatabaseSnapshot)
 	}
 	if err = snapshot.verifyFile(); err != nil {
-		return snapshot, err
+		return snapshot, fmt.Errorf("%w: output identity", ErrUnsafeDatabaseSnapshot)
 	}
 	if snapshot.Size, snapshot.SHA256, err = digestDatabaseSnapshot(bounded, snapshot.Path, limit); err != nil {
-		return snapshot, err
+		return snapshot, fmt.Errorf("%w: output digest", ErrUnsafeDatabaseSnapshot)
 	}
 	if err = checkDatabaseSnapshot(bounded, snapshot.Path); err != nil {
-		return snapshot, err
+		return snapshot, fmt.Errorf("%w: read-only quick_check", ErrUnsafeDatabaseSnapshot)
 	}
 	if err = syncDatabaseSnapshotDir(dir); err != nil {
-		return snapshot, err
+		return snapshot, fmt.Errorf("%w: sync scope", ErrUnsafeDatabaseSnapshot)
 	}
 	if err = syncDatabaseSnapshotDir(parent); err != nil {
-		return snapshot, err
+		return snapshot, fmt.Errorf("%w: sync parent", ErrUnsafeDatabaseSnapshot)
 	}
 	if err = bounded.Err(); err != nil {
 		return snapshot, err
