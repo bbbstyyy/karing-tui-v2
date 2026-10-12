@@ -233,3 +233,7 @@ Page `1` offers `a` for the same **current-head compiler-only** checked apply pr
 ## M4 TUI historical inventory (read-only)
 
 TUI page `9` adds on-demand, bounded, cancellable display of the existing committed-generation recovery audit. CLI and TUI share one strict API validator (including `restore_supported=false`, per-generation `restore_ready=false`, status/preflight enum and consistency checks). Only allowlisted metadata is projected into terminal strings; no historical check, core activation or restoration is offered. This does not change M4 manual-restore readiness or any M5 stability gate (ADR 0093).
+
+## M4 internal consistent-database snapshot prerequisite
+
+The storage layer can now stage a private WAL-consistent SQLite copy with a bounded `VACUUM INTO` operation, offline read-only integrity validation and SHA-256, explicit temporary file ownership and guarded cleanup (ADR 0094). The method remains internal-only: it does not export or restore sensitive profile credentials, and does not include the immutable external rule-set/core resource closure. No backup/restore UI or public API is implemented, and `restore_supported=false` remains unchanged. Future portable backups require verified consistent resource inclusion, safe archive/encryption, crash recovery and transactional restore with rollback.
