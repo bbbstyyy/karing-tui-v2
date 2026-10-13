@@ -157,12 +157,12 @@ func TestReauthenticatedInconsistentSQLiteArchiveIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, scenario := range []struct {
-		name string
+		name  string
 		query string
 		alter func([]byte) []byte
 	}{
-		{"declaration_hash", "UPDATE declaration_revisions SET document_sha256 = '"+strings.Repeat("f", 64)+"' WHERE revision = 1", nil},
-		{"generation_hash", "UPDATE generations SET config_sha256 = '"+strings.Repeat("a", 64)+"' WHERE id = 1", nil},
+		{"declaration_hash", "UPDATE declaration_revisions SET document_sha256 = '" + strings.Repeat("f", 64) + "' WHERE revision = 1", nil},
+		{"generation_hash", "UPDATE generations SET config_sha256 = '" + strings.Repeat("a", 64) + "' WHERE id = 1", nil},
 		{"schema_version", "UPDATE schema_migrations SET version = 18 WHERE version = 17", nil},
 		{"orphan_foreign_key", "UPDATE daemon_state SET applied_generation_id = 999999 WHERE singleton = 1", nil},
 		{"invalid_sqlite_header", "", func(input []byte) []byte {
@@ -198,9 +198,9 @@ func TestInMemorySQLiteOnlyRequiresBoundedAuthenticatedBytes(t *testing.T) {
 	var key [32]byte
 	key[0] = 1
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: strings.Repeat("b", 64),
+		ArchiveSHA256:   strings.Repeat("b", 64),
 		InventorySHA256: strings.Repeat("c", 64),
-		Bytes: 1024,
+		Bytes:           1024,
 	}
 	if _, err := readAuthenticatedSQLiteBytes(context.Background(),
 		"/not-an-archive.ktbackup", key, receipt, fixture); !errors.Is(err, ErrArchiveLogicalVerification) {
