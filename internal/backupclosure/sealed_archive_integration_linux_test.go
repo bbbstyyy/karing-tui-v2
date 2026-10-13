@@ -74,6 +74,19 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		rechecked.ArchiveSHA256 != receipt.ArchiveSHA256 {
 		t.Fatalf("real core ciphertext isolation changed restore boundary: %+v %v", rechecked, err)
 	}
+	// The real locked binary may be metadata-compatible but cannot turn
+	// an optimistic read-only fence into an import or activation permit.
+	dryRun, err := InspectInertRestoreDryRun(context.Background(), f.store, reopened, key)
+	if err != nil || !dryRun.TargetMetadataCompatible ||
+		!dryRun.ArchiveAuthenticated || !dryRun.SQLiteSchemaVerified ||
+		dryRun.RestoreReady || dryRun.RestoreSupported ||
+		dryRun.ArchiveSHA256 != receipt.ArchiveSHA256 {
+		t.Fatalf("real core restore fence dry-run invalid: %+v %v", dryRun, err)
+	}
+	if err := RecheckInertRestoreDryRun(context.Background(), f.store,
+		reopened, key, dryRun); err != nil {
+		t.Fatalf("real core restore fence drifted: %v", err)
+	}
 	if err := reopened.Discard(context.Background()); err != nil {
 		t.Fatal(err)
 	}

@@ -305,3 +305,7 @@ The internal preflight now compares the archive's entire SQLite schema against a
 ## Internal encrypted restore candidate staging (M4)
 
 A fully authenticated encrypted archive can now be copied into a separate, UID-private, strictly single-ciphertext candidate directory that remains on disk across process restarts. Linux directory `flock` prevents concurrent adoption; restart requires explicitly supplying the key and repeating the entire read-only SQLite/schema/profile preflight. Candidates are never automatically deleted, imported, activated, or granted restore authorization, and their files are not usable as plaintext database/core artifacts. The eight-scope retention bound fails closed. See [ADR 0104](docs/adr/0104-encrypted-restore-candidates.md).
+
+## Read-only encrypted restore dry-run fence (M4)
+
+Internal backup candidate inspection now cross-checks a single-transaction SQLite live-state fence (config revision, applied/LKG generation, declaration, selection and runtime intent) before and after two full encrypted-candidate authentications. It rejects active recovery/apply and injected concurrent state changes without creating a new generation or touching the proxy. Reports contain only stable IDs/hashes, not node/credential content; **they are not SQL write CAS receipts and never authorize restore**. See [ADR 0105](docs/adr/0105-inert-restore-readonly-cas-fence.md).

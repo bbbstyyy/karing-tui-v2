@@ -1360,3 +1360,10 @@ docs/
 - ADR 0104：在已有 v1/v2 归档完整认证、内存 SQLite/schema/profile 审计通过后，新增内部 `StageInertRestoreCandidate`：在单独存在的当前 UID 私有 0700 目录内，最多保留 8 个 `.ktui-restore-v1-*` 候选 scope，每个只允许一份已认证的 0600 密文 `candidate.ktbackup`；对原始归档和隔离复制后的归档分别完整预检，前后核对字节大小与 SHA-256，fsync，不产生明文数据库或规则/内核文件。
 - Linux 父目录 `flock` 负责候选创建与领用串行化，单个候选目录持有独占 `flock`；`Close` 或 SIGKILL 只释放本进程租约，**不会删除持久密文**。重启后必须调用内部 `ReopenInertRestoreCandidate`、显式再提供密钥并完成 HMAC、资源哈希、SQLite/schema/profile 全链重新认证才能重新领用。有效候选可内部 `Verify`，仅可经明确 `Discard` 对持锁的一份已知密文进行无递归清理。未知额外文件、符号链接、硬链接歧义、异常私有权限或满额均失败关闭，绝无自动清理或恢复。
 - **边界**：目录锁并非跨进程死亡仍存在的持久资源租约，不证明恢复权限；没有任何数据库导入/迁移、候选自动枚举、密钥持久化、API/TUI/CLI、CAS 应用、二次回滚、T15/T23 注入；`RestoreSupported=false`、`RestoreReady=false` 不变。CN 28 组、五层分流、Linux 无 TUN、不加入订阅/ISP 分流的产品约束维持。
+
+### 2026-10-13 M4 只读恢复 CAS 围栏与阶段故障注入
+
+- ADR 0105：新增 `storage.ReadInertRestoreFence`，在单个 SQLite 只读事务中绑定已生效/LKG 代际、配置 revision、声明 revision/SHA、CurrentSelected revision/内容 SHA、路由模式、PrivateDirect、core desired 状态，重新哈希已生效及 LKG 的配置/manifest/source-map 与声明本体；活动 apply 或 `recovery_required` 直接失败关闭，不产生 prepared journal。
+- 新增 `backupclosure.InspectInertRestoreDryRun` / `RecheckInertRestoreDryRun`：要求 ADR 0104 仍持有锁定的加密候选，先取 live 围栏，执行两次完整密文及内存 SQLite/schema/profile 认证，最后重新取一个事务性围栏逐字段比较；报告只含脱敏代际/SHA 与只读认证结果，并始终 `RestoreSupported=false`、`RestoreReady=false`。重复检查拒绝已过期或伪造的 caller 回执。
+- 测试在初始围栏后和两次归档认证之间定点注入声明/选择变更、加密文件篡改、错误与取消，验证无恢复事务、无代际应用、无明文解包；真实锁定 Linux core 的 v2 候选加入仅只读恢复围栏集成测试。
+- **不等于 CAS 写事务**：最终读完成后仍可能发生新变更；尚无实际隔离导入、配置原子替换、内核激活、二层回滚、持久资源租约或 T15/T23 掉电故障注入。正式恢复及任何 API/TUI/CLI 恢复入口保持关闭，M4/M5 发布门槛未关闭。
