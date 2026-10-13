@@ -20,12 +20,12 @@ func sampleInertInventory() Inventory {
 		DatabaseSHA256: strings.Repeat("a", 64), DatabaseBytes: 4096,
 		Generations: []GenerationDigest{{
 			ID: 1, ConfigSHA256: strings.Repeat("b", 64),
-			ManifestSHA256: strings.Repeat("c", 64),
+			ManifestSHA256:  strings.Repeat("c", 64),
 			SourceMapSHA256: strings.Repeat("d", 64), DeclarationRevision: 1,
 		}},
 		RuleSets: []RuleDigest{{
 			RelativePath: "rule-sets/sha256/" + strings.Repeat("e", 64) + ".json",
-			SHA256: strings.Repeat("e", 64), Format: compiler.RuleSetFormatSource, Size: 123,
+			SHA256:       strings.Repeat("e", 64), Format: compiler.RuleSetFormatSource, Size: 123,
 		}},
 		ContainsCredentials: true, RestoreReady: false,
 	}
@@ -40,7 +40,7 @@ func sampleInertCore(t *testing.T) *CoreDigest {
 	return &CoreDigest{
 		RelativePath: "core/" + hash + ".bin", Architecture: runtime.GOARCH,
 		CandidateCommit: coreartifact.CandidateCommit,
-		Version: coreartifact.CandidateVersion, SHA256: hash, Size: 4096,
+		Version:         coreartifact.CandidateVersion, SHA256: hash, Size: 4096,
 	}
 }
 
@@ -173,7 +173,7 @@ func TestParseInertInventoryRejectsNonCanonicalAndUnknownJSON(t *testing.T) {
 	extras := [][]byte{
 		append(append([]byte(nil), encoded...), '\n'),
 		append([]byte(" "), encoded...),
-		bytes.Replace(encoded, []byte(`"format":"`), []byte(`"format":"` + ManifestVersion + `","format":"`), 1),
+		bytes.Replace(encoded, []byte(`"format":"`), []byte(`"format":"`+ManifestVersion+`","format":"`), 1),
 		bytes.Replace(encoded, []byte(`"storage_schema":17`), []byte(`"storage_schema":17,"unknown":"secret"`), 1),
 		bytes.Replace(encoded, []byte(`"rule_sets":[`), []byte(`"rule_sets":[{"extra":true},`), 1),
 		bytes.Replace(encoded, []byte(`"restore_ready":false`), []byte(`"restore_ready":true`), 1),
