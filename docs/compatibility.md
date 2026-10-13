@@ -241,3 +241,7 @@ The storage layer can now stage a private WAL-consistent SQLite copy with a boun
 ## M4 cross-process safe SQLite snapshot orphan recovery
 
 Internal snapshot staging now coordinates scoped `flock` leases with a bounded private-parent reclamation scan in a distinct `.sqlite-snapshot-v2-*` scope namespace (ADR 0095). Stale empty or one-file interrupted SQLite scopes can be reclaimed opportunistically without touching active snapshots; unexpected entries or replaced/unsafe paths are refused. This closes the **known orphan-scope cleanup gap only for future internal snapshot attempts**, not a periodic startup cleaner or portable backup. Product backups still require resource closure, manifest, encryption and safe restore; no API/CLI/TUI restore is enabled.
+
+## M4 database-consistent ephemeral rule-resource closure
+
+ADR 0096 introduces an internal-only, 90-second-bounded snapshot inventory: it reads all retained generation provenance from a single immutable SQLite snapshot, verifies native local rule paths, hashes and declaration bindings, then temporarily pins/copies the deduplicated external rule files. The canonical in-memory inventory contains only relative rule digests, generation digest references and the SQLite copy hash. Unknown legacy generations and unsafe resource states fail closed. This is **not a durable resource lease** and does not package the pinned core binary or grant manual restore; backup export and restore remain unsupported.
