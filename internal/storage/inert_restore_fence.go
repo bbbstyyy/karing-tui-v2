@@ -57,7 +57,17 @@ func (s *Store) ReadInertRestoreFence(ctx context.Context) (InertRestoreFence, e
 		return none, ErrInertRestoreFenceUnavailable
 	}
 	defer tx.Rollback()
+	return readInertRestoreFenceTx(ctx, tx)
+}
 
+// readInertRestoreFenceTx is intentionally shared by the optimistic read
+// fence and the write-intent CAS. It must validate exactly the same live
+// SQL rows and content hashes while the caller holds its transaction.
+func readInertRestoreFenceTx(ctx context.Context, tx *sql.Tx) (InertRestoreFence, error) {
+	var none InertRestoreFence
+	if ctx == nil || tx == nil {
+		return none, ErrInertRestoreFenceUnavailable
+	}
 	var configRev, declarationRev, selectionRev int64
 	var applied, lastGood, recoveryRequired, privateDirect int64
 	var coreDesired, routingMode string
@@ -149,17 +159,7 @@ func validInertSelectionTime(value string) bool {
 // RecheckInertRestoreFence provides only a read-only optimistic conflict
 // check. A future restore writer must use a NEW transaction-local SQL CAS.
 func (s *Store) RecheckInertRestoreFence(ctx context.Context, expected InertRestoreFence) error {
-	if expected.ConfigRevision == 0 || expected.AppliedGenerationID <= 0 ||
-		expected.LastKnownGoodGenerationID <= 0 ||
-		expected.DeclarationRevision == 0 ||
-		!validHistoricalSHA(expected.DeclarationSHA256) ||
-		!validHistoricalSHA(expected.SelectionSHA256) ||
-		!validHistoricalSHA(expected.AppliedConfigSHA256) ||
-		!validHistoricalSHA(expected.AppliedManifestSHA256) ||
-		!validHistoricalSHA(expected.AppliedSourceMapSHA256) ||
-		!validHistoricalSHA(expected.LastKnownGoodConfigSHA256) ||
-		!validHistoricalSHA(expected.LastKnownGoodManifestSHA256) ||
-		!validHistoricalSHA(expected.LastKnownGoodSourceMapSHA256) {
+	if !validInertRestoreFence(expected) {
 		return ErrInertRestoreFenceUnavailable
 	}
 	found, err := s.ReadInertRestoreFence(ctx)
@@ -170,4 +170,27 @@ func (s *Store) RecheckInertRestoreFence(ctx context.Context, expected InertRest
 		return ErrInertRestoreFenceChanged
 	}
 	return nil
+}
+
+// validInertRestoreFence rejects forged and overflowed caller-supplied
+// baselines before either an optimistic read or a write-intent probe.
+func validInertRestoreFence(expected InertRestoreFence) bool {
+	if expected.ConfigRevision == 0 || expected.ConfigRevision >= uint64(1<<63-1) ||
+		expected.AppliedGenerationID <= 0 ||
+		expected.LastKnownGoodGenerationID <= 0 ||
+		expected.DeclarationRevision == 0 || expected.DeclarationRevision > uint64(1<<63-1) ||
+		expected.SelectionRevision > uint64(1<<63-1) ||
+		!validHistoricalSHA(expected.DeclarationSHA256) ||
+		!validHistoricalSHA(expected.SelectionSHA256) ||
+		!validHistoricalSHA(expected.AppliedConfigSHA256) ||
+		!validHistoricalSHA(expected.AppliedManifestSHA256) ||
+		!validHistoricalSHA(expected.AppliedSourceMapSHA256) ||
+		!validHistoricalSHA(expected.LastKnownGoodConfigSHA256) ||
+		!validHistoricalSHA(expected.LastKnownGoodManifestSHA256) ||
+		!validHistoricalSHA(expected.LastKnownGoodSourceMapSHA256) ||
+		expected.RoutingMode.Validate() != nil ||
+		(expected.CoreDesiredState != CoreDesiredStopped && expected.CoreDesiredState != CoreDesiredRunning) {
+		return false
+	}
+	return true
 }

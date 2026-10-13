@@ -87,6 +87,12 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		reopened, key, dryRun); err != nil {
 		t.Fatalf("real core restore fence drifted: %v", err)
 	}
+	// Stage M4 ADR 0106 probes an atomic SQL write-intent CAS with rollback;
+	// it never writes an apply record or activates the approved binary.
+	if err := CheckInertRestoreWriteBoundary(context.Background(), f.store,
+		reopened, key, dryRun); err != nil {
+		t.Fatalf("real approved core inert write CAS refused: %v", err)
+	}
 	if err := reopened.Discard(context.Background()); err != nil {
 		t.Fatal(err)
 	}

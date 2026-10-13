@@ -1367,3 +1367,10 @@ docs/
 - 新增 `backupclosure.InspectInertRestoreDryRun` / `RecheckInertRestoreDryRun`：要求 ADR 0104 仍持有锁定的加密候选，先取 live 围栏，执行两次完整密文及内存 SQLite/schema/profile 认证，最后重新取一个事务性围栏逐字段比较；报告只含脱敏代际/SHA 与只读认证结果，并始终 `RestoreSupported=false`、`RestoreReady=false`。重复检查拒绝已过期或伪造的 caller 回执。
 - 测试在初始围栏后和两次归档认证之间定点注入声明/选择变更、加密文件篡改、错误与取消，验证无恢复事务、无代际应用、无明文解包；真实锁定 Linux core 的 v2 候选加入仅只读恢复围栏集成测试。
 - **不等于 CAS 写事务**：最终读完成后仍可能发生新变更；尚无实际隔离导入、配置原子替换、内核激活、二层回滚、持久资源租约或 T15/T23 掉电故障注入。正式恢复及任何 API/TUI/CLI 恢复入口保持关闭，M4/M5 发布门槛未关闭。
+
+### 2026-10-13 M4 仅回滚的 SQLite 写意图 CAS 与恢复前阶段故障注入
+
+- ADR 0106：在 ADR 0105 脱敏围栏基础上，新增 `storage.CheckInertRestoreWriteCAS`：短时 SQLite 写事务中，使用带配置 revision、applied/LKG、声明 revision/SHA、CurrentSelected revision、core desired、routing mode、private_direct、无活动 journal 和无 recovery_required 的条件 `UPDATE` 获得单写入者保留位；**不改变字段值**。在同一事务内重新校验全部代际、声明及选择 JSON 的 SHA-256，并且必须成功 `ROLLBACK` 才认可本次校验。不能将该检查结果作为未来提交许可，亦不会调用 core、写入导入数据或产生新的 prepared 日志。
+- 新增 `backupclosure.CheckInertRestoreWriteBoundary`：先重新验证持锁密文候选和原有只读回执，再执行上述带写锁的最后一层 CAS。任何状态漂移或伪造回执均失败关闭；全部 `RestoreSupported=false`、`RestoreReady=false`。这层没有 HTTP/CLI/TUI 接口。
+- 新增进程内/跨进程测试：CAS 前修改声明、选择/JSON 内容、路由/核心状态；持锁期间另一 SQLite 连接不能提交真实选择变更；注入错误、取消和 SIGKILL 后写锁释放、未提交变更回滚、正常选择写入继续；真实批准 sing-box 的加密 v2 候选纳入新边界集成测试。
+- **待办**：写意图 CAS 只证明被查询的一瞬间，`ROLLBACK` 后不持有任何租约；真正的原子恢复准备需要将 CAS 与导入资源/ journal 在**同一提交事务**完成、独立隔离解包、持久 inode/资源租约、内核 Check/切换、二次回滚与全边界掉电测试。T15/T23/M4/M5 和正式恢复入口仍未放行。

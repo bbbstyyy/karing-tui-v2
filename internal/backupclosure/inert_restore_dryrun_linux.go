@@ -147,3 +147,48 @@ func RecheckInertRestoreDryRun(
 	}
 	return nil
 }
+
+// CheckInertRestoreWriteBoundary adds a short, non-persisting SQLite
+// write-intent CAS AFTER the complete two-pass candidate recheck. It NEVER
+// imports backup bytes, writes an apply journal, or activates a core.
+//
+// This is not a durable reservation or authorization. After the SQLite
+// rollback, another valid writer may still change the live state.
+func CheckInertRestoreWriteBoundary(
+	ctx context.Context, live *storage.Store,
+	candidate *InertRestoreCandidate, key [32]byte,
+	expected InertRestoreDryRun,
+) error {
+	return checkInertRestoreWriteBoundary(ctx, live, candidate, key, expected, nil)
+}
+
+// beforeWriteCAS is a test-only phase hook. It injects a concurrent change
+// between completed cryptographic inspection and transaction-local SQL CAS.
+func checkInertRestoreWriteBoundary(
+	ctx context.Context, live *storage.Store,
+	candidate *InertRestoreCandidate, key [32]byte,
+	expected InertRestoreDryRun, beforeWriteCAS func() error,
+) error {
+	if ctx == nil || live == nil || candidate == nil ||
+		key == ([32]byte{}) || expected.RestoreReady || expected.RestoreSupported {
+		return ErrInertRestoreDryRunRejected
+	}
+	if err := RecheckInertRestoreDryRun(ctx, live, candidate, key, expected); err != nil {
+		return err
+	}
+	if beforeWriteCAS != nil {
+		if err := beforeWriteCAS(); err != nil {
+			return ErrInertRestoreDryRunRejected
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := live.CheckInertRestoreWriteCAS(ctx, expected.Baseline); err != nil {
+		if errors.Is(err, storage.ErrInertRestoreFenceChanged) {
+			return ErrInertRestoreDryRunChanged
+		}
+		return ErrInertRestoreDryRunRejected
+	}
+	return nil
+}
