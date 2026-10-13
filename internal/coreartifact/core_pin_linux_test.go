@@ -172,7 +172,7 @@ func TestOrphanScavengerRecognizesOnlyBoundedCoreCopy(t *testing.T) {
 	if _, err := os.Lstat(orphan); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("orphan persisted")
 	}
-	unsafe := filepath.Join(parent, ".check-unsafe-core")
+	unsafe := filepath.Join(parent, ".check-unsafecore")
 	if err := os.Mkdir(unsafe, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,6 @@ func TestOrphanScavengerRecognizesOnlyBoundedCoreCopy(t *testing.T) {
 }
 
 func TestCoreCopyCancellationAndNilPin(t *testing.T) {
-	_, _, _ = fakeCorePinFixture(t)
 	coreRoot := filepath.Join(t.TempDir(), "core")
 	if _, err := StagePinnedRuleSetSnapshotWithCore(context.Background(), coreRoot, nil, nil); !errors.Is(err, ErrUnsafeRuleSetSnapshot) {
 		t.Fatalf("nil approved core admitted: %v", err)
