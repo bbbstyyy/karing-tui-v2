@@ -53,4 +53,28 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		len(preflight.Blockers) != 2 {
 		t.Fatalf("real approved-core metadata preflight failed: %+v %v", preflight, err)
 	}
+	// Even the fully approved, real v2 core remains a nonactivating,
+	// ciphertext-only candidate across Close and cross-process re-adoption.
+	candidateParent := newInertCandidateParent(t, f.stateRoot)
+	candidate, err := StageInertRestoreCandidate(context.Background(), path, candidateParent, key)
+	if err != nil {
+		t.Fatalf("real core candidate staging failed: %v", err)
+	}
+	candidateDir := candidate.Directory()
+	if err := candidate.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := ReopenInertRestoreCandidate(context.Background(), candidateDir, key)
+	if err != nil {
+		t.Fatalf("real core candidate re-adoption failed: %v", err)
+	}
+	rechecked, err := reopened.Verify(context.Background(), key)
+	if err != nil || !rechecked.TargetMetadataCompatible ||
+		!rechecked.CoreIncluded || rechecked.RestoreSupported || rechecked.RestoreReady ||
+		rechecked.ArchiveSHA256 != receipt.ArchiveSHA256 {
+		t.Fatalf("real core ciphertext isolation changed restore boundary: %+v %v", rechecked, err)
+	}
+	if err := reopened.Discard(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 }

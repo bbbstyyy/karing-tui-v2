@@ -1354,3 +1354,9 @@ docs/
 - 对最多 4096 个 Profile 快照及 65536 个节点，校验快照来源、节点 ID / 原始键、连续序号、1 MiB 单节点 JSON 与 SHA-256、64 MiB 单快照载荷，以及 current/previous 快照是否属于对应 profile；最多 2048 个订阅源和 65536 个节点覆盖使用现有 `scanProfileSource` / `scanProfileNodeOverlay` 规范校验，补充选择意图 JSON 与时间戳验证。
 - 返回摘要只含 `SchemaCatalogVerified`、Profile / 节点 / 订阅源 / 覆盖数量；不暴露订阅链接、节点配置或错误原文。通过重新加密认证的异常结构及异常节点数据必须在逻辑审计阶段拒绝，且不写任何明文数据库或修改当前运行配置。
 - 该审计**不授予恢复资格**：暂不处理超过 64 MiB 的 SQLite 内存预检、跨版本迁移、持久候选隔离租约、完整应用日志语义及 CAS / 二层失败回滚。保留 `RestoreSupported=false`、`RestoreReady=false` 和全部 T15/T23/M4/M5 发布阻断。
+
+### 2026-10-13 M4 持久密文恢复候选与跨进程独占领用（无恢复权限）
+
+- ADR 0104：在已有 v1/v2 归档完整认证、内存 SQLite/schema/profile 审计通过后，新增内部 `StageInertRestoreCandidate`：在单独存在的当前 UID 私有 0700 目录内，最多保留 8 个 `.ktui-restore-v1-*` 候选 scope，每个只允许一份已认证的 0600 密文 `candidate.ktbackup`；对原始归档和隔离复制后的归档分别完整预检，前后核对字节大小与 SHA-256，fsync，不产生明文数据库或规则/内核文件。
+- Linux 父目录 `flock` 负责候选创建与领用串行化，单个候选目录持有独占 `flock`；`Close` 或 SIGKILL 只释放本进程租约，**不会删除持久密文**。重启后必须调用内部 `ReopenInertRestoreCandidate`、显式再提供密钥并完成 HMAC、资源哈希、SQLite/schema/profile 全链重新认证才能重新领用。有效候选可内部 `Verify`，仅可经明确 `Discard` 对持锁的一份已知密文进行无递归清理。未知额外文件、符号链接、硬链接歧义、异常私有权限或满额均失败关闭，绝无自动清理或恢复。
+- **边界**：目录锁并非跨进程死亡仍存在的持久资源租约，不证明恢复权限；没有任何数据库导入/迁移、候选自动枚举、密钥持久化、API/TUI/CLI、CAS 应用、二次回滚、T15/T23 注入；`RestoreSupported=false`、`RestoreReady=false` 不变。CN 28 组、五层分流、Linux 无 TUN、不加入订阅/ISP 分流的产品约束维持。

@@ -301,3 +301,7 @@ After encryption and resource validation, internal recovery preflight now indepe
 ## Archive schema and profile consistency checks (internal, M4)
 
 The internal preflight now compares the archive's entire SQLite schema against an independently migrated in-memory reference built from the pinned storage migrations, and audits profile snapshots, node payload hashes, subscription source metadata, overlay records and selection JSON under strict count and size limits. It returns only redacted metadata and rejects cryptographically valid archives with forged DDL or inconsistent profile state. **Not a recovery feature:** no data import or activation, no durable backup key custody, and no restore permission. See [ADR 0103](docs/adr/0103-archived-sqlite-schema-profile-audit.md).
+
+## Internal encrypted restore candidate staging (M4)
+
+A fully authenticated encrypted archive can now be copied into a separate, UID-private, strictly single-ciphertext candidate directory that remains on disk across process restarts. Linux directory `flock` prevents concurrent adoption; restart requires explicitly supplying the key and repeating the entire read-only SQLite/schema/profile preflight. Candidates are never automatically deleted, imported, activated, or granted restore authorization, and their files are not usable as plaintext database/core artifacts. The eight-scope retention bound fails closed. See [ADR 0104](docs/adr/0104-encrypted-restore-candidates.md).
