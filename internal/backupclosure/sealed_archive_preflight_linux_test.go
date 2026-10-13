@@ -49,6 +49,7 @@ func TestPreflightInertArchiveOfflineAndNoSensitiveOutput(t *testing.T) {
 		report.RuleSetBytes != int64(len(f.ruleData)) ||
 		report.CoreIncluded || report.TargetMetadataCompatible ||
 		!report.ContainsCredentials || !report.ResourceDigestsVerified ||
+		!report.SQLiteLogicalVerified || report.DeclarationCount != 1 ||
 		!report.ComparedWithCurrent || report.DatabaseDifferent ||
 		report.Generations.Shared != 1 ||
 		report.RuleSets.Shared != 1 ||
@@ -60,7 +61,7 @@ func TestPreflightInertArchiveOfflineAndNoSensitiveOutput(t *testing.T) {
 	for _, reason := range []string{
 		"approved_core_missing_from_archive",
 		"transactional_restore_not_implemented",
-		"sqlite_logical_restore_validation_not_implemented",
+		"durable_restore_resource_lease_not_implemented",
 	} {
 		if !hasPreflightReason(report.Blockers, reason) {
 			t.Fatalf("missing strict restore blocker %q: %+v", reason, report)

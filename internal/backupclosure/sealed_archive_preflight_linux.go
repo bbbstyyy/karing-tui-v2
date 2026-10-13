@@ -40,6 +40,8 @@ type InertArchivePreflight struct {
 	CoreArchitecture         string
 	ContainsCredentials      bool
 	ResourceDigestsVerified  bool
+	SQLiteLogicalVerified    bool
+	DeclarationCount         int
 	TargetMetadataCompatible bool
 	Blockers                 []string
 	ComparedWithCurrent      bool
@@ -98,6 +100,15 @@ func preflightInertArchive(
 	if err != nil {
 		return empty, ErrUnsafeSealedArchive
 	}
+	sqliteBytes, err := readAuthenticatedSQLiteBytes(ctx, path, key, receipt, inventory)
+	if err != nil {
+		return empty, ErrUnsafeSealedArchive
+	}
+	defer clear(sqliteBytes)
+	declarationCount, err := verifyInMemoryArchiveSQLite(ctx, sqliteBytes, inventory)
+	if err != nil {
+		return empty, ErrUnsafeSealedArchive
+	}
 	if current != nil && current.Verify(ctx) != nil {
 		return empty, ErrUnsafeSealedArchive
 	}
@@ -112,9 +123,11 @@ func preflightInertArchive(
 		CoreIncluded:            inventory.Core != nil,
 		ContainsCredentials:     true,
 		ResourceDigestsVerified: true,
+		SQLiteLogicalVerified:   true,
+		DeclarationCount:        declarationCount,
 		RestoreSupported:        false,
 		RestoreReady:            false,
-		Blockers:                []string{"transactional_restore_not_implemented", "sqlite_logical_restore_validation_not_implemented"},
+		Blockers:                []string{"transactional_restore_not_implemented", "durable_restore_resource_lease_not_implemented"},
 	}
 	for _, rule := range inventory.RuleSets {
 		report.RuleSetBytes += rule.Size

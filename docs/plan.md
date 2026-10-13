@@ -1340,3 +1340,10 @@ docs/
 - ADR 0101：新增内部 `PreflightInertArchive`，在全量加密/HMAC 认证、包含的数据库/规则/批准内核资源 SHA-256 验证后，再次遍历完整密文并确认不变，才解析小型规范化清单并返回脱敏的版本/架构兼容判断。无内核 v1、与当前 Linux 架构不符的 v2 均明确标记限制；即使是架构匹配的 v2，`TargetMetadataCompatible` 也仅代表元数据层符合当前锁定内核，绝不授予恢复资格。
 - 可选输入是仍处于 inode/哈希验证有效期的当前快照闭包：前后验证原有闭包，代际按配置/manifest/source-map 哈希与声明修订号统计摘要差异，不把数据库自增 ID 当成跨库同一代际；规则集只按已验证内容哈希比较，不展示私有源路径、订阅/token 和节点配置；独立离线预检可省略当前闭包。
 - **保持阻断**：无恢复前 SQLite 关系型独立检查、资源在实际激活时的持久租约、CAS 恢复/双层回滚与故障注入；`RestoreSupported=false`、`RestoreReady=false`，没有 HTTP/CLI/TUI 恢复入口。T15/T23 和 M4/M5 仍未验收。
+
+### 2026-10-13 M4 已认证归档的独立 SQLite 逻辑完整性预检
+
+- ADR 0102：在前一阶段密文 HMAC、资源 SHA-256 和整档复读绑定成功后，再第三次遍历密文核对整档哈希，并仅在内存解密 SQLite 记录，经 `modernc.org/sqlite` 已固定驱动的 `Deserialize` 进入独立 `:memory:` 只读连接；不落盘明文 SQLite，不触碰当前数据库或活动代理。
+- 严格 `PRAGMA integrity_check`、`foreign_key_check`、17 条完整迁移记录、声明修订/父子关系与文档 SHA、数据库单例状态；复用编译器强验证检查全部保留代际的配置/manifest/source-map、声明引用、原生 local 规则路径，并与已认证的归档规则闭包逐项比对。报告只增加 `SQLiteLogicalVerified` 与 `DeclarationCount`，不输出私密明文、SQL 错误或原始路径。
+- 内存预算先限 **64 MiB SQLite 载荷**（与现有 768 MiB 加密运输预算不同）：超限一律拒绝预检，不进行大内存反序列化。经过重新签封且 MAC/资源摘要均正确、但声明/代际/schema/FK 不一致的归档也必须拒绝。
+- **仍未完成**：完整 DDL / 未引用领域表的语义鉴定、跨版本数据迁移、大库分块验证、真实资源跨重启租约、隔离恢复、CAS 应用与二次回滚。所有 `RestoreSupported=false`、`RestoreReady=false`，没有 HTTP/CLI/TUI 恢复入口；T15/T23/M4/M5 保持开放。

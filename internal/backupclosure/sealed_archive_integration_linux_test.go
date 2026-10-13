@@ -45,6 +45,7 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	preflight, err := PreflightInertArchive(context.Background(), path, key, nil)
 	if err != nil || !preflight.TargetMetadataCompatible ||
 		!preflight.CoreIncluded || !preflight.ResourceDigestsVerified ||
+		!preflight.SQLiteLogicalVerified || preflight.DeclarationCount != 1 ||
 		preflight.Format != CoreManifestVersion ||
 		preflight.InventorySHA256 != receipt.InventorySHA256 ||
 		preflight.RestoreReady || preflight.RestoreSupported ||

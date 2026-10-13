@@ -293,3 +293,7 @@ The experimental internal sealed-archive writer uses a separate `.ktui-sealed-v2
 ## Internal encrypted archive preflight (M4)
 
 The internal `backupclosure.PreflightInertArchive` performs a read-only, full-authentication resource check followed by a whole-ciphertext replay before returning a redacted manifest compatibility summary. A caller may optionally compare digest counts with a separately pinned current closure, without exposing secrets or treating generation database IDs as portable identities. A matching approved-core architecture is **metadata-only** compatibility: no restore/import, backup key storage, SQLite relational restore validation, core activation or TUI/API recovery is enabled. See [ADR 0101](docs/adr/0101-authenticated-read-only-archive-preflight.md).
+
+## Internal authenticated SQLite archive verification (M4)
+
+After encryption and resource validation, internal recovery preflight now independently deserializes an authenticated SQLite payload of at most 64 MiB **in memory only**, runs SQLite integrity and foreign-key checks, verifies schema migrations and declarations, and binds historical compiler manifests, configurations and local rules to the archive inventory. It rejects cryptographically valid but relationally inconsistent snapshots, never writes a plaintext database, and never exposes a backup restore/activation API. `RestoreSupported=false` and `RestoreReady=false` remain mandatory. See [ADR 0102](docs/adr/0102-in-memory-authenticated-sqlite-logical-verification.md).

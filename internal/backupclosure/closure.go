@@ -273,7 +273,14 @@ type candidateRule struct {
 	format compiler.RuleSetFormat
 }
 
-func enumerateSnapshot(ctx context.Context, db *sql.DB, stateRoot string) ([]GenerationDigest, []candidateRule, int, error) {
+// snapshotQuerier admits both immutable on-disk snapshots and the single
+// read-only in-memory SQL connection used for authenticated archive preflight.
+type snapshotQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func enumerateSnapshot(ctx context.Context, db snapshotQuerier, stateRoot string) ([]GenerationDigest, []candidateRule, int, error) {
 	var schema int
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&schema); err != nil || schema != supportedStorageSchema {
 		return nil, nil, 0, ErrUnsafeClosure
