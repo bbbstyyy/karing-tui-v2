@@ -1,0 +1,27 @@
+name: one-time-m4-rollback-cas-format
+on:
+  push:
+    branches:
+      - feat/m0-m1-foundation
+    paths:
+      - .github/workflows/one-time-m4-rollback-cas-format.yml
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - name: Format rollback-only CAS code and tests
+        run: |
+          gofmt -w internal/storage/inert_restore_fence.go internal/storage/inert_restore_write_cas.go internal/storage/inert_restore_write_cas_test.go internal/storage/inert_restore_write_cas_linux_test.go internal/backupclosure/inert_restore_dryrun_linux.go internal/backupclosure/inert_restore_write_boundary_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go
+          if ! git diff --quiet -- internal/storage/inert_restore_fence.go internal/storage/inert_restore_write_cas.go internal/storage/inert_restore_write_cas_test.go internal/storage/inert_restore_write_cas_linux_test.go internal/backupclosure/inert_restore_dryrun_linux.go internal/backupclosure/inert_restore_write_boundary_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/storage/inert_restore_fence.go internal/storage/inert_restore_write_cas.go internal/storage/inert_restore_write_cas_test.go internal/storage/inert_restore_write_cas_linux_test.go internal/backupclosure/inert_restore_dryrun_linux.go internal/backupclosure/inert_restore_write_boundary_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go
+            git commit -m "style(m4): gofmt inert restore write-intent CAS"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
