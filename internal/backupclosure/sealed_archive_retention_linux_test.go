@@ -259,7 +259,6 @@ func TestSealedArchiveParentLockHonorsCanceledContext(t *testing.T) {
 	}
 }
 
-
 func TestSealedArchiveConcurrentWriterReservations(t *testing.T) {
 	parent := t.TempDir()
 	if err := os.Chmod(parent, 0o700); err != nil {
@@ -277,8 +276,7 @@ func TestSealedArchiveConcurrentWriterReservations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := createLeasedSealedArchiveTemp(context.Background(), parent, 1024);
-		!errors.Is(err, ErrUnsafeSealedArchive) {
+	if _, err := createLeasedSealedArchiveTemp(context.Background(), parent, 1024); !errors.Is(err, ErrUnsafeSealedArchive) {
 		t.Fatalf("concurrent archive exceeded reserved retention slots: %v", err)
 	}
 	report, err := InspectSealedArchiveRetention(context.Background(), parent)
@@ -289,8 +287,7 @@ func TestSealedArchiveConcurrentWriterReservations(t *testing.T) {
 	if err := active.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if reclaimed, err := ReclaimAbandonedSealedArchives(context.Background(), parent);
-		err != nil || reclaimed.Reclaimed != 1 {
+	if reclaimed, err := ReclaimAbandonedSealedArchives(context.Background(), parent); err != nil || reclaimed.Reclaimed != 1 {
 		t.Fatalf("failed to recover aborted reservation: %+v %v", reclaimed, err)
 	}
 	next, err := createLeasedSealedArchiveTemp(context.Background(), parent, 1024)
