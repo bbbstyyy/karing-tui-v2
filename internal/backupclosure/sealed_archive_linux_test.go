@@ -210,9 +210,9 @@ func TestSealedPlainBytesBudgetAndManifestConstraints(t *testing.T) {
 	fixture := sampleInertInventory()
 	for _, altered := range []func(*Inventory){
 		func(i *Inventory) { i.DatabaseBytes = 0 },
-		func(i *Inventory) { i.DatabaseBytes = storage.MaxDatabaseSnapshotBytes+1 },
+		func(i *Inventory) { i.DatabaseBytes = storage.MaxDatabaseSnapshotBytes + 1 },
 		func(i *Inventory) { i.RestoreReady = true },
-		func(i *Inventory) { i.RuleSets[0].Size = coreartifact.MaxRuleSetUploadBytes+1 },
+		func(i *Inventory) { i.RuleSets[0].Size = coreartifact.MaxRuleSetUploadBytes + 1 },
 	} {
 		inv := fixture
 		inv.RuleSets = append([]RuleDigest(nil), fixture.RuleSets...)
@@ -221,7 +221,7 @@ func TestSealedPlainBytesBudgetAndManifestConstraints(t *testing.T) {
 			t.Fatal("unsafe manifest declared a valid archive size")
 		}
 	}
-	for _, n := range []int{0, maxManifestBytes+1} {
+	for _, n := range []int{0, maxManifestBytes + 1} {
 		if _, err := sealedPlainBytes(fixture, n); !errors.Is(err, ErrUnsafeSealedArchive) {
 			t.Fatal("manifest-length budget was ignored")
 		}

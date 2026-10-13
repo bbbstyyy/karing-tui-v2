@@ -24,12 +24,12 @@ import (
 )
 
 const (
-	sealedArchiveMagic = "KTUI-SEAL-AESCT1"
-	sealedArchiveHeaderBytes = len(sealedArchiveMagic) + aes.BlockSize
-	sealedArchiveTagBytes = sha256.Size
-	sealedArchiveTimeout = 90 * time.Second
+	sealedArchiveMagic            = "KTUI-SEAL-AESCT1"
+	sealedArchiveHeaderBytes      = len(sealedArchiveMagic) + aes.BlockSize
+	sealedArchiveTagBytes         = sha256.Size
+	sealedArchiveTimeout          = 90 * time.Second
 	sealedArchiveFreeSpaceReserve = uint64(64 << 20)
-	MaxSealedArchiveBytes = storage.MaxDatabaseSnapshotBytes +
+	MaxSealedArchiveBytes         = storage.MaxDatabaseSnapshotBytes +
 		MaxClosureRuleBytes + coreartifact.MaxPinnedCoreBytes +
 		maxManifestBytes + 4 + sealedArchiveHeaderBytes + sealedArchiveTagBytes
 )
@@ -39,10 +39,10 @@ var ErrUnsafeSealedArchive = errors.New("encrypted internal archive refused")
 // SealedArchiveReceipt exposes only ciphertext and inventory digests, never
 // credentials, file contents or the encryption key. It is not a restore permit.
 type SealedArchiveReceipt struct {
-	ArchiveSHA256 string
+	ArchiveSHA256   string
 	InventorySHA256 string
-	Bytes int64
-	Format string
+	Bytes           int64
+	Format          string
 }
 
 // SealInertArchive writes a bounded, authenticated encrypted copy of one
@@ -201,10 +201,10 @@ func (c *Closure) SealInertArchive(
 		return receipt, ErrUnsafeSealedArchive
 	}
 	return SealedArchiveReceipt{
-		ArchiveSHA256: hex.EncodeToString(archiveHash.Sum(nil)),
+		ArchiveSHA256:   hex.EncodeToString(archiveHash.Sum(nil)),
 		InventorySHA256: c.InventorySHA256,
-		Bytes: totalBytes,
-		Format: c.Inventory.Format,
+		Bytes:           totalBytes,
+		Format:          c.Inventory.Format,
 	}, nil
 }
 
@@ -313,10 +313,10 @@ func VerifyInertArchive(
 		return receipt, ErrUnsafeSealedArchive
 	}
 	return SealedArchiveReceipt{
-		ArchiveSHA256: hex.EncodeToString(archiveHash.Sum(nil)),
+		ArchiveSHA256:   hex.EncodeToString(archiveHash.Sum(nil)),
 		InventorySHA256: shaHex(encoded),
-		Bytes: info.Size(),
-		Format: inventory.Format,
+		Bytes:           info.Size(),
+		Format:          inventory.Format,
 	}, nil
 }
 
