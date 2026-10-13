@@ -50,9 +50,9 @@ func TestInertRestoreWriteCASChecksAndRollsBackWithoutPersisting(t *testing.T) {
 
 func TestInertRestoreWriteCASRejectsAllStaleOrInvalidBindings(t *testing.T) {
 	cases := []struct {
-		name string
+		name   string
 		change func(context.Context, *Store) error
-		want error
+		want   error
 	}{
 		{"selection_revision", func(ctx context.Context, s *Store) error {
 			_, err := s.SetCurrentSelectionIntent(ctx,

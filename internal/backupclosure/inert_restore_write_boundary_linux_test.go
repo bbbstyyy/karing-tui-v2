@@ -88,21 +88,18 @@ func TestInertRestoreWriteBoundaryRejectsFaultAndStaleReport(t *testing.T) {
 	}
 	tampered := dryRun
 	tampered.RestoreReady = true
-	if err := CheckInertRestoreWriteBoundary(ctx, f.store, candidate, key, tampered);
-		!errors.Is(err, ErrInertRestoreDryRunRejected) {
+	if err := CheckInertRestoreWriteBoundary(ctx, f.store, candidate, key, tampered); !errors.Is(err, ErrInertRestoreDryRunRejected) {
 		t.Fatalf("forged restore permission accepted: %v", err)
 	}
 	tampered = dryRun
 	tampered.Baseline.SelectionSHA256 = "not-a-hash"
-	if err := CheckInertRestoreWriteBoundary(ctx, f.store, candidate, key, tampered);
-		!errors.Is(err, ErrInertRestoreDryRunChanged) &&
-			!errors.Is(err, ErrInertRestoreDryRunRejected) {
+	if err := CheckInertRestoreWriteBoundary(ctx, f.store, candidate, key, tampered); !errors.Is(err, ErrInertRestoreDryRunChanged) &&
+		!errors.Is(err, ErrInertRestoreDryRunRejected) {
 		t.Fatalf("forged CAS baseline accepted: %v", err)
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := CheckInertRestoreWriteBoundary(canceled, f.store, candidate, key, dryRun);
-		!errors.Is(err, context.Canceled) {
+	if err := CheckInertRestoreWriteBoundary(canceled, f.store, candidate, key, dryRun); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel did not abort guarded write fence: %v", err)
 	}
 	if _, err := f.store.SetCurrentSelectionIntent(ctx,
@@ -121,9 +118,7 @@ func TestInertRestoreWriteBoundaryRefusesUnsafeLiveAndCandidate(t *testing.T) {
 	if _, err := f.store.PrepareApply(ctx, f.configRevision, []byte(`{"inbounds":[]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckInertRestoreWriteBoundary(ctx, f.store, candidate, key, evidence);
-		!errors.Is(err, ErrInertRestoreDryRunRejected) {
+	if err := CheckInertRestoreWriteBoundary(ctx, f.store, candidate, key, evidence); !errors.Is(err, ErrInertRestoreDryRunRejected) {
 		t.Fatalf("active apply state accepted: %v", err)
 	}
 }
-

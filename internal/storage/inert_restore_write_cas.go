@@ -126,4 +126,3 @@ func boolToIntInertFence(value bool) int {
 	}
 	return 0
 }
-
