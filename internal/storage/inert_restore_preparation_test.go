@@ -60,6 +60,12 @@ func TestV17ToV18MigrationPreservesDatabaseAndAttestsBothSchemas(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// A raw sql.Open fixture inherits the process umask (often 0644);
+	// production Open rightly rejects it, so make this legacy fixture
+	// satisfy the same private 0600 file ownership contract.
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	migrated, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
