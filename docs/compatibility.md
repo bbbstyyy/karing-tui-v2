@@ -261,3 +261,5 @@ ADR 0099 adds a private, **internal-only** sealed archive writer and offline rea
 ## M4 sealed archive crash cleanup and retention refusal (internal only)
 
 ADR 0100 introduces a new, lease-aware `.ktui-sealed-v2-*` ciphertext staging namespace, parent/file Linux `flock` coordination and bounded orphan cleanup. An active writer is never reclaimed; a SIGKILL-abandoned unlocked v2 temporary may be removed after strict UID/mode/inode/link/budget checks. Legacy unleased temporary names, unknown files and ambiguous partially published hard links fail closed. Published `.ktbackup` files are NEVER automatically deleted: a read-only metadata inventory imposes a maximum of eight retained archives and 32 temporary candidates, refusing more writes at capacity. No periodic cleaner, user-facing backup manager, key lifecycle, migration or restore permit is implied.
+
+Concurrent encrypted writers reserve one of the eight retention slots and worst-case bytes for each active temporary file under the directory lock; they cannot both use the final available slot. The reservation is released only after safe abandoned-v2-file reclamation.
