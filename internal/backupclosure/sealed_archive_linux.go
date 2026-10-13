@@ -31,7 +31,7 @@ const (
 	sealedArchiveFreeSpaceReserve = uint64(64 << 20)
 	MaxSealedArchiveBytes         = storage.MaxDatabaseSnapshotBytes +
 		MaxClosureRuleBytes + coreartifact.MaxPinnedCoreBytes +
-		maxManifestBytes + 4 + sealedArchiveHeaderBytes + sealedArchiveTagBytes
+		int64(maxManifestBytes + 4 + sealedArchiveHeaderBytes + sealedArchiveTagBytes)
 )
 
 var ErrUnsafeSealedArchive = errors.New("encrypted internal archive refused")
@@ -85,7 +85,7 @@ func (c *Closure) SealInertArchive(
 	if err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
-	totalBytes := plainBytes + sealedArchiveHeaderBytes + sealedArchiveTagBytes
+	totalBytes := plainBytes + int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes)
 	if err := requireSealedArchiveSpace(parent, totalBytes); err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
@@ -342,7 +342,7 @@ func sealedPlainBytes(inventory Inventory, manifestBytes int) (int64, error) {
 	if inventory.Core != nil {
 		n += inventory.Core.Size
 	}
-	if n <= 0 || n+sealedArchiveHeaderBytes+sealedArchiveTagBytes > MaxSealedArchiveBytes {
+	if n <= 0 || n+int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes) > MaxSealedArchiveBytes {
 		return 0, ErrUnsafeSealedArchive
 	}
 	return n, nil
