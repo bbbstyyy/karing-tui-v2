@@ -258,3 +258,46 @@ func TestSealedArchiveParentLockHonorsCanceledContext(t *testing.T) {
 		t.Fatalf("blocked parent lock ignored deadline: %v", err)
 	}
 }
+
+
+func TestSealedArchiveConcurrentWriterReservations(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the instant before one of the eight allowed publishers
+	// has completed. Its locked temp must consume the eighth slot.
+	for index := 0; index < MaxRetainedSealedArchives-1; index++ {
+		name := filepath.Join(parent, fmt.Sprintf("archive-%02d.ktbackup", index))
+		if err := os.WriteFile(name, bytes.Repeat([]byte("c"), 128), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	active, err := createLeasedSealedArchiveTemp(context.Background(), parent, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createLeasedSealedArchiveTemp(context.Background(), parent, 1024);
+		!errors.Is(err, ErrUnsafeSealedArchive) {
+		t.Fatalf("concurrent archive exceeded reserved retention slots: %v", err)
+	}
+	report, err := InspectSealedArchiveRetention(context.Background(), parent)
+	if err != nil || report.Completed != MaxRetainedSealedArchives-1 ||
+		report.Temporary != 1 || report.Active != 1 {
+		t.Fatalf("reservation not reflected in inventory: %+v %v", report, err)
+	}
+	if err := active.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed, err := ReclaimAbandonedSealedArchives(context.Background(), parent);
+		err != nil || reclaimed.Reclaimed != 1 {
+		t.Fatalf("failed to recover aborted reservation: %+v %v", reclaimed, err)
+	}
+	next, err := createLeasedSealedArchiveTemp(context.Background(), parent, 1024)
+	if err != nil {
+		t.Fatalf("cleaned reservation did not reopen a slot: %v", err)
+	}
+	if err := next.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
