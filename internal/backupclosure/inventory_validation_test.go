@@ -174,7 +174,7 @@ func TestParseInertInventoryRejectsNonCanonicalAndUnknownJSON(t *testing.T) {
 		append(append([]byte(nil), encoded...), '\n'),
 		append([]byte(" "), encoded...),
 		bytes.Replace(encoded, []byte(`"format":"`), []byte(`"format":"`+ManifestVersion+`","format":"`), 1),
-		bytes.Replace(encoded, []byte(`"storage_schema":17`), []byte(`"storage_schema":17,"unknown":"secret"`), 1),
+		bytes.Replace(encoded, []byte(`"storage_schema":`), []byte(`"unknown":"secret","storage_schema":`), 1),
 		bytes.Replace(encoded, []byte(`"rule_sets":[`), []byte(`"rule_sets":[{"extra":true},`), 1),
 		bytes.Replace(encoded, []byte(`"restore_ready":false`), []byte(`"restore_ready":true`), 1),
 		append(append([]byte(nil), encoded...), []byte(" {}")...),
