@@ -76,7 +76,7 @@ func readInertRestoreFenceTx(ctx context.Context, tx *sql.Tx) (InertRestoreFence
 	var appliedConfig, appliedManifest, appliedSource []byte
 	var lastConfig, lastManifest, lastSource []byte
 	var fence InertRestoreFence
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 		SELECT d.config_revision, d.applied_generation_id,
 			d.last_known_good_generation_id, d.recovery_required,
 			d.core_desired_state, d.routing_mode, d.private_direct,
