@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -22,7 +23,11 @@ func inertPreparationInput(fence InertRestoreFence) InertRestorePreparationInput
 
 func TestV17ToV18MigrationPreservesDatabaseAndAttestsBothSchemas(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "historical-v17.db")
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "historical-v17.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
