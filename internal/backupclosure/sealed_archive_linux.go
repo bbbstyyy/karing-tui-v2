@@ -94,7 +94,12 @@ func (c *Closure) SealInertArchive(
 	if _, err := os.Lstat(destination); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return receipt, ErrUnsafeSealedArchive
 	}
-	file, err := os.CreateTemp(parent, ".ktui-sealed-")
+	// Before writing another archive, safely scavenge only unlocked v2
+	// ciphertext staging files. No published archive is ever pruned.
+	if _, err := ReclaimAbandonedSealedArchives(ctx, parent); err != nil {
+		return receipt, ErrUnsafeSealedArchive
+	}
+	file, err := createLeasedSealedArchiveTemp(ctx, parent, totalBytes)
 	if err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
@@ -102,12 +107,19 @@ func (c *Closure) SealInertArchive(
 	identity, statErr := file.Stat()
 	published := false
 	defer func() {
+		// Keep the file flock held through Link, Remove and parent fsync:
+		// recovery must never reclaim a live publishing writer.
 		if !published {
-			_ = file.Close()
 			atPath, statErr := os.Lstat(path)
-			if statErr == nil && identity != nil && os.SameFile(identity, atPath) {
-				_ = os.Remove(path)
+			if statErr == nil && identity != nil && os.SameFile(identity, atPath) &&
+				singleOwnedSealedFile(atPath) {
+				if removeErr := os.Remove(path); removeErr != nil {
+					err = errors.Join(err, ErrUnsafeSealedArchive)
+				}
 			}
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, ErrUnsafeSealedArchive)
 		}
 	}()
 	if statErr != nil || file.Chmod(0o600) != nil ||
@@ -176,9 +188,6 @@ func (c *Closure) SealInertArchive(
 		return receipt, ErrUnsafeSealedArchive
 	}
 	if err := verifySealedFile(file, path, identity, totalBytes, true); err != nil {
-		return receipt, ErrUnsafeSealedArchive
-	}
-	if err := file.Close(); err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
 	if err := verifySealedArchiveParent(parent); err != nil {
