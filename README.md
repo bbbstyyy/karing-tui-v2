@@ -289,3 +289,7 @@ Older unleased `.sqlite-snapshot-*` directories are intentionally **not** scaven
 ## Internal encrypted archive retention boundary (M4)
 
 The experimental internal sealed-archive writer uses a separate `.ktui-sealed-v2-*` namespace with Linux file/parent `flock` to protect active ciphertext generation. Only abandoned, verified v2 temporary ciphertext can be reclaimed; old unleased temporary names and ambiguous hard links require operator review. Completed `.ktbackup` files are never automatically pruned: the private archive folder has a fail-closed eight-file retention budget, plus 32 bounded temporary candidates. This does **not** provide a supported backup command, key custody, or restore capability. See [ADR 0100](docs/adr/0100-sealed-archive-leases-and-retention.md).
+
+## Internal encrypted archive preflight (M4)
+
+The internal `backupclosure.PreflightInertArchive` performs a read-only, full-authentication resource check followed by a whole-ciphertext replay before returning a redacted manifest compatibility summary. A caller may optionally compare digest counts with a separately pinned current closure, without exposing secrets or treating generation database IDs as portable identities. A matching approved-core architecture is **metadata-only** compatibility: no restore/import, backup key storage, SQLite relational restore validation, core activation or TUI/API recovery is enabled. See [ADR 0101](docs/adr/0101-authenticated-read-only-archive-preflight.md).

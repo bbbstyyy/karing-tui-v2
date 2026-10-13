@@ -42,4 +42,13 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if err != nil || checked != receipt {
 		t.Fatalf("real approved core seal verification failed: %+v %v", checked, err)
 	}
+	preflight, err := PreflightInertArchive(context.Background(), path, key, nil)
+	if err != nil || !preflight.TargetMetadataCompatible ||
+		!preflight.CoreIncluded || !preflight.ResourceDigestsVerified ||
+		preflight.Format != CoreManifestVersion ||
+		preflight.InventorySHA256 != receipt.InventorySHA256 ||
+		preflight.RestoreReady || preflight.RestoreSupported ||
+		len(preflight.Blockers) != 2 {
+		t.Fatalf("real approved-core metadata preflight failed: %+v %v", preflight, err)
+	}
 }
