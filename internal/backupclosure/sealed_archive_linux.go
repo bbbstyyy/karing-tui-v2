@@ -85,7 +85,7 @@ func (c *Closure) SealInertArchive(
 	if err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
-	totalBytes := plainBytes + int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes)
+	totalBytes := plainBytes + int64(sealedArchiveHeaderBytes + sealedArchiveTagBytes)
 	if err := requireSealedArchiveSpace(parent, totalBytes); err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
