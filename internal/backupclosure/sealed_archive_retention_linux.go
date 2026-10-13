@@ -14,27 +14,27 @@ import (
 )
 
 const (
-	MaxRetainedSealedArchives = 8
+	MaxRetainedSealedArchives      = 8
 	MaxSealedArchiveTemporaryFiles = 32
-	MaxRetainedSealedArchiveBytes = int64(MaxRetainedSealedArchives) * MaxSealedArchiveBytes
-	sealedArchiveTemporaryPrefix = ".ktui-sealed-v2-"
+	MaxRetainedSealedArchiveBytes  = int64(MaxRetainedSealedArchives) * MaxSealedArchiveBytes
+	sealedArchiveTemporaryPrefix   = ".ktui-sealed-v2-"
 )
 
 // SealedArchiveRetentionReport only counts directory entries; it does not
 // authenticate an archive or authorize restore, replacement, or deletion.
 // Completed archives are NEVER pruned by this package.
 type SealedArchiveRetentionReport struct {
-	Completed int
+	Completed      int
 	CompletedBytes int64
-	Temporary int
-	Active int
-	Reclaimed int
-	AtCapacity bool
+	Temporary      int
+	Active         int
+	Reclaimed      int
+	AtCapacity     bool
 }
 
 type abandonedSealedArchive struct {
-	name string
-	file *os.File
+	name     string
+	file     *os.File
 	identity os.FileInfo
 }
 
@@ -133,7 +133,7 @@ func inspectSealedArchiveDirectory(
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return report, candidates, ErrUnsafeSealedArchive
 	}
-	if len(entries) > MaxRetainedSealedArchives + MaxSealedArchiveTemporaryFiles {
+	if len(entries) > MaxRetainedSealedArchives+MaxSealedArchiveTemporaryFiles {
 		return report, candidates, ErrUnsafeSealedArchive
 	}
 	for _, entry := range entries {
