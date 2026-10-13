@@ -473,6 +473,20 @@ func (c *Closure) Verify(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := validateInertInventory(c.Inventory); err != nil ||
+		c.Inventory.DatabaseSHA256 != c.Database.SHA256 ||
+		c.Inventory.DatabaseBytes != c.Database.Size ||
+		len(c.Inventory.RuleSets) != len(c.pins) {
+		return ErrUnsafeClosure
+	}
+	for index, item := range c.pins {
+		digest := c.Inventory.RuleSets[index]
+		if digest.SHA256 != item.sha || digest.Format != item.format ||
+			digest.RelativePath != "rule-sets/sha256/"+filepath.Base(item.path) ||
+			item.pin == nil || digest.Size != item.pin.Size() {
+			return ErrUnsafeClosure
+		}
+	}
 	if err := c.Database.Verify(ctx); err != nil {
 		return ErrUnsafeClosure
 	}
