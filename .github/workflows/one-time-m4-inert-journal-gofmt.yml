@@ -1,0 +1,27 @@
+name: one-time-m4-inert-journal-gofmt
+on:
+  push:
+    branches:
+      - feat/m0-m1-foundation
+    paths:
+      - .github/workflows/one-time-m4-inert-journal-gofmt.yml
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - name: Format durable inert preparation and migration
+        run: |
+          gofmt -w internal/storage/store.go internal/storage/archive_audit.go internal/storage/inert_restore_write_cas.go internal/storage/inert_restore_preparation.go internal/storage/inert_restore_preparation_test.go internal/storage/inert_restore_preparation_linux_test.go internal/storage/profile_migration_test.go internal/backupclosure/closure.go internal/backupclosure/inventory_validation.go internal/backupclosure/inventory_validation_test.go internal/backupclosure/sealed_archive_sqlite_linux.go internal/backupclosure/inert_restore_journal_linux.go internal/backupclosure/inert_restore_journal_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go
+          if ! git diff --quiet -- internal/storage/ internal/backupclosure/; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/storage/ internal/backupclosure/
+            git commit -m "style(m4): gofmt persistent inert restore journal"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
