@@ -51,12 +51,12 @@ type RuleDigest struct {
 // CoreDigest records the approved core's identity without retaining its
 // absolute executable path or granting permission to execute a copied file.
 type CoreDigest struct {
-	RelativePath string `json:"relative_path"`
-	Architecture string `json:"architecture"`
+	RelativePath    string `json:"relative_path"`
+	Architecture    string `json:"architecture"`
 	CandidateCommit string `json:"candidate_commit"`
-	Version string `json:"version"`
-	SHA256 string `json:"sha256"`
-	Size int64 `json:"size"`
+	Version         string `json:"version"`
+	SHA256          string `json:"sha256"`
+	Size            int64  `json:"size"`
 }
 
 // Inventory contains only bounded hashes and relative content-addressed paths.
@@ -211,12 +211,12 @@ func buildWithCore(
 		}
 		closure.Inventory.Format = CoreManifestVersion
 		closure.Inventory.Core = &CoreDigest{
-			RelativePath: "core/" + closure.corePin.SHA256() + ".bin",
-			Architecture: closure.corePin.Architecture(),
+			RelativePath:    "core/" + closure.corePin.SHA256() + ".bin",
+			Architecture:    closure.corePin.Architecture(),
 			CandidateCommit: coreartifact.CandidateCommit,
-			Version: coreartifact.CandidateVersion,
-			SHA256: closure.corePin.SHA256(),
-			Size: closure.corePin.Size(),
+			Version:         coreartifact.CandidateVersion,
+			SHA256:          closure.corePin.SHA256(),
+			Size:            closure.corePin.Size(),
 		}
 	}
 	if len(closure.pins) != 0 || closure.corePin != nil {
