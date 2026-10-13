@@ -1,0 +1,27 @@
+name: one-time-m4-schema-domain-gofmt
+on:
+  push:
+    branches:
+      - feat/m0-m1-foundation
+    paths:
+      - .github/workflows/one-time-m4-schema-domain-gofmt.yml
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - name: Format schema and domain verification
+        run: |
+          gofmt -w internal/storage/archive_audit.go internal/backupclosure/sealed_archive_sqlite_linux.go internal/backupclosure/sealed_archive_preflight_linux.go internal/backupclosure/sealed_archive_schema_linux_test.go internal/backupclosure/sealed_archive_preflight_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go
+          if ! git diff --quiet -- internal/storage/archive_audit.go internal/backupclosure/; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/storage/archive_audit.go internal/backupclosure/
+            git commit -m "style(m4): format archived schema and domain audit"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
