@@ -799,9 +799,28 @@ func (s *Store) configure(ctx context.Context) error {
 	return nil
 }
 
-const currentSchemaVersion = 17
+const currentSchemaVersion = 18
+
+const oldestSupportedArchiveSchema = 17
+
+// SupportedArchiveSchema retains read-only compatibility with v17 sealed
+// snapshots after the live database adds its independent inert journal.
+func SupportedArchiveSchema(version int) bool {
+	return version >= oldestSupportedArchiveSchema && version <= currentSchemaVersion
+}
+
 
 func (s *Store) migrate(ctx context.Context) error {
+	return s.migrateThrough(ctx, currentSchemaVersion)
+}
+
+// migrateThrough exists ONLY for read-only archive schema attestation. A
+// v17 reference is assembled in a fresh :memory: database, never by
+// downgrading a live SQLite file. Production always targets v18.
+func (s *Store) migrateThrough(ctx context.Context, target int) error {
+	if !SupportedArchiveSchema(target) {
+		return fmt.Errorf("unsupported schema reference target %d", target)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin sqlite migration: %w", err)
@@ -819,8 +838,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := tx.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version.Valid && version.Int64 > currentSchemaVersion {
-		return fmt.Errorf("state database schema %d is newer than supported version %d", version.Int64, currentSchemaVersion)
+	if version.Valid && version.Int64 > int64(target) {
+		return fmt.Errorf("state database schema %d is newer than supported version %d", version.Int64, target)
 	}
 
 	if !version.Valid || version.Int64 < 1 {
@@ -1183,6 +1202,33 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(17, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("record sqlite migration 17: %w", err)
+		}
+	}
+
+
+	if target >= 18 && (!version.Valid || version.Int64 < 18) {
+		// A separate, never-activating journal; do NOT reuse apply_journal,
+		// which is owned by the live core activation state machine.
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE inert_restore_preparations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			candidate_scope TEXT NOT NULL,
+			archive_sha256 TEXT NOT NULL CHECK(length(archive_sha256) = 64),
+			inventory_sha256 TEXT NOT NULL CHECK(length(inventory_sha256) = 64),
+			archive_bytes INTEGER NOT NULL CHECK(archive_bytes > 0),
+			baseline_json BLOB NOT NULL,
+			baseline_sha256 TEXT NOT NULL CHECK(length(baseline_sha256) = 64),
+			phase TEXT NOT NULL CHECK(phase IN ('prepared', 'abandoned')),
+			active_slot INTEGER UNIQUE CHECK(active_slot IS NULL OR active_slot = 1),
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			CHECK((phase = 'prepared' AND active_slot = 1) OR
+				  (phase = 'abandoned' AND active_slot IS NULL))
+		)`); err != nil {
+			return fmt.Errorf("apply sqlite migration 18: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(18, ?)`,
+			time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("record sqlite migration 18: %w", err)
 		}
 	}
 

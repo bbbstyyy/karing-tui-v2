@@ -313,3 +313,7 @@ Internal backup candidate inspection now cross-checks a single-transaction SQLit
 ## Internal rollback-only restore write-intent guard (M4)
 
 ADR 0106 adds a short SQLite write-intent **inspection** after full encrypted-candidate and live-state verification. It atomically checks committed config/selection/declaration hashes under a single-writer reservation, then rolls the no-value-change probe back before returning. Tests cover competing writers, cancellation, process death, stale candidate receipts and real approved-core integration. This **does not write or restore any backup**, hold an activation lease after return, or authorize a TUI/API/CLI restore. See [ADR 0106](docs/adr/0106-rollback-only-restore-write-cas.md).
+
+## Crash-safe inert restore preparation journal (M4)
+
+A new SQLite v18 table records only the identity of a fully verified encrypted candidate and a transaction-local, hash-bound live CAS baseline. The record is committed atomically without creating an apply attempt, replacing settings or activating sing-box. Pending rows survive SIGKILL and restart but never resume automatically; the key, candidate lock, and all integrity checks must be re-established, and abandon is explicit and non-destructive. Existing v17 encrypted archives remain readable for strict *preflight*, not import. No restore API or activation authorization exists. See [ADR 0107](docs/adr/0107-durable-inert-restore-journal.md).

@@ -50,10 +50,10 @@ type archiveSchemaObject struct {
 // complete sqlite_schema catalog is compared exactly (including indexes,
 // autoindexes and triggers). No user-controlled SQL is ever executed.
 func VerifyArchivedSchemaAndDomains(
-	ctx context.Context, candidate *sql.Conn,
+	ctx context.Context, candidate *sql.Conn, schema int,
 ) (ArchiveDomainCounts, error) {
 	var empty ArchiveDomainCounts
-	if ctx == nil || candidate == nil || ctx.Err() != nil {
+	if ctx == nil || candidate == nil || ctx.Err() != nil || !SupportedArchiveSchema(schema) {
 		return empty, ErrArchiveDomainInvalid
 	}
 	referenceDB, err := sql.Open("sqlite", ":memory:")
@@ -62,7 +62,7 @@ func VerifyArchivedSchemaAndDomains(
 	}
 	defer referenceDB.Close()
 	referenceDB.SetMaxOpenConns(1)
-	if (&Store{db: referenceDB}).migrate(ctx) != nil {
+	if (&Store{db: referenceDB}).migrateThrough(ctx, schema) != nil {
 		return empty, ErrArchiveDomainInvalid
 	}
 	reference, err := referenceDB.Conn(ctx)
@@ -89,6 +89,40 @@ func VerifyArchivedSchemaAndDomains(
 	counts.ProfileOverlays, err = verifyArchiveProfileOverlays(ctx, candidate)
 	if err != nil || verifyArchiveSelection(ctx, candidate) != nil {
 		return empty, ErrArchiveDomainInvalid
+	}
+	if schema >= 18 {
+		// No active inert preparation may acquire any authority through
+		// imported backup state. Historical *abandoned* rows are inert.
+		rows, err := candidate.QueryContext(ctx, `
+			SELECT id, candidate_scope, archive_sha256,
+			       inventory_sha256, archive_bytes,
+			       baseline_json, baseline_sha256,
+			       phase, active_slot, created_at, updated_at
+			FROM inert_restore_preparations ORDER BY id LIMIT ?`,
+			maxInertRestorePreparations+1)
+		if err != nil {
+			return empty, ErrArchiveDomainInvalid
+		}
+		count := 0
+		for rows.Next() {
+			count++
+			if count > maxInertRestorePreparations {
+				_ = rows.Close()
+				return empty, ErrArchiveDomainInvalid
+			}
+			record, valid := scanInertRestorePreparation(rows)
+			// A candidate scope is an external, keyless reference; never
+			// certify a snapshot containing a pending restore marker.
+			if !valid || record.Phase != InertRestoreAbandoned {
+				_ = rows.Close()
+				return empty, ErrArchiveDomainInvalid
+			}
+		}
+		bad := rows.Err()
+		closeErr := rows.Close()
+		if bad != nil || closeErr != nil {
+			return empty, ErrArchiveDomainInvalid
+		}
 	}
 	return counts, nil
 }

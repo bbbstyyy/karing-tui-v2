@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 )
@@ -47,11 +48,40 @@ func (s *Store) checkInertRestoreWriteCAS(
 	}
 	defer tx.Rollback()
 
+	if err := checkInertRestoreWriteCASTx(bounded, tx, expected); err != nil {
+		return err
+	}
+
+	if afterLock != nil {
+		if err := afterLock(); err != nil {
+			return ErrInertRestoreWriteCASUnavailable
+		}
+	}
+	if err := bounded.Err(); err != nil {
+		return err
+	}
+	// Rollback is checked explicitly. No success, journal or receipt is
+	// returned if SQLite cannot verify that the transaction was closed.
+	if err := tx.Rollback(); err != nil {
+		return ErrInertRestoreWriteCASUnavailable
+	}
+	return nil
+}
+
+// checkInertRestoreWriteCASTx acquires SQLite's actual writer slot and
+// verifies a complete, content-hashed baseline in THAT transaction. It
+// DOES NOT commit or grant any restore authority. Caller owns tx cleanup.
+func checkInertRestoreWriteCASTx(
+	ctx context.Context, tx *sql.Tx, expected InertRestoreFence,
+) error {
+	if ctx == nil || tx == nil || !validInertRestoreFence(expected) {
+		return ErrInertRestoreWriteCASUnavailable
+	}
 	// SQLite starts a RESERVED WAL writer transaction even though the
 	// predicate sets the existing value to itself. Nothing is committed.
 	// Bind state columns and the active apply/recovery guards in the SAME
 	// statement that establishes write intent, not in an earlier read.
-	res, err := tx.ExecContext(bounded, `
+	res, err := tx.ExecContext(ctx, `
 		UPDATE daemon_state SET config_revision = config_revision
 		WHERE singleton = 1
 			AND config_revision = ?
@@ -97,25 +127,12 @@ func (s *Store) checkInertRestoreWriteCAS(
 	}
 	// Every content digest, selection JSON hash and historical generation
 	// identity is checked *after* acquiring the SQLite write reservation.
-	fresh, err := readInertRestoreFenceTx(bounded, tx)
+	fresh, err := readInertRestoreFenceTx(ctx, tx)
 	if err != nil {
 		return ErrInertRestoreWriteCASUnavailable
 	}
 	if fresh != expected {
 		return ErrInertRestoreFenceChanged
-	}
-	if afterLock != nil {
-		if err := afterLock(); err != nil {
-			return ErrInertRestoreWriteCASUnavailable
-		}
-	}
-	if err := bounded.Err(); err != nil {
-		return err
-	}
-	// Rollback is checked explicitly. No success, journal or receipt is
-	// returned if SQLite cannot verify that the transaction was closed.
-	if err := tx.Rollback(); err != nil {
-		return ErrInertRestoreWriteCASUnavailable
 	}
 	return nil
 }

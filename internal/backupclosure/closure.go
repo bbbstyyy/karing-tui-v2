@@ -28,7 +28,7 @@ const (
 	MaxClosureRuleBytes    = int64(128 << 20)
 	maxManifestBytes       = 128 << 10
 	maxClosureDuration     = 90 * time.Second
-	supportedStorageSchema = 17
+	supportedStorageSchema = 18
 )
 
 var ErrUnsafeClosure = errors.New("snapshot resource closure unavailable or changed")
@@ -282,7 +282,7 @@ type snapshotQuerier interface {
 
 func enumerateSnapshot(ctx context.Context, db snapshotQuerier, stateRoot string) ([]GenerationDigest, []candidateRule, int, error) {
 	var schema int
-	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&schema); err != nil || schema != supportedStorageSchema {
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&schema); err != nil || !storage.SupportedArchiveSchema(schema) {
 		return nil, nil, 0, ErrUnsafeClosure
 	}
 	rows, err := db.QueryContext(ctx, `SELECT id, config_json, config_sha256, manifest_json, manifest_sha256, source_map_json, source_map_sha256 FROM generations ORDER BY id ASC LIMIT ?`, MaxClosureGenerations+1)

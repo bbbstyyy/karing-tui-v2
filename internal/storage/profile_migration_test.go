@@ -97,8 +97,8 @@ func TestSchemaV9AddsProfileSnapshotsToV8Database(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 17 {
-		t.Fatalf("schema version = %d, want 17", version)
+	if version != 18 {
+		t.Fatalf("schema version = %d, want 18", version)
 	}
 	intent, persisted, err := store.CurrentSelectionIntent(ctx)
 	if err != nil || !persisted || intent.Revision != 0 || string(intent.TargetJSON) != `{"kind":"direct"}` {

@@ -1374,3 +1374,11 @@ docs/
 - 新增 `backupclosure.CheckInertRestoreWriteBoundary`：先重新验证持锁密文候选和原有只读回执，再执行上述带写锁的最后一层 CAS。任何状态漂移或伪造回执均失败关闭；全部 `RestoreSupported=false`、`RestoreReady=false`。这层没有 HTTP/CLI/TUI 接口。
 - 新增进程内/跨进程测试：CAS 前修改声明、选择/JSON 内容、路由/核心状态；持锁期间另一 SQLite 连接不能提交真实选择变更；注入错误、取消和 SIGKILL 后写锁释放、未提交变更回滚、正常选择写入继续；真实批准 sing-box 的加密 v2 候选纳入新边界集成测试。
 - **待办**：写意图 CAS 只证明被查询的一瞬间，`ROLLBACK` 后不持有任何租约；真正的原子恢复准备需要将 CAS 与导入资源/ journal 在**同一提交事务**完成、独立隔离解包、持久 inode/资源租约、内核 Check/切换、二次回滚与全边界掉电测试。T15/T23/M4/M5 和正式恢复入口仍未放行。
+
+### 2026-10-13 M4 持久恢复准备日志、Schema v18 与崩溃恢复识别（不允许恢复）
+
+- ADR 0107：Schema 从 v17 事务化升级到 **v18**，仅新增 `inert_restore_preparations` 独立表，不复用有实际生效语义的 `apply_journal`。日志只能在 `prepared` / `abandoned` 两个**不可激活**状态之间按显式操作转换；最多 32 条存量记录、同一时刻最多 1 条 pending。每条只保留私有加密候选目录名、密文/清单哈希和字节数、脱敏配置 CAS 围栏的规范化 JSON + SHA、时间与阶段；绝不存凭据、密钥、恢复出的 SQLite 或 core。
+- 同一个 SQLite 写事务中依次执行 ADR 0106 原子 CAS、复核配额与唯一 pending、插入仅内部准备记录，再提交；故障、取消、CAS 版本竞争与 SQL 冲突必须整笔回滚，不能产生实际应用代际、切换运行核心或影响现有 LKG。加密候选仍需持锁和全量 HMAC/数据库/规则/schema/profile 预检才能调用准备。
+- 重启后 `InspectInertRestoreRecords` 只作有界只读目录；所有 pending 行强制 `RequiresRevalidation=true`，旧 `flock` 失效，下一进程必须重新提供密钥、获取独占候选锁、复核数据库围栏和完整密文后才可只读确认。`AbandonInertRestoreRecord` 仅显式关闭日志，不自动删除密文；目录加密文件回收仍按 ADR 0104 的单独锁定清理接口。
+- 兼容性：现有 v17 加密归档仍可在独立 v17 `:memory:` schema 下严格只读鉴定，新归档使用 v18；v18 密文内若包含未完成 pending 恢复准备日志则拒绝预检，不得通过备份传播陈旧“可恢复”指针。v18 不能用旧 v17 可执行文件直接回退打开主数据库。
+- 增加 SIGKILL-before-commit、SIGKILL-after-commit、错误与取消、重复 slot、存储伪造、跨重启重新认证和真实批准内核候选的无激活测试。**T15/T23、真实恢复/双层回滚、跨重启可执行资源持久租约与 M4/M5 门槛仍未满足；`RestoreSupported=false`、`RestoreReady=false`。**

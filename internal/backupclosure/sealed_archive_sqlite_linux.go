@@ -197,7 +197,7 @@ func verifyInMemoryArchiveSQLite(
 	// Compare the entire SQL DDL/index catalog against a separately
 	// migrated :memory: reference, then inspect bounded subscription/profile
 	// domain rows before accepting even an otherwise valid SQLite image.
-	domains, err = storage.VerifyArchivedSchemaAndDomains(ctx, conn)
+	domains, err = storage.VerifyArchivedSchemaAndDomains(ctx, conn, inventory.StorageSchema)
 	if err != nil {
 		return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 	}
@@ -260,7 +260,7 @@ func checkArchiveSQLitePragma(
 }
 
 func validateArchiveMigrations(ctx context.Context, conn *sql.Conn, wanted int) error {
-	if wanted != supportedStorageSchema {
+	if !storage.SupportedArchiveSchema(wanted) {
 		return ErrArchiveLogicalVerification
 	}
 	rows, err := conn.QueryContext(ctx,

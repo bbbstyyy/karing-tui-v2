@@ -37,7 +37,7 @@ func ParseInertInventory(encoded []byte, expectedSHA256 string) (Inventory, erro
 }
 
 func validateInertInventory(inventory Inventory) error {
-	if inventory.StorageSchema != supportedStorageSchema ||
+	if !storage.SupportedArchiveSchema(inventory.StorageSchema) ||
 		!validLowerSHA(inventory.DatabaseSHA256) ||
 		inventory.DatabaseBytes <= 0 ||
 		inventory.DatabaseBytes > storage.MaxDatabaseSnapshotBytes ||

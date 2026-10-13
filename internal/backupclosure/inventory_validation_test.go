@@ -215,3 +215,30 @@ func TestClosureVerifyBindsInventoryToOpenedSnapshotAndCopies(t *testing.T) {
 		t.Fatal("detached rule binding accepted")
 	}
 }
+
+
+func TestParseInertInventoryAcceptsV17AndV18ReadOnlySchemas(t *testing.T) {
+	for _, version := range []int{17, 18} {
+		original := sampleInertInventory()
+		original.StorageSchema = version
+		encoded, err := json.Marshal(original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := ParseInertInventory(encoded, shaHex(encoded))
+		if err != nil || !reflect.DeepEqual(parsed, original) || parsed.RestoreReady {
+			t.Fatalf("historical schema %d rejected: %+v %v", version, parsed, err)
+		}
+	}
+	for _, version := range []int{16, 19} {
+		invalid := sampleInertInventory()
+		invalid.StorageSchema = version
+		encoded, err := json.Marshal(invalid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ParseInertInventory(encoded, shaHex(encoded)); !errors.Is(err, ErrUnsafeClosure) {
+			t.Fatalf("unsupported schema %d accepted: %v", version, err)
+		}
+	}
+}

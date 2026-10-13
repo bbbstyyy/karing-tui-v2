@@ -93,6 +93,23 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		reopened, key, dryRun); err != nil {
 		t.Fatalf("real approved core inert write CAS refused: %v", err)
 	}
+	// ADR 0107 persists only an encrypted-candidate identity and the
+	// verified live CAS baseline; it cannot activate the approved core.
+	journal, err := PrepareInertRestoreCandidateRecord(
+		context.Background(), f.store, reopened, key, dryRun)
+	if err != nil || journal.RestoreReady || journal.RestoreSupported ||
+		!journal.RequiresRevalidation || journal.ArchiveSHA256 != receipt.ArchiveSHA256 {
+		t.Fatalf("real core inert journal was not safe: %+v %v", journal, err)
+	}
+	if err := RevalidateInertRestoreCandidateRecord(
+		context.Background(), f.store, reopened, key, journal.ID); err != nil {
+		t.Fatalf("real core sealed preparation was not revalidated: %v", err)
+	}
+	if err := f.store.AbandonInertRestoreRecord(
+		context.Background(), journal.ID, journal.CandidateScope,
+		journal.ArchiveSHA256); err != nil {
+		t.Fatal(err)
+	}
 	if err := reopened.Discard(context.Background()); err != nil {
 		t.Fatal(err)
 	}
