@@ -1382,3 +1382,10 @@ docs/
 - 重启后 `InspectInertRestoreRecords` 只作有界只读目录；所有 pending 行强制 `RequiresRevalidation=true`，旧 `flock` 失效，下一进程必须重新提供密钥、获取独占候选锁、复核数据库围栏和完整密文后才可只读确认。`AbandonInertRestoreRecord` 仅显式关闭日志，不自动删除密文；目录加密文件回收仍按 ADR 0104 的单独锁定清理接口。
 - 兼容性：现有 v17 加密归档仍可在独立 v17 `:memory:` schema 下严格只读鉴定，新归档使用 v18；v18 密文内若包含未完成 pending 恢复准备日志则拒绝预检，不得通过备份传播陈旧“可恢复”指针。v18 不能用旧 v17 可执行文件直接回退打开主数据库。
 - 增加 SIGKILL-before-commit、SIGKILL-after-commit、错误与取消、重复 slot、存储伪造、跨重启重新认证和真实批准内核候选的无激活测试。**T15/T23、真实恢复/双层回滚、跨重启可执行资源持久租约与 M4/M5 门槛仍未满足；`RestoreSupported=false`、`RestoreReady=false`。**
+
+### 2026-10-14 M4 记录绑定的密文资源独占租约与重启重新认证（ADR 0108）
+
+- 保持 SQLite Schema **v18**，新增内部 `storage.CheckInertRestoreRecordCAS`：在一个带 SQLite 单写入者保留位的短事务中同时完整比较 current/LKG/声明/选择的 SHA 与指定 `prepared` 日志的 ID、密文 SHA、inventory SHA、候选 scope、字节数、规范化围栏和时间戳；最后**必须 ROLLBACK**，不会创建恢复应用记录、修改配置或改变运行 core。原有 `RevalidateInertRestoreCandidateRecord` 的最后状态比对改用此原子只读目的的写事务。
+- 新增 `AcquireInertRestoreResourceLease` / `InertRestoreResourceLease.Revalidate` / `Close`：调用方显式指定日志 ID、已有的私有候选父目录与原始 32 字节密钥。必须先检查有界 v18 pending 日志、重新领取目录独占 `flock`、重新认证密文/清单/内存 SQLite/schema/profile、绑定该次存活租约的加密文件 inode，然后复核 SQLite 日志与当前配置。在同一租约期间，即使替换成**字节完全相同**但 inode 不同的密文也拒绝；Close/SIGKILL 仅释放锁，不删除密文和日志。
+- 新增并发 journal 修改、状态漂移、错误与取消、未知文件、相同密文不同 inode、跨进程 SIGKILL 后重新领用及真实已批准 sing-box v2 的不激活测试。日志放弃与文件删除仍为独立显式操作，不在失败时自动清理。
+- **边界**：磁盘持久的是日志与密文，Linux 的 `flock` 不跨进程死亡持久化；不能把本阶段称为生产级持久核心/规则资源租约，也不能将只读重新认证结果用于恢复提交。尚需真实隔离导入、同事务正式 CAS 应用、持久资源 pin、Check/Activate/Verify、双重回滚及 T15/T23 故障注入。仍无恢复 CLI/TUI/API，`RestoreSupported=false` 与 `RestoreReady=false` 不变。

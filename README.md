@@ -317,3 +317,7 @@ ADR 0106 adds a short SQLite write-intent **inspection** after full encrypted-ca
 ## Crash-safe inert restore preparation journal (M4)
 
 A new SQLite v18 table records only the identity of a fully verified encrypted candidate and a transaction-local, hash-bound live CAS baseline. The record is committed atomically without creating an apply attempt, replacing settings or activating sing-box. Pending rows survive SIGKILL and restart but never resume automatically; the key, candidate lock, and all integrity checks must be re-established, and abandon is explicit and non-destructive. Existing v17 encrypted archives remain readable for strict *preflight*, not import. No restore API or activation authorization exists. See [ADR 0107](docs/adr/0107-durable-inert-restore-journal.md).
+
+## Journal-bound encrypted candidate re-acquisition (M4)
+
+ADR 0108 extends the internal inert recovery preconditions with an exclusive live Linux ciphertext lease and an atomic rollback-only SQLite check of both the journal record and current configuration. After process death, a recorded candidate can only be examined by reacquiring the private directory lock, resupplying the key and re-running the full encrypted archive and SQLite/schema/profile checks. File inode replacement during a live lease is refused; failure never imports, activates or auto-deletes anything. This adds **no backup restore entrypoint**. [ADR 0108](docs/adr/0108-journal-bound-resource-lease.md) explains why a future transactional restore still requires durable resource pins and dual rollback.

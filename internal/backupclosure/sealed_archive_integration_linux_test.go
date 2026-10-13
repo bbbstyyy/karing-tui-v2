@@ -105,12 +105,36 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		context.Background(), f.store, reopened, key, journal.ID); err != nil {
 		t.Fatalf("real core sealed preparation was not revalidated: %v", err)
 	}
+	// ADR 0108 requires a FRESH candidate directory flock and exact
+	// journal/live CAS after the prior process lease is released. Even the
+	// real sing-box v2 executable cannot be activated through this check.
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resourceLease, err := AcquireInertRestoreResourceLease(
+		context.Background(), f.store, candidateParent, journal.ID, key)
+	if err != nil {
+		t.Fatalf("approved-core journal-bound resource lease failed: %v", err)
+	}
+	if err := resourceLease.Revalidate(context.Background(), key); err != nil {
+		t.Fatalf("approved-core encrypted resource lease drifted: %v", err)
+	}
+	if resourceLease.Record().RestoreReady || resourceLease.Record().RestoreSupported {
+		t.Fatal("approved binary gained restore permissions")
+	}
+	if err := resourceLease.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.store.AbandonInertRestoreRecord(
 		context.Background(), journal.ID, journal.CandidateScope,
 		journal.ArchiveSHA256); err != nil {
 		t.Fatal(err)
 	}
-	if err := reopened.Discard(context.Background()); err != nil {
+	cleanup, err := ReopenInertRestoreCandidate(context.Background(), candidateDir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup.Discard(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

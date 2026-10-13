@@ -94,22 +94,11 @@ func RevalidateInertRestoreCandidateRecord(
 		receipt.ArchiveBytes != found.ArchiveBytes {
 		return ErrInertRestoreJournalRefused
 	}
-	if err := live.RecheckInertRestoreFence(ctx, found.Baseline); err != nil {
+	// Bind row ID, timestamp, full record contents and live CAS together
+	// under ONE short SQLite writer reservation. A successful check still
+	// rolls back and creates neither an activation lease nor permission.
+	if err := live.CheckInertRestoreRecordCAS(ctx, *found); err != nil {
 		return ErrInertRestoreJournalRefused
 	}
-	// The journal can be concurrently abandoned; a final read proves that
-	// this same inert row is still pending. Its success is STILL not a CAS.
-	again, err := live.InspectInertRestoreRecords(ctx)
-	if err != nil {
-		return ErrInertRestoreJournalRefused
-	}
-	for _, row := range again {
-		if row.ID == found.ID && row.Phase == storage.InertRestorePrepared &&
-			row.ArchiveSHA256 == found.ArchiveSHA256 &&
-			row.InventorySHA256 == found.InventorySHA256 &&
-			row.Baseline == found.Baseline {
-			return nil
-		}
-	}
-	return ErrInertRestoreJournalRefused
+	return nil
 }
