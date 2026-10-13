@@ -170,14 +170,12 @@ func TestPreflightInertArchiveFailsClosedBeforeReturningMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrongKey := testSealedKey(t)
-	if report, err := PreflightInertArchive(context.Background(), path, wrongKey, nil);
-		!errors.Is(err, ErrUnsafeSealedArchive) || !reflect.DeepEqual(report, InertArchivePreflight{}) {
+	if report, err := PreflightInertArchive(context.Background(), path, wrongKey, nil); !errors.Is(err, ErrUnsafeSealedArchive) || !reflect.DeepEqual(report, InertArchivePreflight{}) {
 		t.Fatalf("unauthenticated metadata escaped: %+v %v", report, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if report, err := PreflightInertArchive(ctx, path, key, nil);
-		!errors.Is(err, context.Canceled) || !reflect.DeepEqual(report, InertArchivePreflight{}) {
+	if report, err := PreflightInertArchive(ctx, path, key, nil); !errors.Is(err, context.Canceled) || !reflect.DeepEqual(report, InertArchivePreflight{}) {
 		t.Fatalf("canceled preflight escaped: %+v %v", report, err)
 	}
 	// After the first fully authenticated read, corrupt the same inode
