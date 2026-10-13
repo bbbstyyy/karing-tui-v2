@@ -2,8 +2,8 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,8 +20,8 @@ import (
 var ErrArchiveDomainInvalid = errors.New("archive schema or domain state is inconsistent")
 
 const (
-	maxArchiveSchemaObjects   = 128
-	maxArchiveSchemaTextBytes = 1 << 20
+	maxArchiveSchemaObjects    = 128
+	maxArchiveSchemaTextBytes  = 1 << 20
 	maxArchiveProfileSnapshots = 4096
 	maxArchiveProfileNodes     = 65536
 	maxArchiveProfileSources   = 2048
@@ -113,7 +113,7 @@ func archiveSchemaCatalog(ctx context.Context, conn *sql.Conn) ([]archiveSchemaO
 		if rows.Scan(&item.Kind, &item.Name, &item.TableName, &item.SQL) != nil {
 			return nil, ErrArchiveDomainInvalid
 		}
-		textBudget -= len(item.Kind)+len(item.Name)+len(item.TableName)+len(item.SQL.String)
+		textBudget -= len(item.Kind) + len(item.Name) + len(item.TableName) + len(item.SQL.String)
 		if textBudget < 0 {
 			return nil, ErrArchiveDomainInvalid
 		}
@@ -126,12 +126,12 @@ func archiveSchemaCatalog(ctx context.Context, conn *sql.Conn) ([]archiveSchemaO
 }
 
 type archiveSnapshotHeader struct {
-	id int64
-	profileID string
-	sourceKind string
+	id             int64
+	profileID      string
+	sourceKind     string
 	sourceRevision string
-	sourceSHA string
-	createdAt string
+	sourceSHA      string
+	createdAt      string
 }
 
 func verifyArchiveProfileSnapshots(ctx context.Context, conn *sql.Conn) (ArchiveDomainCounts, error) {

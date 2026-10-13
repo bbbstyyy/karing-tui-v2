@@ -20,24 +20,24 @@ func populateArchiveProfileDomains(t *testing.T, f *fixture) {
 	ctx := context.Background()
 	profileID := "archive-provider"
 	_, err := f.store.CommitProfileSource(ctx, 0, profile.SourceSpec{
-		ProfileID: profileID,
-		Format: profile.SourceFormatSingBox,
+		ProfileID:    profileID,
+		Format:       profile.SourceFormatSingBox,
 		LocationKind: profile.SourceLocationURL,
-		Location: "https://subscription.example/hidden-token",
-		Fetch: profile.FetchPolicy{Mode: profile.FetchDirect},
-		Enabled: true,
+		Location:     "https://subscription.example/hidden-token",
+		Fetch:        profile.FetchPolicy{Mode: profile.FetchDirect},
+		Enabled:      true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	commit, err := f.store.CommitProfileSnapshot(ctx, storage.ProfileSnapshotCandidate{
-		ProfileID: profileID,
-		SourceKind: "subscription",
+		ProfileID:      profileID,
+		SourceKind:     "subscription",
 		SourceRevision: "revision-1",
-		SourceSHA256: strings.Repeat("b", 64),
+		SourceSHA256:   strings.Repeat("b", 64),
 		Nodes: []profile.SourceNode{{
-			SourceKey: "provider-key-1",
-			SourceName: "Node 1",
+			SourceKey:   "provider-key-1",
+			SourceName:  "Node 1",
 			PayloadJSON: []byte(`{"name":"confidential","type":"direct"}`),
 		}},
 	}, storage.ProfileSnapshotCommitOptions{})
@@ -49,9 +49,9 @@ func populateArchiveProfileDomains(t *testing.T, f *fixture) {
 	}
 	_, err = f.store.CommitProfileNodeOverlay(ctx, 0, profile.NodeOverlay{
 		ProfileID: profileID,
-		NodeID: commit.Snapshot.Nodes[0].Identity.NodeID,
-		Alias: "Favorite node",
-		Favorite: true,
+		NodeID:    commit.Snapshot.Nodes[0].Identity.NodeID,
+		Alias:     "Favorite node",
+		Favorite:  true,
 	})
 	if err != nil {
 		t.Fatal(err)
