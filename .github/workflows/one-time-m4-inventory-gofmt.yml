@@ -1,0 +1,27 @@
+name: one-time-m4-inventory-gofmt
+on:
+  push:
+    branches:
+      - feat/m0-m1-foundation
+    paths:
+      - .github/workflows/one-time-m4-inventory-gofmt.yml
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/m0-m1-foundation
+          persist-credentials: true
+      - name: Format inventory tests and push
+        run: |
+          gofmt -w internal/backupclosure/inventory_validation_test.go
+          if ! git diff --quiet -- internal/backupclosure/inventory_validation_test.go; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/backupclosure/inventory_validation_test.go
+            git commit -m "style(m4): gofmt inert inventory regression tests"
+            git push origin HEAD:feat/m0-m1-foundation
+          fi
