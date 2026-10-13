@@ -60,8 +60,7 @@ func TestInertRestoreResourceLeaseReacquireAndSerialize(t *testing.T) {
 		t.Fatalf("held ciphertext and live CAS changed: %v", err)
 	}
 	if _, err := AcquireInertRestoreResourceLease(ctx, f.store,
-		filepath.Dir(directory), record.ID, key);
-		!errors.Is(err, ErrInertRestoreCandidateBusy) {
+		filepath.Dir(directory), record.ID, key); !errors.Is(err, ErrInertRestoreCandidateBusy) {
 		t.Fatalf("second opener stole active flock: %v", err)
 	}
 	if err := lease.Revalidate(ctx, [32]byte{}); !errors.Is(err, ErrInertRestoreResourceLeaseRefused) {
@@ -260,8 +259,7 @@ func TestInertRestoreResourceLeaseSIGKILLReacquisition(t *testing.T) {
 		t.Fatalf("child never acquired journal-bound resource lease: %q %v", msg, err)
 	}
 	if _, err := AcquireInertRestoreResourceLease(ctx, f.store,
-		filepath.Dir(directory), record.ID, key);
-		!errors.Is(err, ErrInertRestoreCandidateBusy) {
+		filepath.Dir(directory), record.ID, key); !errors.Is(err, ErrInertRestoreCandidateBusy) {
 		t.Fatalf("process-held lease stolen: %v", err)
 	}
 	if err := cmd.Process.Kill(); err != nil {

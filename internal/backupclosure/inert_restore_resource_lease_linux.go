@@ -20,10 +20,10 @@ var ErrInertRestoreResourceLeaseRefused = errors.New("inert restore ciphertext r
 // Neither this object nor its revalidation may be passed to the core or to
 // an actual backup import operation.
 type InertRestoreResourceLease struct {
-	mu sync.Mutex
-	live *storage.Store
-	candidate *InertRestoreCandidate
-	record storage.InertRestorePreparation
+	mu           sync.Mutex
+	live         *storage.Store
+	candidate    *InertRestoreCandidate
+	record       storage.InertRestorePreparation
 	fileIdentity os.FileInfo
 }
 

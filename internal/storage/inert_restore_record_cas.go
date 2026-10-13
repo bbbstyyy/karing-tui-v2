@@ -31,11 +31,11 @@ func (s *Store) checkInertRestoreRecordCAS(
 		!expected.RequiresRevalidation ||
 		expected.RestoreSupported || expected.RestoreReady ||
 		!validInertRestorePreparationInput(InertRestorePreparationInput{
-			CandidateScope: expected.CandidateScope,
-			ArchiveSHA256: expected.ArchiveSHA256,
+			CandidateScope:  expected.CandidateScope,
+			ArchiveSHA256:   expected.ArchiveSHA256,
 			InventorySHA256: expected.InventorySHA256,
-			ArchiveBytes: expected.ArchiveBytes,
-			Baseline: expected.Baseline,
+			ArchiveBytes:    expected.ArchiveBytes,
+			Baseline:        expected.Baseline,
 		}) || expected.CreatedAt.IsZero() || expected.UpdatedAt.IsZero() {
 		return ErrInertRestorePreparationRefused
 	}
@@ -99,4 +99,3 @@ func sameInertRestoreRecord(a, b InertRestorePreparation) bool {
 		!a.RestoreSupported && !b.RestoreSupported &&
 		!a.RestoreReady && !b.RestoreReady
 }
-
