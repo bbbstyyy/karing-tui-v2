@@ -86,7 +86,7 @@ func TestReadInertRestoreFenceBindsCommittedStateWithoutMutations(t *testing.T) 
 
 func TestInertRestoreFenceDetectsStaleCASBindings(t *testing.T) {
 	testCases := []struct {
-		name string
+		name   string
 		update func(context.Context, *Store) error
 	}{
 		{"selection", func(ctx context.Context, s *Store) error {
@@ -136,8 +136,8 @@ func TestInertRestoreFenceDetectsStaleCASBindings(t *testing.T) {
 }
 
 func TestInertRestoreFenceRefusesUnsafeLiveState(t *testing.T) {
-	for _, tc := range []struct{
-		name string
+	for _, tc := range []struct {
+		name   string
 		change func(context.Context, *Store) error
 	}{
 		{"active_apply", func(ctx context.Context, s *Store) error {

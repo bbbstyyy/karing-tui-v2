@@ -13,7 +13,7 @@ import (
 
 var (
 	ErrInertRestoreFenceUnavailable = errors.New("read-only restore fence unavailable")
-	ErrInertRestoreFenceChanged = errors.New("read-only restore fence changed")
+	ErrInertRestoreFenceChanged     = errors.New("read-only restore fence changed")
 )
 
 // InertRestoreFence is a comparable, nonsecret snapshot of committed live
@@ -21,21 +21,21 @@ var (
 // Only a future writer's atomic SQL CAS + operation gate could close the race
 // between this read and any later mutation.
 type InertRestoreFence struct {
-	ConfigRevision uint64
-	AppliedGenerationID int64
-	LastKnownGoodGenerationID int64
-	DeclarationRevision uint64
-	DeclarationSHA256 string
-	SelectionRevision uint64
-	SelectionSHA256 string
-	RoutingMode RoutingMode
-	PrivateDirect bool
-	CoreDesiredState CoreDesiredState
-	AppliedConfigSHA256 string
-	AppliedManifestSHA256 string
-	AppliedSourceMapSHA256 string
-	LastKnownGoodConfigSHA256 string
-	LastKnownGoodManifestSHA256 string
+	ConfigRevision               uint64
+	AppliedGenerationID          int64
+	LastKnownGoodGenerationID    int64
+	DeclarationRevision          uint64
+	DeclarationSHA256            string
+	SelectionRevision            uint64
+	SelectionSHA256              string
+	RoutingMode                  RoutingMode
+	PrivateDirect                bool
+	CoreDesiredState             CoreDesiredState
+	AppliedConfigSHA256          string
+	AppliedManifestSHA256        string
+	AppliedSourceMapSHA256       string
+	LastKnownGoodConfigSHA256    string
+	LastKnownGoodManifestSHA256  string
 	LastKnownGoodSourceMapSHA256 string
 }
 

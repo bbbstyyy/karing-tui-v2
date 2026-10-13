@@ -11,11 +11,11 @@ import (
 
 var (
 	ErrInertRestoreDryRunRejected = errors.New("inert restore dry-run inspection refused")
-	ErrInertRestoreDryRunChanged = errors.New("inert restore dry-run baseline changed")
+	ErrInertRestoreDryRunChanged  = errors.New("inert restore dry-run baseline changed")
 )
 
 const (
-	dryRunAfterInitialFence = "after_initial_fence"
+	dryRunAfterInitialFence    = "after_initial_fence"
 	dryRunAfterCandidateVerify = "after_candidate_verification"
 )
 
@@ -25,15 +25,15 @@ const (
 // A future writer still needs a fresh operation gate, atomic SQL CAS,
 // durable resource lease, isolated materialization and rollback-of-rollback.
 type InertRestoreDryRun struct {
-	ArchiveSHA256 string
-	InventorySHA256 string
-	ArchiveBytes int64
-	Baseline storage.InertRestoreFence
-	ArchiveAuthenticated bool
-	SQLiteSchemaVerified bool
+	ArchiveSHA256            string
+	InventorySHA256          string
+	ArchiveBytes             int64
+	Baseline                 storage.InertRestoreFence
+	ArchiveAuthenticated     bool
+	SQLiteSchemaVerified     bool
 	TargetMetadataCompatible bool
-	RestoreSupported bool
-	RestoreReady bool
+	RestoreSupported         bool
+	RestoreReady             bool
 }
 
 // InspectInertRestoreDryRun never inserts an apply attempt, never reads
@@ -94,15 +94,15 @@ func inspectInertRestoreDryRun(
 		return none, ErrInertRestoreDryRunRejected
 	}
 	return InertRestoreDryRun{
-		ArchiveSHA256: receipt.ArchiveSHA256,
-		InventorySHA256: receipt.InventorySHA256,
-		ArchiveBytes: receipt.ArchiveBytes,
-		Baseline: first,
-		ArchiveAuthenticated: true,
-		SQLiteSchemaVerified: true,
+		ArchiveSHA256:            receipt.ArchiveSHA256,
+		InventorySHA256:          receipt.InventorySHA256,
+		ArchiveBytes:             receipt.ArchiveBytes,
+		Baseline:                 first,
+		ArchiveAuthenticated:     true,
+		SQLiteSchemaVerified:     true,
 		TargetMetadataCompatible: receipt.TargetMetadataCompatible,
-		RestoreSupported: false,
-		RestoreReady: false,
+		RestoreSupported:         false,
+		RestoreReady:             false,
 	}, nil
 }
 

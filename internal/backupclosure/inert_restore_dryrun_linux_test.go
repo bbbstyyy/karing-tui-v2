@@ -85,8 +85,8 @@ func TestInertRestoreDryRunIsReadOnlyAndAlwaysUnauthorized(t *testing.T) {
 
 func TestInertRestoreDryRunFaultInjectionCatchesLiveChanges(t *testing.T) {
 	for _, scenario := range []struct {
-		name string
-		at string
+		name   string
+		at     string
 		change func(*testing.T, *fixture)
 	}{
 		{"selection_after_fence", dryRunAfterInitialFence, func(t *testing.T, f *fixture) {
@@ -209,8 +209,7 @@ func TestInertRestoreDryRunRecheckRefusesStaleAndForgedEvidence(t *testing.T) {
 		[]byte(`{"kind":"specific_node","profile_id":"one","node_id":"two"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecheckInertRestoreDryRun(ctx, f.store, candidate, key, original);
-		!errors.Is(err, ErrInertRestoreDryRunChanged) {
+	if err := RecheckInertRestoreDryRun(ctx, f.store, candidate, key, original); !errors.Is(err, ErrInertRestoreDryRunChanged) {
 		t.Fatalf("stale preflight did not fail recheck: %v", err)
 	}
 }
@@ -262,4 +261,3 @@ func TestInertRestoreDryRunRequiresLockedCandidate(t *testing.T) {
 		t.Fatalf("closed candidate was removed: %v", err)
 	}
 }
-
