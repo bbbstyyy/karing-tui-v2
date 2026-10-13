@@ -84,8 +84,7 @@ func TestInertRestoreCandidateCiphertextRoundTripAndPersistence(t *testing.T) {
 		report.ArchiveSHA256 != receipt.ArchiveSHA256 {
 		t.Fatalf("candidate generated restore authority or failed verification: %+v %v", report, err)
 	}
-	if _, err := ReopenInertRestoreCandidate(context.Background(), location, key);
-		!errors.Is(err, ErrInertRestoreCandidateBusy) {
+	if _, err := ReopenInertRestoreCandidate(context.Background(), location, key); !errors.Is(err, ErrInertRestoreCandidateBusy) {
 		t.Fatalf("active candidate lease was stolen: %v", err)
 	}
 	if err := candidate.Close(); err != nil {
@@ -139,8 +138,7 @@ func TestInertRestoreCandidateWrongKeyAndTamperingFailClosed(t *testing.T) {
 	}
 	parent := newInertCandidateParent(t, f.stateRoot)
 	wrong := testSealedKey(t)
-	if _, err := StageInertRestoreCandidate(context.Background(), source, parent, wrong);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if _, err := StageInertRestoreCandidate(context.Background(), source, parent, wrong); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("wrong source key accepted: %v", err)
 	}
 	if entries, err := os.ReadDir(parent); err != nil || len(entries) != 0 {
@@ -159,15 +157,13 @@ func TestInertRestoreCandidateWrongKeyAndTamperingFailClosed(t *testing.T) {
 	if err := os.WriteFile(path, buf, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := c.Verify(context.Background(), key);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) || !reflect.DeepEqual(result, InertArchivePreflight{}) {
+	if result, err := c.Verify(context.Background(), key); !errors.Is(err, ErrUnsafeInertRestoreCandidate) || !reflect.DeepEqual(result, InertArchivePreflight{}) {
 		t.Fatalf("corrupted isolated candidate accepted: %+v %v", result, err)
 	}
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReopenInertRestoreCandidate(context.Background(), filepath.Dir(path), key);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if _, err := ReopenInertRestoreCandidate(context.Background(), filepath.Dir(path), key); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("corrupted candidate re-adopted: %v", err)
 	}
 	// Releasing the flock neither hides nor automatically deletes ciphertext.
@@ -196,8 +192,7 @@ func TestInertRestoreCandidateRefusesUnknownAndUnsafeScopes(t *testing.T) {
 	if err := os.WriteFile(unknown, []byte("unrelated"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := StageInertRestoreCandidate(context.Background(), source, parent, key);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if _, err := StageInertRestoreCandidate(context.Background(), source, parent, key); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("stage accepted unexpected parent entry: %v", err)
 	}
 	if err := os.Remove(unknown); err != nil {
@@ -217,8 +212,7 @@ func TestInertRestoreCandidateRefusesUnknownAndUnsafeScopes(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(scope, "unknown.txt")); err != nil {
 		t.Fatalf("unknown file was deleted: %v", err)
 	}
-	if _, err := ReopenInertRestoreCandidate(context.Background(), scope, key);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if _, err := ReopenInertRestoreCandidate(context.Background(), scope, key); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("candidate with unknown files re-adopted: %v", err)
 	}
 	if _, err := os.Lstat(scope); err != nil {
@@ -247,8 +241,7 @@ func TestInertRestoreCandidateDoesNotPruneAtCapacity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := StageInertRestoreCandidate(context.Background(), source, parent, key);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if _, err := StageInertRestoreCandidate(context.Background(), source, parent, key); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("more than eight candidate scopes accepted: %v", err)
 	}
 	entries, err := os.ReadDir(parent)
@@ -325,8 +318,7 @@ func TestInertRestoreCandidateLeaseSurvivesProcessCrash(t *testing.T) {
 	if _, err := io.ReadFull(out, prefix); err != nil || string(prefix) != "ready\n" {
 		t.Fatalf("child did not acquire candidate flock: %q %v", prefix, err)
 	}
-	if _, err := ReopenInertRestoreCandidate(context.Background(), location, key);
-		!errors.Is(err, ErrInertRestoreCandidateBusy) {
+	if _, err := ReopenInertRestoreCandidate(context.Background(), location, key); !errors.Is(err, ErrInertRestoreCandidateBusy) {
 		t.Fatalf("live child lease was stolen: %v", err)
 	}
 	if err := cmd.Process.Kill(); err != nil {
@@ -338,8 +330,7 @@ func TestInertRestoreCandidateLeaseSurvivesProcessCrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("crash recovery could not re-authenticate candidate: %v", err)
 	}
-	if report, err := reopened.Verify(context.Background(), key);
-		err != nil || !report.SQLiteLogicalVerified || report.RestoreReady {
+	if report, err := reopened.Verify(context.Background(), key); err != nil || !report.SQLiteLogicalVerified || report.RestoreReady {
 		t.Fatalf("restarted candidate had unsafe report: %+v %v", report, err)
 	}
 	if err := reopened.Discard(context.Background()); err != nil {

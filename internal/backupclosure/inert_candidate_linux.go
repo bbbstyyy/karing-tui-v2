@@ -16,14 +16,14 @@ import (
 )
 
 const (
-	MaxInertRestoreCandidates = 8
+	MaxInertRestoreCandidates   = 8
 	inertRestoreCandidatePrefix = ".ktui-restore-v1-"
-	inertRestoreCipherName = "candidate.ktbackup"
+	inertRestoreCipherName      = "candidate.ktbackup"
 )
 
 var (
 	ErrUnsafeInertRestoreCandidate = errors.New("inert encrypted restore candidate refused")
-	ErrInertRestoreCandidateBusy = errors.New("inert encrypted restore candidate has an active lease")
+	ErrInertRestoreCandidateBusy   = errors.New("inert encrypted restore candidate has an active lease")
 )
 
 // InertRestoreCandidate represents an EXCLUSIVE, cross-process Linux flock
@@ -35,13 +35,13 @@ var (
 // full authentication and SQLite/domain preflight before re-adoption. This
 // is NOT a durable activation lease, a restore permit, or a backup index.
 type InertRestoreCandidate struct {
-	mu sync.Mutex
-	directory string
-	parent string
-	archive string
-	dir *os.File
+	mu                sync.Mutex
+	directory         string
+	parent            string
+	archive           string
+	dir               *os.File
 	directoryIdentity os.FileInfo
-	receipt InertArchivePreflight
+	receipt           InertArchivePreflight
 }
 
 func validInertRestoreCandidateDir(path string) bool {
@@ -106,10 +106,10 @@ func openLockedInertRestoreCandidate(path string) (*InertRestoreCandidate, error
 		return nil, err
 	}
 	return &InertRestoreCandidate{
-		directory: path,
-		parent: filepath.Dir(path),
-		archive: filepath.Join(path, inertRestoreCipherName),
-		dir: lock,
+		directory:         path,
+		parent:            filepath.Dir(path),
+		archive:           filepath.Join(path, inertRestoreCipherName),
+		dir:               lock,
 		directoryIdentity: identity,
 	}, nil
 }
@@ -120,7 +120,7 @@ func inspectCandidateParent(ctx context.Context, lock *os.File) (int, error) {
 	if ctx == nil || lock == nil {
 		return 0, ErrUnsafeInertRestoreCandidate
 	}
-	entries, err := lock.ReadDir(MaxInertRestoreCandidates+1)
+	entries, err := lock.ReadDir(MaxInertRestoreCandidates + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return 0, ErrUnsafeInertRestoreCandidate
 	}
