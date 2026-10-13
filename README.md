@@ -297,3 +297,7 @@ The internal `backupclosure.PreflightInertArchive` performs a read-only, full-au
 ## Internal authenticated SQLite archive verification (M4)
 
 After encryption and resource validation, internal recovery preflight now independently deserializes an authenticated SQLite payload of at most 64 MiB **in memory only**, runs SQLite integrity and foreign-key checks, verifies schema migrations and declarations, and binds historical compiler manifests, configurations and local rules to the archive inventory. It rejects cryptographically valid but relationally inconsistent snapshots, never writes a plaintext database, and never exposes a backup restore/activation API. `RestoreSupported=false` and `RestoreReady=false` remain mandatory. See [ADR 0102](docs/adr/0102-in-memory-authenticated-sqlite-logical-verification.md).
+
+## Archive schema and profile consistency checks (internal, M4)
+
+The internal preflight now compares the archive's entire SQLite schema against an independently migrated in-memory reference built from the pinned storage migrations, and audits profile snapshots, node payload hashes, subscription source metadata, overlay records and selection JSON under strict count and size limits. It returns only redacted metadata and rejects cryptographically valid archives with forged DDL or inconsistent profile state. **Not a recovery feature:** no data import or activation, no durable backup key custody, and no restore permission. See [ADR 0103](docs/adr/0103-archived-sqlite-schema-profile-audit.md).

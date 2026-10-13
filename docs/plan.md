@@ -1347,3 +1347,10 @@ docs/
 - 严格 `PRAGMA integrity_check`、`foreign_key_check`、17 条完整迁移记录、声明修订/父子关系与文档 SHA、数据库单例状态；复用编译器强验证检查全部保留代际的配置/manifest/source-map、声明引用、原生 local 规则路径，并与已认证的归档规则闭包逐项比对。报告只增加 `SQLiteLogicalVerified` 与 `DeclarationCount`，不输出私密明文、SQL 错误或原始路径。
 - 内存预算先限 **64 MiB SQLite 载荷**（与现有 768 MiB 加密运输预算不同）：超限一律拒绝预检，不进行大内存反序列化。经过重新签封且 MAC/资源摘要均正确、但声明/代际/schema/FK 不一致的归档也必须拒绝。
 - **仍未完成**：完整 DDL / 未引用领域表的语义鉴定、跨版本数据迁移、大库分块验证、真实资源跨重启租约、隔离恢复、CAS 应用与二次回滚。所有 `RestoreSupported=false`、`RestoreReady=false`，没有 HTTP/CLI/TUI 恢复入口；T15/T23/M4/M5 保持开放。
+
+### 2026-10-13 M4 加密归档 Schema 精确校验与订阅节点领域审计
+
+- ADR 0103：在完整加密 HMAC、资源摘要、三遍整档绑定与内存 SQLite `integrity_check` / FK 检验之后，用另一个**独立内存数据库**按当前 `storage.Store.migrate` 原始代码建立 17 版标准 schema，并与归档 `sqlite_schema` 全部表、索引、内部自动索引及触发器目录精确比较（128 对象 / 1 MiB DDL 上限）；禁止伪造 `schema_migrations` 但篡改表、索引或触发器通过。
+- 对最多 4096 个 Profile 快照及 65536 个节点，校验快照来源、节点 ID / 原始键、连续序号、1 MiB 单节点 JSON 与 SHA-256、64 MiB 单快照载荷，以及 current/previous 快照是否属于对应 profile；最多 2048 个订阅源和 65536 个节点覆盖使用现有 `scanProfileSource` / `scanProfileNodeOverlay` 规范校验，补充选择意图 JSON 与时间戳验证。
+- 返回摘要只含 `SchemaCatalogVerified`、Profile / 节点 / 订阅源 / 覆盖数量；不暴露订阅链接、节点配置或错误原文。通过重新加密认证的异常结构及异常节点数据必须在逻辑审计阶段拒绝，且不写任何明文数据库或修改当前运行配置。
+- 该审计**不授予恢复资格**：暂不处理超过 64 MiB 的 SQLite 内存预检、跨版本迁移、持久候选隔离租约、完整应用日志语义及 CAS / 二层失败回滚。保留 `RestoreSupported=false`、`RestoreReady=false` 和全部 T15/T23/M4/M5 发布阻断。

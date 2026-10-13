@@ -49,7 +49,8 @@ func TestPreflightInertArchiveOfflineAndNoSensitiveOutput(t *testing.T) {
 		report.RuleSetBytes != int64(len(f.ruleData)) ||
 		report.CoreIncluded || report.TargetMetadataCompatible ||
 		!report.ContainsCredentials || !report.ResourceDigestsVerified ||
-		!report.SQLiteLogicalVerified || report.DeclarationCount != 1 ||
+		!report.SQLiteLogicalVerified || !report.SchemaCatalogVerified ||
+		report.DeclarationCount != 1 ||
 		!report.ComparedWithCurrent || report.DatabaseDifferent ||
 		report.Generations.Shared != 1 ||
 		report.RuleSets.Shared != 1 ||

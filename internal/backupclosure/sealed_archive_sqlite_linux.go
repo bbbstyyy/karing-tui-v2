@@ -144,26 +144,26 @@ func readAuthenticatedSQLiteBytes(
 // connection to the authoritative live database.
 func verifyInMemoryArchiveSQLite(
 	ctx context.Context, sqliteBytes []byte, inventory Inventory,
-) (declarations int, err error) {
+) (declarations int, domains storage.ArchiveDomainCounts, err error) {
 	if ctx == nil || len(sqliteBytes) < 512 ||
 		int64(len(sqliteBytes)) > MaxInMemoryArchiveSQLiteBytes ||
 		int64(len(sqliteBytes)) != inventory.DatabaseBytes ||
 		!bytes.HasPrefix(sqliteBytes, []byte("SQLite format 3\x00")) ||
 		shaHex(sqliteBytes) != inventory.DatabaseSHA256 {
-		return 0, ErrArchiveLogicalVerification
+		return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, storage.ArchiveDomainCounts{}, err
 	}
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		return 0, ErrArchiveLogicalVerification
+		return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return 0, ErrArchiveLogicalVerification
+		return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 	}
 	defer conn.Close()
 	if err := conn.Raw(func(driverConn any) error {
@@ -173,7 +173,7 @@ func verifyInMemoryArchiveSQLite(
 		}
 		return deserializer.Deserialize(sqliteBytes)
 	}); err != nil {
-		return 0, ErrArchiveLogicalVerification
+		return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 	}
 	for _, pragma := range []string{
 		"PRAGMA trusted_schema = OFF",
@@ -182,46 +182,53 @@ func verifyInMemoryArchiveSQLite(
 		"PRAGMA foreign_keys = ON",
 	} {
 		if _, err := conn.ExecContext(ctx, pragma); err != nil {
-			return 0, ErrArchiveLogicalVerification
+			return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 		}
 	}
 	if err := checkArchiveSQLitePragma(ctx, conn, "PRAGMA integrity_check", true); err != nil {
-		return 0, err
+		return 0, storage.ArchiveDomainCounts{}, err
 	}
 	if err := checkArchiveSQLitePragma(ctx, conn, "PRAGMA foreign_key_check", false); err != nil {
-		return 0, err
+		return 0, storage.ArchiveDomainCounts{}, err
 	}
 	if err := validateArchiveMigrations(ctx, conn, inventory.StorageSchema); err != nil {
-		return 0, err
+		return 0, storage.ArchiveDomainCounts{}, err
+	}
+	// Compare the entire SQL DDL/index catalog against a separately
+	// migrated :memory: reference, then inspect bounded subscription/profile
+	// domain rows before accepting even an otherwise valid SQLite image.
+	domains, err = storage.VerifyArchivedSchemaAndDomains(ctx, conn)
+	if err != nil {
+		return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 	}
 	declarations, err = validateArchiveDeclarations(ctx, conn)
 	if err != nil {
-		return 0, err
+		return 0, storage.ArchiveDomainCounts{}, err
 	}
 	if err := validateArchiveSingletonState(ctx, conn, declarations); err != nil {
-		return 0, err
+		return 0, storage.ArchiveDomainCounts{}, err
 	}
 	root, err := inferArchivedStateRoot(ctx, conn)
 	if err != nil {
-		return 0, err
+		return 0, storage.ArchiveDomainCounts{}, err
 	}
 	generations, rules, schema, err := enumerateSnapshot(ctx, conn, root)
 	if err != nil || schema != inventory.StorageSchema ||
 		!reflect.DeepEqual(generations, inventory.Generations) ||
 		len(rules) != len(inventory.RuleSets) {
-		return 0, ErrArchiveLogicalVerification
+		return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 	}
 	for i, rule := range rules {
 		digest := inventory.RuleSets[i]
 		if digest.RelativePath != "rule-sets/sha256/"+filepath.Base(rule.path) ||
 			digest.SHA256 != rule.sha || digest.Format != rule.format {
-			return 0, ErrArchiveLogicalVerification
+			return 0, storage.ArchiveDomainCounts{}, ErrArchiveLogicalVerification
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, storage.ArchiveDomainCounts{}, err
 	}
-	return declarations, nil
+	return declarations, domains, nil
 }
 
 func checkArchiveSQLitePragma(

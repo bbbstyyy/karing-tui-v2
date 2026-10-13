@@ -41,6 +41,11 @@ type InertArchivePreflight struct {
 	ContainsCredentials      bool
 	ResourceDigestsVerified  bool
 	SQLiteLogicalVerified    bool
+	SchemaCatalogVerified    bool
+	ProfileSnapshotCount     int
+	ProfileNodeCount         int
+	ProfileSourceCount       int
+	ProfileOverlayCount      int
 	DeclarationCount         int
 	TargetMetadataCompatible bool
 	Blockers                 []string
@@ -105,7 +110,7 @@ func preflightInertArchive(
 		return empty, ErrUnsafeSealedArchive
 	}
 	defer clear(sqliteBytes)
-	declarationCount, err := verifyInMemoryArchiveSQLite(ctx, sqliteBytes, inventory)
+	declarationCount, domainCounts, err := verifyInMemoryArchiveSQLite(ctx, sqliteBytes, inventory)
 	if err != nil {
 		return empty, ErrUnsafeSealedArchive
 	}
@@ -124,6 +129,11 @@ func preflightInertArchive(
 		ContainsCredentials:     true,
 		ResourceDigestsVerified: true,
 		SQLiteLogicalVerified:   true,
+		SchemaCatalogVerified:   true,
+		ProfileSnapshotCount:    domainCounts.ProfileSnapshots,
+		ProfileNodeCount:        domainCounts.ProfileNodes,
+		ProfileSourceCount:      domainCounts.ProfileSources,
+		ProfileOverlayCount:     domainCounts.ProfileOverlays,
 		DeclarationCount:        declarationCount,
 		RestoreSupported:        false,
 		RestoreReady:            false,
