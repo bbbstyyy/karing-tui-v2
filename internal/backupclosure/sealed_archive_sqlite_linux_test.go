@@ -163,7 +163,7 @@ func TestReauthenticatedInconsistentSQLiteArchiveIsRefused(t *testing.T) {
 	}{
 		{"declaration_hash", "UPDATE declaration_revisions SET document_sha256 = '" + strings.Repeat("f", 64) + "' WHERE revision = 1", nil},
 		{"generation_hash", "UPDATE generations SET config_sha256 = '" + strings.Repeat("a", 64) + "' WHERE id = 1", nil},
-		{"schema_version", "UPDATE schema_migrations SET version = 18 WHERE version = 17", nil},
+		{"schema_version", "UPDATE schema_migrations SET version = 19 WHERE version = 17", nil},
 		{"orphan_foreign_key", "UPDATE daemon_state SET applied_generation_id = 999999 WHERE singleton = 1", nil},
 		{"invalid_sqlite_header", "", func(input []byte) []byte {
 			input[0] ^= 0x20
