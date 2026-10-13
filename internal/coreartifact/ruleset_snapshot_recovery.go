@@ -121,6 +121,19 @@ func isSnapshotRuleFileName(name string) bool {
 		hex.EncodeToString(decoded) == digest
 }
 
+// Core binaries are only recognized in the versioned approved-core copy
+// form. Older binaries never created this filename; old readers fail closed.
+func isSnapshotCoreFileName(name string) bool {
+	const prefix = "core-"
+	if len(name) != len(prefix)+64+len(".bin") ||
+		!strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".bin") {
+		return false
+	}
+	value := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".bin")
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == 32 && hex.EncodeToString(decoded) == value
+}
+
 type snapshotRecoverableEntry struct {
 	name     string
 	identity os.FileInfo
@@ -133,34 +146,51 @@ func inspectRecoverableSnapshot(
 		return nil, err
 	}
 	// File.ReadDir(n) never materializes an unbounded directory listing.
-	entries, err := lock.ReadDir(MaxRuleSetSnapshotFiles + 1)
+	entries, err := lock.ReadDir(MaxRuleSetSnapshotFiles + 2)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, ErrUnsafeRuleSetSnapshot
 	}
-	if len(entries) > MaxRuleSetSnapshotFiles {
+	if len(entries) > MaxRuleSetSnapshotFiles+1 {
 		return nil, ErrUnsafeRuleSetSnapshot
 	}
-	total := int64(0)
+	totalRules := int64(0)
+	totalCore := int64(0)
+	coreCount := 0
+	ruleCount := 0
 	verified := make([]snapshotRecoverableEntry, 0, len(entries))
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !isSnapshotRuleFileName(entry.Name()) {
+		isRule := isSnapshotRuleFileName(entry.Name())
+		isCore := isSnapshotCoreFileName(entry.Name())
+		if !isRule && !isCore {
 			return nil, ErrUnsafeRuleSetSnapshot
 		}
 		info, err := os.Lstat(filepath.Join(dir, entry.Name()))
 		if err != nil || !info.Mode().IsRegular() ||
 			(info.Mode().Perm() != 0o400 && info.Mode().Perm() != 0o600) ||
-			info.Size() < 0 || info.Size() > MaxRuleSetUploadBytes {
+			info.Size() < 0 {
 			return nil, ErrUnsafeRuleSetSnapshot
+		}
+		if isCore {
+			coreCount++
+			totalCore += info.Size()
+			if coreCount > 1 || info.Size() > MaxPinnedCoreBytes ||
+				totalCore > MaxPinnedCoreBytes {
+				return nil, ErrUnsafeRuleSetSnapshot
+			}
+		} else {
+			ruleCount++
+			totalRules += info.Size()
+			if ruleCount > MaxRuleSetSnapshotFiles ||
+				info.Size() > MaxRuleSetUploadBytes ||
+				totalRules > MaxRuleSetSnapshotBytes {
+				return nil, ErrUnsafeRuleSetSnapshot
+			}
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		if !ok || int(stat.Uid) != os.Getuid() || stat.Nlink != 1 {
-			return nil, ErrUnsafeRuleSetSnapshot
-		}
-		total += info.Size()
-		if total > MaxRuleSetSnapshotBytes {
 			return nil, ErrUnsafeRuleSetSnapshot
 		}
 		verified = append(verified, snapshotRecoverableEntry{name: entry.Name(), identity: info})
@@ -171,8 +201,9 @@ func inspectRecoverableSnapshot(
 // ReclaimOrphanedRuleSetSnapshots is a bounded, opt-in recovery operation.
 // The caller must never invoke it as a reason to stop a healthy core. A scope
 // currently locked by another process is skipped, not treated as stale.
-// Only the known private .check-* scopes and SHA-256.json/.srs files are
-// deleted. Unexpected entries fail closed without recursive deletion.
+// Only private .check-* scopes and SHA-256.json/.srs or one approved
+// core-<sha256>.bin copy are deleted. Unexpected entries fail closed without
+// recursive deletion.
 func ReclaimOrphanedRuleSetSnapshots(
 	ctx context.Context, coreRoot string,
 ) (RuleSetSnapshotRecoveryReport, error) {

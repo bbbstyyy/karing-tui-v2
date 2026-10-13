@@ -22,6 +22,7 @@ import (
 
 const (
 	ManifestVersion        = "karing-tui-v2-internal-resource-closure-v1"
+	CoreManifestVersion    = "karing-tui-v2-internal-resource-closure-v2"
 	MaxClosureGenerations  = 32
 	MaxClosureRuleSets     = 128
 	MaxClosureRuleBytes    = int64(128 << 20)
@@ -47,6 +48,17 @@ type RuleDigest struct {
 	Size         int64                  `json:"size"`
 }
 
+// CoreDigest records the approved core's identity without retaining its
+// absolute executable path or granting permission to execute a copied file.
+type CoreDigest struct {
+	RelativePath string `json:"relative_path"`
+	Architecture string `json:"architecture"`
+	CandidateCommit string `json:"candidate_commit"`
+	Version string `json:"version"`
+	SHA256 string `json:"sha256"`
+	Size int64 `json:"size"`
+}
+
 // Inventory contains only bounded hashes and relative content-addressed paths.
 // It is internal verification evidence, never an archive, restore token or API.
 type Inventory struct {
@@ -56,6 +68,7 @@ type Inventory struct {
 	DatabaseBytes       int64              `json:"database_bytes"`
 	Generations         []GenerationDigest `json:"generations"`
 	RuleSets            []RuleDigest       `json:"rule_sets"`
+	Core                *CoreDigest        `json:"core,omitempty"`
 	ContainsCredentials bool               `json:"contains_credentials"`
 	RestoreReady        bool               `json:"restore_ready"`
 }
@@ -76,6 +89,7 @@ type Closure struct {
 	InventorySHA256 string
 	copies          *coreartifact.RuleSetSnapshot
 	pins            []pinnedRule
+	corePin         *coreartifact.CorePin
 	closed          bool
 }
 
@@ -87,9 +101,28 @@ func Build(ctx context.Context, store *storage.Store, stateRoot, privateSnapshot
 	return build(ctx, store, stateRoot, privateSnapshotParent, nil)
 }
 
+// BuildWithApprovedCore binds the repository-locked native Linux executable to
+// the SQLite and rule-set closure. The copied binary is inert, private, and
+// deliberately non-executable; no daemon or user API invokes this method.
+func BuildWithApprovedCore(
+	ctx context.Context, store *storage.Store, stateRoot, privateSnapshotParent, approvedCorePath string,
+) (*Closure, error) {
+	if approvedCorePath == "" {
+		return nil, ErrUnsafeClosure
+	}
+	return buildWithCore(ctx, store, stateRoot, privateSnapshotParent, approvedCorePath, nil)
+}
+
 // afterCopy is a deterministic internal test injection seam: it never runs in
 // the public Build path and cannot be invoked through a daemon client.
-func build(ctx context.Context, store *storage.Store, stateRoot, privateSnapshotParent string, afterCopy func(*Closure)) (_ *Closure, err error) {
+func build(ctx context.Context, store *storage.Store, stateRoot, privateSnapshotParent string, afterCopy func(*Closure)) (*Closure, error) {
+	return buildWithCore(ctx, store, stateRoot, privateSnapshotParent, "", afterCopy)
+}
+
+func buildWithCore(
+	ctx context.Context, store *storage.Store, stateRoot, privateSnapshotParent, approvedCorePath string,
+	afterCopy func(*Closure),
+) (_ *Closure, err error) {
 	if ctx == nil || store == nil || stateRoot == "" || !filepath.IsAbs(stateRoot) ||
 		filepath.Clean(stateRoot) != stateRoot {
 		return nil, ErrUnsafeClosure
@@ -171,12 +204,33 @@ func build(ctx context.Context, store *storage.Store, stateRoot, privateSnapshot
 			SHA256:       item.sha, Format: item.format, Size: size,
 		})
 	}
-	if len(closure.pins) != 0 {
+	if approvedCorePath != "" {
+		closure.corePin, err = coreartifact.PinApprovedCore(ctx, approvedCorePath)
+		if err != nil {
+			return nil, ErrUnsafeClosure
+		}
+		closure.Inventory.Format = CoreManifestVersion
+		closure.Inventory.Core = &CoreDigest{
+			RelativePath: "core/" + closure.corePin.SHA256() + ".bin",
+			Architecture: closure.corePin.Architecture(),
+			CandidateCommit: coreartifact.CandidateCommit,
+			Version: coreartifact.CandidateVersion,
+			SHA256: closure.corePin.SHA256(),
+			Size: closure.corePin.Size(),
+		}
+	}
+	if len(closure.pins) != 0 || closure.corePin != nil {
 		pins := make([]*coreartifact.RuleSetPin, 0, len(closure.pins))
 		for _, pin := range closure.pins {
 			pins = append(pins, pin.pin)
 		}
-		closure.copies, err = coreartifact.StagePinnedRuleSetSnapshot(ctx, filepath.Join(stateRoot, "core"), pins)
+		if closure.corePin != nil {
+			closure.copies, err = coreartifact.StagePinnedRuleSetSnapshotWithCore(
+				ctx, filepath.Join(stateRoot, "core"), pins, closure.corePin)
+		} else {
+			closure.copies, err = coreartifact.StagePinnedRuleSetSnapshot(
+				ctx, filepath.Join(stateRoot, "core"), pins)
+		}
 		if err != nil {
 			return nil, ErrUnsafeClosure
 		}
@@ -427,6 +481,25 @@ func (c *Closure) Verify(ctx context.Context) error {
 			return ErrUnsafeClosure
 		}
 	}
+	if c.corePin != nil {
+		core := c.Inventory.Core
+		if core == nil || c.Inventory.Format != CoreManifestVersion ||
+			core.SHA256 != c.corePin.SHA256() ||
+			core.Size != c.corePin.Size() ||
+			core.Architecture != c.corePin.Architecture() ||
+			core.CandidateCommit != coreartifact.CandidateCommit ||
+			core.Version != coreartifact.CandidateVersion ||
+			core.RelativePath != "core/"+c.corePin.SHA256()+".bin" ||
+			c.corePin.Reverify(ctx) != nil || c.copies == nil {
+			return ErrUnsafeClosure
+		}
+		copyPath, exists := c.copies.CoreFile()
+		if !exists || copyPath == "" {
+			return ErrUnsafeClosure
+		}
+	} else if c.Inventory.Core != nil || c.Inventory.Format != ManifestVersion {
+		return ErrUnsafeClosure
+	}
 	if c.copies != nil {
 		if err := c.copies.Verify(ctx); err != nil {
 			return ErrUnsafeClosure
@@ -463,6 +536,11 @@ func (c *Closure) Close() error {
 	}
 	for _, item := range c.pins {
 		if err := item.pin.Close(); err != nil {
+			errs = append(errs, ErrUnsafeClosure)
+		}
+	}
+	if c.corePin != nil {
+		if err := c.corePin.Close(); err != nil {
 			errs = append(errs, ErrUnsafeClosure)
 		}
 	}

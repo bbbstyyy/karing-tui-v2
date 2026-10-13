@@ -245,3 +245,7 @@ Internal snapshot staging now coordinates scoped `flock` leases with a bounded p
 ## M4 database-consistent ephemeral rule-resource closure
 
 ADR 0096 introduces an internal-only, 90-second-bounded snapshot inventory: it reads all retained generation provenance from a single immutable SQLite snapshot, verifies native local rule paths, hashes and declaration bindings, then temporarily pins/copies the deduplicated external rule files. The canonical in-memory inventory contains only relative rule digests, generation digest references and the SQLite copy hash. Unknown legacy generations and unsafe resource states fail closed. This is **not a durable resource lease** and does not package the pinned core binary or grant manual restore; backup export and restore remain unsupported.
+
+## M4 approved-core ephemeral binary closure (non-executable)
+
+ADR 0097 binds the approved Linux core's locked version/architecture/commit/SHA-256 into an **internal v2** database/rule inventory. The source executable remains inode-pinned, and an independent non-executable 0400 copy is checked within the existing bounded, flock-held rule snapshot scope; the orphan scavenger recognizes this single new file type and rejects unknown entries. `BuildWithApprovedCore` admits only lock-approved hashes; v1 `Build` still omits the core explicitly. The real approved core is exercised by managed-core-integration. No durable archive, recovery authorization, historical restore, CLI/API/TUI backup or release approval follows from this evidence.

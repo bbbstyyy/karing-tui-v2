@@ -38,6 +38,7 @@ type RuleSetSnapshot struct {
 	files              []snapshotFile
 	lock               *os.File // exclusive flock on directory inode, held through Close
 	nativeConfigStaged bool     // ephemeral native JSON only, not a generation file
+	coreName           string   // optional approved-core private copy
 	closed             bool
 }
 
@@ -55,6 +56,15 @@ func (s *RuleSetSnapshot) FileFor(source string) (string, bool) {
 	return "", false
 }
 
+// CoreFile returns the approved-core copy only while its directory lock is
+// held. The copy is deliberately non-executable and never activated.
+func (s *RuleSetSnapshot) CoreFile() (string, bool) {
+	if s == nil || s.closed || s.coreName == "" {
+		return "", false
+	}
+	return filepath.Join(s.dir, s.coreName), true
+}
+
 // StagePinnedRuleSetSnapshot copies each distinct pinned, verified inode to
 // a private directory on the same filesystem. Files are independent copies,
 // not hard links to mutable content-addressed source files. Each copy is
@@ -64,11 +74,32 @@ func (s *RuleSetSnapshot) FileFor(source string) (string, bool) {
 // core Check. This staging itself does not change the runtime's rule paths.
 func StagePinnedRuleSetSnapshot(
 	ctx context.Context, coreRoot string, pins []*RuleSetPin,
+) (*RuleSetSnapshot, error) {
+	return stagePinnedRuleSetSnapshot(ctx, coreRoot, pins, nil)
+}
+
+// StagePinnedRuleSetSnapshotWithCore stages an additional verified core copy
+// within the SAME parent/child flock and bounded orphan-reclamation regime.
+// Only a PinApprovedCore result should be used by production callers.
+func StagePinnedRuleSetSnapshotWithCore(
+	ctx context.Context, coreRoot string, pins []*RuleSetPin, core *CorePin,
+) (*RuleSetSnapshot, error) {
+	if core == nil || core.Architecture() == "" {
+		return nil, ErrUnsafeRuleSetSnapshot
+	}
+	return stagePinnedRuleSetSnapshot(ctx, coreRoot, pins, core)
+}
+
+func stagePinnedRuleSetSnapshot(
+	ctx context.Context, coreRoot string, pins []*RuleSetPin, core *CorePin,
 ) (_ *RuleSetSnapshot, err error) {
+	if ctx == nil {
+		return nil, ErrUnsafeRuleSetSnapshot
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(pins) == 0 {
+	if len(pins) == 0 && core == nil {
 		return &RuleSetSnapshot{}, nil
 	}
 	if len(pins) > MaxRuleSetSnapshotFiles || coreRoot == "" ||
@@ -183,6 +214,43 @@ func StagePinnedRuleSetSnapshot(
 		}
 		seen[name] = pin.path
 	}
+	if core != nil {
+		if err := core.Reverify(ctx); err != nil {
+			return nil, ErrUnsafeRuleSetSnapshot
+		}
+		if core.Size() <= 0 || core.Size() > MaxPinnedCoreBytes {
+			return nil, ErrUnsafeRuleSetSnapshot
+		}
+		name := "core-" + core.SHA256() + ".bin"
+		path := filepath.Join(dir, name)
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return nil, ErrUnsafeRuleSetSnapshot
+		}
+		info, statErr := file.Stat()
+		if statErr != nil {
+			_ = file.Close()
+			return nil, ErrUnsafeRuleSetSnapshot
+		}
+		snapshot.coreName = name
+		snapshot.files = append(snapshot.files, snapshotFile{
+			name: name, hash: core.SHA256(), size: core.Size(), identity: info,
+		})
+		n, copyErr := core.CopyVerified(ctx, file)
+		if copyErr == nil && n != core.Size() {
+			copyErr = ErrCorePinChanged
+		}
+		if copyErr == nil {
+			copyErr = file.Chmod(0o400)
+		}
+		if copyErr == nil {
+			copyErr = file.Sync()
+		}
+		copyErr = errors.Join(copyErr, file.Close())
+		if copyErr != nil || verifyIsolatedCore(ctx, path, core.SHA256(), core.Size()) != nil {
+			return nil, ErrUnsafeRuleSetSnapshot
+		}
+	}
 	if err := syncDir(dir); err != nil {
 		return nil, err
 	}
@@ -263,7 +331,11 @@ func (s *RuleSetSnapshot) Verify(ctx context.Context) error {
 			info.Mode().Perm() != 0o400 {
 			return ErrUnsafeRuleSetSnapshot
 		}
-		if err := VerifyRuleSet(path, entry.hash); err != nil {
+		if s.coreName != "" && entry.name == s.coreName {
+			if err := verifyIsolatedCore(ctx, path, entry.hash, entry.size); err != nil {
+				return ErrUnsafeRuleSetSnapshot
+			}
+		} else if err := VerifyRuleSet(path, entry.hash); err != nil {
 			return ErrUnsafeRuleSetSnapshot
 		}
 	}

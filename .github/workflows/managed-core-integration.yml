@@ -11,6 +11,7 @@ on:
       - 'internal/core/**'
       - 'internal/coreapi/**'
       - 'internal/coreartifact/**'
+      - 'internal/backupclosure/**'
       - 'internal/domain/**'
       - 'internal/storage/**'
       - 'resources/core-entry/**'
@@ -48,3 +49,9 @@ jobs:
           DISPLAY: ''
           WAYLAND_DISPLAY: ''
         run: go test -tags=integration ./internal/daemon -run TestManagedCoreReal -count=1 -v
+      - name: Verify approved-core backup closure without activation
+        env:
+          KARING_TUI_TEST_CORE: ${{ runner.temp }}/karing-tui-core
+          DISPLAY: ''
+          WAYLAND_DISPLAY: ''
+        run: go test -tags=integration ./internal/backupclosure -run TestApprovedCoreClosureWithRealBinary -count=1 -v
