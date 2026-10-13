@@ -16,18 +16,18 @@ import (
 const (
 	maxInertRestorePreparations = 32
 	maxInertRestoreArchiveBytes = int64(2 << 30)
-	inertRestoreScopePrefix = ".ktui-restore-v1-"
+	inertRestoreScopePrefix     = ".ktui-restore-v1-"
 )
 
 var (
 	ErrInertRestorePreparationRefused = errors.New("inert restore preparation refused")
-	ErrInertRestorePreparationBusy = errors.New("inert restore preparation already pending")
+	ErrInertRestorePreparationBusy    = errors.New("inert restore preparation already pending")
 )
 
 type InertRestorePreparationPhase string
 
 const (
-	InertRestorePrepared InertRestorePreparationPhase = "prepared"
+	InertRestorePrepared  InertRestorePreparationPhase = "prepared"
 	InertRestoreAbandoned InertRestorePreparationPhase = "abandoned"
 )
 
@@ -36,28 +36,28 @@ const (
 // merely records that a ciphertext-only candidate passed the transient CAS.
 // In particular it is NEVER consumed by apply_journal or RecoverInterrupted.
 type InertRestorePreparation struct {
-	ID int64
-	CandidateScope string
-	ArchiveSHA256 string
-	InventorySHA256 string
-	ArchiveBytes int64
-	Baseline InertRestoreFence
-	Phase InertRestorePreparationPhase
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID                   int64
+	CandidateScope       string
+	ArchiveSHA256        string
+	InventorySHA256      string
+	ArchiveBytes         int64
+	Baseline             InertRestoreFence
+	Phase                InertRestorePreparationPhase
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 	RequiresRevalidation bool
-	RestoreSupported bool
-	RestoreReady bool
+	RestoreSupported     bool
+	RestoreReady         bool
 }
 
 // The input does not contain a candidate path, plaintext, encryption key,
 // SQL payload, or arbitrary DDL. Scope is a checked single path component.
 type InertRestorePreparationInput struct {
-	CandidateScope string
-	ArchiveSHA256 string
+	CandidateScope  string
+	ArchiveSHA256   string
 	InventorySHA256 string
-	ArchiveBytes int64
-	Baseline InertRestoreFence
+	ArchiveBytes    int64
+	Baseline        InertRestoreFence
 }
 
 func validInertRestoreScope(value string) bool {
@@ -180,10 +180,10 @@ func (s *Store) prepareInertRestoreRecord(
 	}
 	return InertRestorePreparation{
 		ID: id, CandidateScope: in.CandidateScope,
-		ArchiveSHA256: in.ArchiveSHA256,
+		ArchiveSHA256:   in.ArchiveSHA256,
 		InventorySHA256: in.InventorySHA256,
-		ArchiveBytes: in.ArchiveBytes,
-		Baseline: in.Baseline, Phase: InertRestorePrepared,
+		ArchiveBytes:    in.ArchiveBytes,
+		Baseline:        in.Baseline, Phase: InertRestorePrepared,
 		CreatedAt: now, UpdatedAt: now, RequiresRevalidation: true,
 		RestoreSupported: false, RestoreReady: false,
 	}, nil
@@ -222,10 +222,10 @@ func scanInertRestorePreparation(row scanner) (InertRestorePreparation, bool) {
 	}
 	result.Baseline = fence
 	if !validInertRestorePreparationInput(InertRestorePreparationInput{
-		CandidateScope: result.CandidateScope,
-		ArchiveSHA256: result.ArchiveSHA256,
+		CandidateScope:  result.CandidateScope,
+		ArchiveSHA256:   result.ArchiveSHA256,
 		InventorySHA256: result.InventorySHA256,
-		ArchiveBytes: result.ArchiveBytes, Baseline: fence,
+		ArchiveBytes:    result.ArchiveBytes, Baseline: fence,
 	}) ||
 		(result.Phase != InertRestorePrepared &&
 			result.Phase != InertRestoreAbandoned) ||

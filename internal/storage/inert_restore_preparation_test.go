@@ -13,11 +13,11 @@ import (
 
 func inertPreparationInput(fence InertRestoreFence) InertRestorePreparationInput {
 	return InertRestorePreparationInput{
-		CandidateScope: ".ktui-restore-v1-ABC12345",
-		ArchiveSHA256: strings.Repeat("a", 64),
+		CandidateScope:  ".ktui-restore-v1-ABC12345",
+		ArchiveSHA256:   strings.Repeat("a", 64),
 		InventorySHA256: strings.Repeat("b", 64),
-		ArchiveBytes: 42_000,
-		Baseline: fence,
+		ArchiveBytes:    42_000,
+		Baseline:        fence,
 	}
 }
 
@@ -143,8 +143,7 @@ func TestInertRestorePreparationRollsBackInjectedAndCanceledInserts(t *testing.T
 	input := inertPreparationInput(fence)
 	ctx := context.Background()
 	var injected = errors.New("fault injection in transaction")
-	if record, err := s.prepareInertRestoreRecord(ctx, input, func() error { return injected });
-		!errors.Is(err, ErrInertRestorePreparationRefused) || record.ID != 0 {
+	if record, err := s.prepareInertRestoreRecord(ctx, input, func() error { return injected }); !errors.Is(err, ErrInertRestorePreparationRefused) || record.ID != 0 {
 		t.Fatalf("injected error returned a durable record: %+v %v", record, err)
 	}
 	rows, err := s.InspectInertRestoreRecords(ctx)
@@ -182,8 +181,7 @@ func TestInertRestorePreparationRejectsStaleOrForgedInputs(t *testing.T) {
 		case "oversize":
 			input.ArchiveBytes = maxInertRestoreArchiveBytes + 1
 		}
-		if _, err := s.PrepareInertRestoreRecord(context.Background(), input);
-			!errors.Is(err, ErrInertRestorePreparationRefused) {
+		if _, err := s.PrepareInertRestoreRecord(context.Background(), input); !errors.Is(err, ErrInertRestorePreparationRefused) {
 			t.Fatalf("unsafe input %s accepted: %v", kind, err)
 		}
 	}
@@ -191,8 +189,7 @@ func TestInertRestorePreparationRejectsStaleOrForgedInputs(t *testing.T) {
 		[]byte(`{"kind":"specific_node","profile_id":"a","node_id":"b"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PrepareInertRestoreRecord(context.Background(), inertPreparationInput(fence));
-		!errors.Is(err, ErrInertRestoreFenceChanged) {
+	if _, err := s.PrepareInertRestoreRecord(context.Background(), inertPreparationInput(fence)); !errors.Is(err, ErrInertRestoreFenceChanged) {
 		t.Fatalf("stale CAS record was accepted: %v", err)
 	}
 	rows, err := s.InspectInertRestoreRecords(context.Background())

@@ -216,7 +216,6 @@ func TestClosureVerifyBindsInventoryToOpenedSnapshotAndCopies(t *testing.T) {
 	}
 }
 
-
 func TestParseInertInventoryAcceptsV17AndV18ReadOnlySchemas(t *testing.T) {
 	for _, version := range []int{17, 18} {
 		original := sampleInertInventory()

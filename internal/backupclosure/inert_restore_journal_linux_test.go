@@ -30,8 +30,7 @@ func TestInertPreparationJournalCrossRestartStillNeverRestorable(t *testing.T) {
 		record.ArchiveSHA256 != dryRun.ArchiveSHA256 {
 		t.Fatalf("persisted candidate is not inert: %+v %v", record, err)
 	}
-	if _, err := PrepareInertRestoreCandidateRecord(ctx, f.store, candidate, key, dryRun);
-		!errors.Is(err, storage.ErrInertRestorePreparationBusy) {
+	if _, err := PrepareInertRestoreCandidateRecord(ctx, f.store, candidate, key, dryRun); !errors.Is(err, storage.ErrInertRestorePreparationBusy) {
 		t.Fatalf("duplicate preparation was persisted: %v", err)
 	}
 	directory := candidate.Directory()
@@ -64,8 +63,7 @@ func TestInertPreparationJournalCrossRestartStillNeverRestorable(t *testing.T) {
 		record.CandidateScope, record.ArchiveSHA256); err != nil {
 		t.Fatal(err)
 	}
-	if err := RevalidateInertRestoreCandidateRecord(ctx, freshStore, reopened, key, record.ID);
-		!errors.Is(err, ErrInertRestoreJournalRefused) {
+	if err := RevalidateInertRestoreCandidateRecord(ctx, freshStore, reopened, key, record.ID); !errors.Is(err, ErrInertRestoreJournalRefused) {
 		t.Fatalf("abandoned record was still treated as pending: %v", err)
 	}
 	if err := reopened.Discard(ctx); err != nil {
@@ -99,8 +97,7 @@ func TestInertPreparationJournalRefusesStaleCandidateAndLiveDrift(t *testing.T) 
 				original := record
 				record.CandidateScope = ".ktui-restore-v1-OTHER99"
 				if err := f.store.AbandonInertRestoreRecord(ctx,
-					original.ID, record.CandidateScope, original.ArchiveSHA256);
-					!errors.Is(err, storage.ErrInertRestorePreparationRefused) {
+					original.ID, record.CandidateScope, original.ArchiveSHA256); !errors.Is(err, storage.ErrInertRestorePreparationRefused) {
 					t.Fatalf("wrong scope was allowed to abandon record: %v", err)
 				}
 			case "tamper_ciphertext":
@@ -125,14 +122,12 @@ func TestInertPreparationJournalRefusesStaleCandidateAndLiveDrift(t *testing.T) 
 			}
 			if kind != "wrong_scope" {
 				if err := RevalidateInertRestoreCandidateRecord(ctx, f.store,
-					candidate, key, record.ID);
-					!errors.Is(err, ErrInertRestoreJournalRefused) {
+					candidate, key, record.ID); !errors.Is(err, ErrInertRestoreJournalRefused) {
 					t.Fatalf("stale candidate/live state accepted: %v", err)
 				}
 			}
 			if err := f.store.AbandonInertRestoreRecord(ctx,
-				record.ID, ".ktui-restore-v1-OTHER99", record.ArchiveSHA256);
-				!errors.Is(err, storage.ErrInertRestorePreparationRefused) {
+				record.ID, ".ktui-restore-v1-OTHER99", record.ArchiveSHA256); !errors.Is(err, storage.ErrInertRestorePreparationRefused) {
 				t.Fatalf("forged scope cancelled record: %v", err)
 			}
 			if err := f.store.AbandonInertRestoreRecord(ctx,
@@ -153,14 +148,12 @@ func TestInertPreparationJournalNeverAcceptsForgedDryRun(t *testing.T) {
 	}
 	claims := dryRun
 	claims.RestoreReady = true
-	if _, err := PrepareInertRestoreCandidateRecord(ctx, f.store, candidate, key, claims);
-		!errors.Is(err, ErrInertRestoreJournalRefused) {
+	if _, err := PrepareInertRestoreCandidateRecord(ctx, f.store, candidate, key, claims); !errors.Is(err, ErrInertRestoreJournalRefused) {
 		t.Fatalf("forged restore permission entered durable log: %v", err)
 	}
 	claims = dryRun
 	claims.ArchiveSHA256 = "not a digest"
-	if _, err := PrepareInertRestoreCandidateRecord(ctx, f.store, candidate, key, claims);
-		!errors.Is(err, ErrInertRestoreJournalRefused) {
+	if _, err := PrepareInertRestoreCandidateRecord(ctx, f.store, candidate, key, claims); !errors.Is(err, ErrInertRestoreJournalRefused) {
 		t.Fatalf("forged archive hash entered durable log: %v", err)
 	}
 	canceled, cancel := context.WithCancel(ctx)

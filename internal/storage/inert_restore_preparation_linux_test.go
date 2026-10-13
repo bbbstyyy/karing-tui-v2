@@ -116,8 +116,7 @@ func TestInertRestorePreparationSIGKILLBeforeAndAfterCommit(t *testing.T) {
 					!records[0].RequiresRevalidation {
 					t.Fatalf("crash lost or promoted a durable inert row: %+v", records)
 				}
-				if _, err := s.PrepareInertRestoreRecord(ctx, inertPreparationInput(fence));
-					!errors.Is(err, ErrInertRestorePreparationBusy) {
+				if _, err := s.PrepareInertRestoreRecord(ctx, inertPreparationInput(fence)); !errors.Is(err, ErrInertRestorePreparationBusy) {
 					t.Fatalf("SIGKILL reopened a duplicate pending slot: %v", err)
 				}
 				if err := s.AbandonInertRestoreRecord(ctx,

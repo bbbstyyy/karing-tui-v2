@@ -39,11 +39,11 @@ func PrepareInertRestoreCandidateRecord(
 		return none, ErrInertRestoreJournalRefused
 	}
 	input := storage.InertRestorePreparationInput{
-		CandidateScope: filepath.Base(directory),
-		ArchiveSHA256: dryRun.ArchiveSHA256,
+		CandidateScope:  filepath.Base(directory),
+		ArchiveSHA256:   dryRun.ArchiveSHA256,
 		InventorySHA256: dryRun.InventorySHA256,
-		ArchiveBytes: dryRun.ArchiveBytes,
-		Baseline: dryRun.Baseline,
+		ArchiveBytes:    dryRun.ArchiveBytes,
+		Baseline:        dryRun.Baseline,
 	}
 	result, err := live.PrepareInertRestoreRecord(ctx, input)
 	if err != nil {

@@ -809,7 +809,6 @@ func SupportedArchiveSchema(version int) bool {
 	return version >= oldestSupportedArchiveSchema && version <= currentSchemaVersion
 }
 
-
 func (s *Store) migrate(ctx context.Context) error {
 	return s.migrateThrough(ctx, currentSchemaVersion)
 }
@@ -1204,7 +1203,6 @@ func (s *Store) migrateThrough(ctx context.Context, target int) error {
 			return fmt.Errorf("record sqlite migration 17: %w", err)
 		}
 	}
-
 
 	if target >= 18 && (!version.Valid || version.Int64 < 18) {
 		// A separate, never-activating journal; do NOT reuse apply_journal,
