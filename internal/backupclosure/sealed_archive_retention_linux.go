@@ -297,9 +297,14 @@ func createLeasedSealedArchiveTemp(
 	}()
 	report, candidates, err := inspectSealedArchiveDirectory(ctx, lock)
 	closeErr := closeAbandonedSealedArchives(candidates)
+	// Every active v2 temporary reserves one eventual published slot and
+	// its worst-case full archive bytes. Otherwise two parallel writers can
+	// both observe seven published files, pass, and publish a ninth.
 	if err != nil || closeErr != nil || report.AtCapacity ||
-		report.CompletedBytes > MaxRetainedSealedArchiveBytes-requestedBytes ||
-		report.Temporary >= MaxSealedArchiveTemporaryFiles {
+		report.Temporary >= MaxSealedArchiveTemporaryFiles ||
+		report.Completed+report.Temporary >= MaxRetainedSealedArchives ||
+		report.CompletedBytes+int64(report.Temporary)*MaxSealedArchiveBytes >
+			MaxRetainedSealedArchiveBytes-requestedBytes {
 		return nil, ErrUnsafeSealedArchive
 	}
 	file, err = os.CreateTemp(parent, sealedArchiveTemporaryPrefix)
