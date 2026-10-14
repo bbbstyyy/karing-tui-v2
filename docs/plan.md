@@ -1418,3 +1418,11 @@ docs/
 - 本轮返回的是进程内私有、受互斥保护的资源租约对象（不导出路径或 FD）。`Revalidate` 在同一对象内先后重新认证原密文及 SQLite 当前状态、scratch 目录身份和每个资源 inode/权限/内容；`Close` 关闭全部匿名 FD、幂等撤销证据且不触碰持久密文及 journal。任何阶段出错都必须关闭全部已创建的匿名资源，不会留下可见明文文件或修改运行配置。
 - 单个密文候选 lease 同时只允许持有 **一组** 匿名资源集合；显式 Close 后才释放名额，防止连续请求积累 FD 或临时磁盘空间。测试覆盖错误密钥/取消、资源篡改/可执行权限、目录 inode 交换、日志放弃/选择更改、parent Close、阶段故障清理、重复 Pin 限额和并发 Close；真实锁定的 Linux sing-box Core 只作为不可执行匿名 FD 持有、复核并立即关闭。
 - **安全限制**：匿名资源租约仅在进程存活期间有效，SIGKILL/重启不持久；不能将 `Evidence` 当作恢复许可或将匿名 FD 传给 sing-box。还没有持久资源发布/跨重启回收、目标 SQLite schema 迁移/原子写 CAS、Core Check/Activate/Verify、双重回滚、T15/T23 断电恢复和 72h/7d/30d 验收；`RestoreSupported=false` 与 `RestoreReady=false`、Draft PR #1、不合并 main 继续保持。
+
+### 2026-10-14 M4 非活动规则资源的隔离持久化与目录原子发布（ADR 0114）
+
+- 在 ADR 0113 已持有、每进程最多一组的已认证匿名规则/Core 描述符基础上，新增 **仅内部** `InertPinnedRestoreResources.StageDormantRuleBundle`：仍持有原 ciphertext/flock、v18 pending 恢复日志和 live Applied/LKG/声明/选择/Core CAS；要求单独的已存在、当前 UID 私有 0700 规则暂存父目录，严禁进入密文候选目录或匿名 scratch，父目录也通过独占 `flock` 串行化，并拒绝未知、待处理或超过 8 个完成的暂存 scope。
+- 为源密文 SHA-256 建立唯一、无覆盖的私有非活动 `.ktui-inert-rules-v1-<digest>` 目录。规则先在只有 0700 访问权限的 `.ktui-inert-rules-pending-*` 内，以目录 FD 为基准用 `O_CREAT|O_EXCL|O_NOFOLLOW` 复制自独立验证的匿名 FD；文件复制期 0600，SHA/大小核对后 0400 不可执行、fsync。**不复制**批准 Core 可执行文件和含订阅凭据的 SQLite；原匿名文件 `nlink=0` 不变，当前 live `core/rule-sets` 不变。
+- 对暂存目录重新打开独立 FD、核对**完全等于清单**的文件条目集合、每个文件 inode/UID/权限/单硬链接/SHA/大小、目录 inode；注入点后的变更也必须再次执行独立文件扫描、原匿名 FD 核验和完整密文/当前状态 CAS。最终只通过 Linux `renameat2(RENAME_NOREPLACE)` 一次性发布该私有目录并 fsync 目录和父目录，绝不覆盖已有同源资源目录。
+- 常规失败仅删除**已确认本次创建且 inode 未变化**的私有文件，拒绝递归删除未知内容；SIGKILL 或非合作写入导致的残余 pending scope 必须阻止后续发布并等待显式审计。rename 完成但父目录 fsync 失败时，持久结果可能不确定，报错且**不删除**可能已发布的目录。返回仅哈希与数量、`Inactive=true` 和固定的两项恢复禁用标志。
+- **仍非真正持久恢复**：完成的规则暂存包不能直接供 sing-box 使用，也不是跨重启的受信资源租约。未实现 orphan 的跨重启鉴定/安全清理、完整目标资源安装、SQLite 凭据隔离迁移与原子恢复 CAS、Core Check/Activate/Verify、双层回滚及 T15/T23 断电验证；CN 原 28 组、五层分流、无 TUN、排除订阅/ISP 分流约束不变，PR #1 保持 Draft。
