@@ -1396,3 +1396,11 @@ docs/
 - 调用方必须提供独立、已存在、当前 UID 所属的私有 0700 scratch 目录；只通过经 `O_NOFOLLOW` 验证的目录 FD 和 `O_TMPFILE|O_CLOEXEC` 逐个试装载规则集与已批准内核资源。每个暂存 inode 必须无名字、硬链接数为 0、0400 不可执行、长度与 SHA-256 复核、成功/失败均即时关闭；绝不生成带路径的明文资源、内核可执行文件或落盘 SQLite。Linux 文件系统不支持 `O_TMPFILE` 则失败关闭，无降级为普通临时文件。
 - 逐项拷贝仍需通过末尾整档 HMAC/SHA 核对，拒绝密钥错误、密文被替换、journal 或 live CAS 漂移、scratch 目录被替换及取消；返回仅脱敏的资源数量/字节/摘要，绝不返回文件描述符或原始数据。增加并发 Close/资源试装载序列化、无可见明文、脏内容与错误注入测试，以及真实批准 core 的非激活试装载集成。
 - **边界**：O_TMPFILE 没有文件名，不等于磁盘取证级清除或加密临时块；其内容可能短暂留在文件系统页缓存中，故只处理规则和 Core，不解包包含订阅凭据的 SQLite。正式导入、可移植路径重绑定、跨重启永久资源 pin、同事务恢复写 CAS、core Check/Activate/Verify 与双回滚/断电注入仍缺；无备份恢复 CLI/TUI/API，`restore_supported=false`、`restore_ready=false`。T15/T23/M4/M5 门槛继续开放。
+
+### 2026-10-14 M4 内存隔离的跨状态目录路径重绑定预演（ADR 0111）
+
+- 为已完整验证、持有 ADR 0108 journal-bound 密文 lease 的内部恢复候选新增 `PreviewPortableRulePaths`：同步、单租约操作，开始/结束均重新核对密文完整认证、候选 inode、v18 准备日志与 Applied/LKG/声明/选择的完整 CAS；中途始终保持 Linux 目录 `flock`。
+- 仅将经 HMAC/SHA 认证且 SQLite/schema/profile 审计通过的 **≤64 MiB** SQLite 数据库反序列化到独立 `:memory:`；再通过只读 SQL 连接遍历 ≤32 个保留配置代际，严格核对原始 compiler manifest、native config、SHA、原始本地 `route.rule_set` tag/format/path 和加密归档规则集清单。
+- 对 caller 提供的、仅用于预演的规范化 Linux 目标状态目录，逐条计算 `<root>/core/rule-sets/sha256/<digest>.json|.srs` 路径；只修改内存中的本地 rule_set path，重验 Tag/format/path，并计算整体重绑定 SHA-256。返回的只有摘要和有界计数，不返回 JSON、敏感节点、源绝对路径、解密数据库或文件描述符；不触碰当前状态目录，源路径一致时保留原始 config SHA 不做更改。
+- 补充同一目标可重复确定性、不同目标摘要区分、原目录 no-op、混合历史无规则代际、错误目标路径/密钥/manifest、修改中的选择和恢复 journal、候选 inode 同内容替换与并发 Close 检查；真实批准 Core v2 加密归档也进入不执行的预演测试。
+- **尚未实现真正的迁移**：目标文件系统所有权、无符号链接与磁盘预算只是未来恢复阶段的强制条件，当前预演绝不 stat/open/create 目标路径。没有可持久化的明文规则/Core pin、数据库导入、同事务应用写 CAS、内核 Check/Activate/Verify 或双重回滚。继续关闭 CLI/TUI/API 恢复入口，`restore_ready=false` 与 `restore_supported=false`，T15/T23/M4/M5 验收仍开放；保持 CN 28 组、五层分流、无 TUN 和去除订阅/ISP 分流。
