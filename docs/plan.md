@@ -1404,3 +1404,10 @@ docs/
 - 对 caller 提供的、仅用于预演的规范化 Linux 目标状态目录，逐条计算 `<root>/core/rule-sets/sha256/<digest>.json|.srs` 路径；只修改内存中的本地 rule_set path，重验 Tag/format/path，并计算整体重绑定 SHA-256。返回的只有摘要和有界计数，不返回 JSON、敏感节点、源绝对路径、解密数据库或文件描述符；不触碰当前状态目录，源路径一致时保留原始 config SHA 不做更改。
 - 补充同一目标可重复确定性、不同目标摘要区分、原目录 no-op、混合历史无规则代际、错误目标路径/密钥/manifest、修改中的选择和恢复 journal、候选 inode 同内容替换与并发 Close 检查；真实批准 Core v2 加密归档也进入不执行的预演测试。
 - **尚未实现真正的迁移**：目标文件系统所有权、无符号链接与磁盘预算只是未来恢复阶段的强制条件，当前预演绝不 stat/open/create 目标路径。没有可持久化的明文规则/Core pin、数据库导入、同事务应用写 CAS、内核 Check/Activate/Verify 或双重回滚。继续关闭 CLI/TUI/API 恢复入口，`restore_ready=false` 与 `restore_supported=false`，T15/T23/M4/M5 验收仍开放；保持 CN 28 组、五层分流、无 TUN 和去除订阅/ISP 分流。
+
+### 2026-10-14 M4 目标规则目录的只读描述符验证（ADR 0112）
+
+- 在已认证密文候选的 ADR 0108 独占锁和完整 journal/live CAS 约束下，新增 **仅内部** `InspectPortableTargetRuleTree`：现存 Linux 目标 state root 与 `core/rule-sets/sha256` 目录逐级使用 `openat(O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)` 验证路径真实身份，禁止通过符号链接进入路径，要求目标根与规则目录的 UID 为当前用户、权限 0700、目录 inode 未变化；禁止目标位于持久密文候选目录树中。
+- 对认证清单声明的每个 `sha256/<digest>.json|.srs` 文件：缺失只能计数，不创建、不修复；已存在的文件必须是当前 UID 私有 0400/0600、不可执行、单硬链接、准确字节数及 SHA-256。文件以父目录 FD 为基准 `O_NOFOLLOW` 打开并核对 inode，扫描结束再次验证全部文件是否缺失/存在及 inode/数据身份；目录也重复验证，最终再次执行 journal/live CAS。
+- 返回只含脱敏数量、已验证字节数和归档/目标路径指纹的只读报告；不会写入现有或目标 SQLite、规则/Core 文件或任何申请恢复任务。新增同内容 inode 替换、晚到文件、目录替换、权限/链接、密文密钥、CAS 漂移、跨 goroutine Close 等测试，并在真实批准 Core 集成中验证只读扫描。
+- **仍未实现持久恢复**：返回时目标目录 FD 已关闭，检查结果不能抵御此后同 UID 修改或代替真实写事务；下一阶段仍需受限权限下的持久资源物化、目标运行时配置重新编译、隔离 SQLite schema migration、同事务 CAS、Core Check/Activate/Verify、双回滚以及 T15/T23 故障注入。恢复入口保持禁用；CN 28 组、五层分流、无 TUN 和无订阅/ISP 分流约束不变；保持 PR #1 Draft。
