@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"io"
+	"crypto/sha256"
+	"encoding/hex"
 
 	"golang.org/x/sys/unix"
 )
@@ -165,26 +167,19 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 		if ctx.Err() != nil {
 			return DormantRuleBundleReceipt{}, ctx.Err()
 		}
-		// Copy to an entirely separate anonymous inode. NEVER link the
-		// original source pin: it must continue to satisfy nlink=0.
-		if _, err = p.rules[i].file.Seek(0, 0); err != nil {
-			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
-		}
-		copied, copyErr := openPinnedAnonymousResource(ctx,
-			p.rules[i].file, temp, rule.Size, rule.SHA256)
-		if copyErr != nil {
+		// Source remains anonymous (nlink=0). Only the isolated,
+		// unpublished 0700 directory contains a named plaintext rule;
+		// historical Core and credential-bearing SQLite stay untouched.
+		if _, err = p.rules[i].file.Seek(0, io.SeekStart); err != nil {
 			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 		}
 		name := strings.TrimPrefix(rule.RelativePath, "rule-sets/sha256/")
 		if name == rule.RelativePath || name != filepath.Base(name) ||
 			(name != rule.SHA256+".json" && name != rule.SHA256+".srs") {
-			_ = copied.file.Close()
 			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 		}
-		linkErr := unix.Linkat(int(copied.file.Fd()), "",
-			int(temp.Fd()), name, unix.AT_EMPTY_PATH)
-		closeErr := copied.file.Close()
-		if linkErr != nil || closeErr != nil {
+		if writeDormantPrivateRule(ctx, temp, name, p.rules[i].file,
+			rule.Size, rule.SHA256) != nil {
 			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 		}
 		observed, checkErr := inspectTargetRule(ctx, temp, rule)
@@ -235,6 +230,40 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 		RestoreSupported: false,
 		RestoreReady: false,
 	}, nil
+}
+
+// Files are named ONLY inside the private, not-yet-published staging
+// directory. O_EXCL and parent-relative O_NOFOLLOW prevent overwrites.
+// A crash can leave an incomplete pending scope, never an active rules tree.
+func writeDormantPrivateRule(
+	ctx context.Context, dir *os.File, name string, source *os.File,
+	size int64, wantSHA string,
+) error {
+	if ctx == nil || dir == nil || source == nil || size <= 0 ||
+		!validLowerSHA(wantSHA) || filepath.Base(name) != name ||
+		(name != wantSHA+".json" && name != wantSHA+".srs") {
+		return ErrDormantRuleBundle
+	}
+	fd, err := unix.Openat(int(dir.Fd()), name,
+		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return ErrDormantRuleBundle
+	}
+	file := os.NewFile(uintptr(fd), "inert-pending-rule")
+	if file == nil {
+		_ = unix.Close(fd)
+		return ErrDormantRuleBundle
+	}
+	defer file.Close()
+	hash := sha256.New()
+	n, err := io.CopyN(io.MultiWriter(file, hash),
+		sealedContextReader{ctx: ctx, src: source}, size)
+	if err != nil || n != size ||
+		hex.EncodeToString(hash.Sum(nil)) != wantSHA ||
+		file.Chmod(0o400) != nil || file.Sync() != nil || ctx.Err() != nil {
+		return ErrDormantRuleBundle
+	}
+	return nil
 }
 
 // Scan ONLY a dedicated, existing 0700 root while holding its exclusive
