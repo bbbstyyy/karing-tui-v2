@@ -53,7 +53,7 @@ func TestInertPortablePathPreviewDeterministicAndNonMutating(t *testing.T) {
 	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("preview created target state directory: %v", err)
 	}
-	if _, err := os.Lstat(target+"-other"); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(target + "-other"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("preview created second target directory: %v", err)
 	}
 	if strings.Contains(first.RelocatedConfigDigest, f.stateRoot) ||
@@ -133,8 +133,7 @@ func TestOneNativePortablePathRewriteOnlyTouchesBoundLocalPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := previewOneNativeRelocation(
-		artifacts.ConfigJSON, badManifest, target, allowed);
-		!errors.Is(err, ErrInertPortablePathPreview) {
+		artifacts.ConfigJSON, badManifest, target, allowed); !errors.Is(err, ErrInertPortablePathPreview) {
 		t.Fatalf("manifest rule format mismatch accepted: %v", err)
 	}
 }
@@ -168,10 +167,10 @@ func TestInertPortablePathPreviewRejectsUnsafeDestinationsAndKeys(t *testing.T) 
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	for _, tc := range []struct {
-		name   string
-		ctx    context.Context
-		root   string
-		key    [32]byte
+		name string
+		ctx  context.Context
+		root string
+		key  [32]byte
 	}{
 		{"relative", ctx, "relative", key},
 		{"filesystem_root", ctx, "/", key},

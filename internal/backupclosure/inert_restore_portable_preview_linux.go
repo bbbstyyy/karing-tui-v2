@@ -26,14 +26,14 @@ var ErrInertPortablePathPreview = errors.New("inert archived path relocation pre
 // portable generation ID, restoration grant, path lease or activation receipt.
 // In particular it never exposes native JSON, user tokens or source paths.
 type InertPortablePathPreview struct {
-	ArchiveSHA256             string
-	InventorySHA256           string
-	GenerationCount           int
-	RuleSetCount              int
-	RelocatedGenerationCount  int
-	RelocatedConfigDigest     string
-	RestoreSupported          bool
-	RestoreReady              bool
+	ArchiveSHA256            string
+	InventorySHA256          string
+	GenerationCount          int
+	RuleSetCount             int
+	RelocatedGenerationCount int
+	RelocatedConfigDigest    string
+	RestoreSupported         bool
+	RestoreReady             bool
 }
 
 // PreviewPortableRulePaths independently reads authenticated encrypted SQLite
@@ -78,10 +78,10 @@ func (l *InertRestoreResourceLease) previewPortableRulePaths(
 		return none, ErrInertPortablePathPreview
 	}
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inventory, err := readAuthenticatedInventory(
 		bounded, l.candidate.archive, key, receipt)
