@@ -87,7 +87,8 @@ func VerifyArchivedSchemaAndDomains(
 		return empty, ErrArchiveDomainInvalid
 	}
 	counts.ProfileOverlays, err = verifyArchiveProfileOverlays(ctx, candidate)
-	if err != nil || verifyArchiveSelection(ctx, candidate) != nil {
+	if err != nil || verifyArchiveSelection(ctx, candidate) != nil ||
+		verifyArchivedStableLifecycle(ctx, candidate) != nil {
 		return empty, ErrArchiveDomainInvalid
 	}
 	if schema >= 18 {
