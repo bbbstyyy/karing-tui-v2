@@ -176,7 +176,23 @@ func streamAnonymousArchiveResources(
 	ctx context.Context, path string, key [32]byte,
 	receipt SealedArchiveReceipt, expected Inventory, scratch *os.File,
 ) error {
-	if ctx == nil || scratch == nil || key == ([32]byte{}) ||
+	return streamAnonymousArchiveResourcesWithConsumer(
+		ctx, path, key, receipt, expected, scratch,
+		func(ctx context.Context, src io.Reader, dir *os.File, size int64, sha string, _ bool) error {
+			return materializeOneAnonymousResource(ctx, src, dir, size, sha)
+		})
+}
+
+// All consumers receive plaintext rule/core resource bytes from the exact
+// MAC-verified and inventory-bound ciphertext stream. Callbacks MUST either
+// close their anonymous descriptors or retain them in a non-authorizing
+// in-process lease that cleans up on every partial failure.
+func streamAnonymousArchiveResourcesWithConsumer(
+	ctx context.Context, path string, key [32]byte,
+	receipt SealedArchiveReceipt, expected Inventory, scratch *os.File,
+	consume func(context.Context, io.Reader, *os.File, int64, string, bool) error,
+) error {
+	if ctx == nil || scratch == nil || consume == nil || key == ([32]byte{}) ||
 		!validSealedArchivePath(path) || receipt.Bytes <= 0 ||
 		!validLowerSHA(receipt.ArchiveSHA256) ||
 		!validLowerSHA(receipt.InventorySHA256) {
@@ -239,14 +255,14 @@ func streamAnonymousArchiveResources(
 		return ErrInertRestoreAnonymousProbe
 	}
 	for _, rule := range inventory.RuleSets {
-		if err := materializeOneAnonymousResource(ctx, plain, scratch,
-			rule.Size, rule.SHA256); err != nil {
+		if err := consume(ctx, plain, scratch,
+			rule.Size, rule.SHA256, false); err != nil {
 			return ErrInertRestoreAnonymousProbe
 		}
 	}
 	if inventory.Core != nil {
-		if err := materializeOneAnonymousResource(ctx, plain, scratch,
-			inventory.Core.Size, inventory.Core.SHA256); err != nil {
+		if err := consume(ctx, plain, scratch,
+			inventory.Core.Size, inventory.Core.SHA256, true); err != nil {
 			return ErrInertRestoreAnonymousProbe
 		}
 	}
