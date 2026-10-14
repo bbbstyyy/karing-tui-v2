@@ -129,6 +129,18 @@ func TestAnonymousRestoreProbeRejectsWrongKeyScratchAndCancellation(t *testing.T
 	if _, err := lease.ProbeAnonymousResources(ctx, link, key); !errors.Is(err, ErrInertRestoreAnonymousProbe) {
 		t.Fatalf("scratch symlink was followed: %v", err)
 	}
+	// Do not let scratch files pollute the ciphertext-candidate namespace,
+	// whose parent is intentionally restricted to known encrypted scopes.
+	nested := filepath.Join(filepath.Dir(directory), "unsafe-scratch")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lease.ProbeAnonymousResources(ctx, nested, key); !errors.Is(err, ErrInertRestoreAnonymousProbe) {
+		t.Fatalf("scratch nested in encrypted candidate parent was accepted: %v", err)
+	}
+	if err := os.Remove(nested); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := lease.ProbeAnonymousResources(ctx, scratch, key); err != nil {
 		t.Fatalf("invalid probe poisoned a valid lease: %v", err)
 	}
