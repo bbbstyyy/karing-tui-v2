@@ -45,11 +45,11 @@ func verifyArchivedStableLifecycle(ctx context.Context, conn *sql.Conn) error {
 		applied.Int64 <= 0 || lastGood.Int64 <= 0 {
 		return ErrArchiveDomainInvalid
 	}
-	if err := verifyArchivedCommittedGeneration(ctx, conn, applied.Int64, revision); err != nil {
+	if err := verifyArchivedCommittedGeneration(ctx, conn, applied.Int64, revision, revision); err != nil {
 		return err
 	}
 	if lastGood.Int64 != applied.Int64 {
-		if err := verifyArchivedCommittedGeneration(ctx, conn, lastGood.Int64, 0); err != nil {
+		if err := verifyArchivedCommittedGeneration(ctx, conn, lastGood.Int64, 0, revision); err != nil {
 			return err
 		}
 	}
@@ -57,17 +57,17 @@ func verifyArchivedStableLifecycle(ctx context.Context, conn *sql.Conn) error {
 }
 
 // expectedRevision=0 means a historical LKG may be older than the active
-// revision. Both applied and LKG must reference a retained generation with
+// revision, but never newer. Both applied and LKG must reference a retained generation with
 // matching committed history; never infer success from a dangling ID alone.
 // The history may have been compacted from apply_journal to apply_history.
 func verifyArchivedCommittedGeneration(
-	ctx context.Context, conn *sql.Conn, generationID, expectedRevision int64,
+	ctx context.Context, conn *sql.Conn, generationID, expectedRevision, maxRevision int64,
 ) error {
 	var targetRevision int64
 	if err := conn.QueryRowContext(ctx,
 		"SELECT target_revision FROM generations WHERE id = ?",
 		generationID,
-	).Scan(&targetRevision); err != nil || targetRevision <= 0 ||
+	).Scan(&targetRevision); err != nil || targetRevision <= 0 || targetRevision > maxRevision ||
 		(expectedRevision != 0 && targetRevision != expectedRevision) {
 		return ErrArchiveDomainInvalid
 	}
