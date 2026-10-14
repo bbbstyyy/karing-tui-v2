@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-
 )
 
 // Do not produce an encrypted archive which would capture an in-flight apply
