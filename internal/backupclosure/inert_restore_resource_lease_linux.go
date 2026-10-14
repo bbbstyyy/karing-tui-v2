@@ -25,6 +25,7 @@ type InertRestoreResourceLease struct {
 	candidate    *InertRestoreCandidate
 	record       storage.InertRestorePreparation
 	fileIdentity os.FileInfo
+	pinnedResourcesActive bool
 }
 
 // AcquireInertRestoreResourceLease reacquires a known, pending v18 record's
