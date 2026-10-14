@@ -128,9 +128,9 @@ func TestPinnedAnonymousRestoreResourcesRejectWrongKeysAndUnsafeScratch(t *testi
 	cancel()
 	for _, tc := range []struct {
 		name string
-		ctx context.Context
+		ctx  context.Context
 		root string
-		key [32]byte
+		key  [32]byte
 	}{
 		{"wrong_key", ctx, scratch, wrong},
 		{"zero_key", ctx, scratch, [32]byte{}},
@@ -138,8 +138,8 @@ func TestPinnedAnonymousRestoreResourcesRejectWrongKeysAndUnsafeScratch(t *testi
 		{"relative", ctx, "relative", key},
 		{"candidate_parent", ctx, filepath.Dir(directory), key},
 		{"candidate_scope", ctx, directory, key},
-		{"missing", ctx, scratch+"-absent", key},
-		{"noncanonical", ctx, scratch+"/../bad", key},
+		{"missing", ctx, scratch + "-absent", key},
+		{"noncanonical", ctx, scratch + "/../bad", key},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pins, err := lease.PinAnonymousRestoreResources(tc.ctx, tc.root, tc.key)
@@ -151,8 +151,7 @@ func TestPinnedAnonymousRestoreResourcesRejectWrongKeysAndUnsafeScratch(t *testi
 	if err := os.Chmod(scratch, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if pins, err := lease.PinAnonymousRestoreResources(ctx, scratch, key);
-		pins != nil || !errors.Is(err, ErrInertPinnedRestoreResources) {
+	if pins, err := lease.PinAnonymousRestoreResources(ctx, scratch, key); pins != nil || !errors.Is(err, ErrInertPinnedRestoreResources) {
 		t.Fatalf("public scratch accepted: %v %v", pins, err)
 	}
 	if err := os.Chmod(scratch, 0o700); err != nil {
@@ -162,8 +161,7 @@ func TestPinnedAnonymousRestoreResourcesRejectWrongKeysAndUnsafeScratch(t *testi
 	if err := os.Symlink(scratch, link); err != nil {
 		t.Fatal(err)
 	}
-	if pins, err := lease.PinAnonymousRestoreResources(ctx, link, key);
-		pins != nil || !errors.Is(err, ErrInertPinnedRestoreResources) {
+	if pins, err := lease.PinAnonymousRestoreResources(ctx, link, key); pins != nil || !errors.Is(err, ErrInertPinnedRestoreResources) {
 		t.Fatalf("scratch symlink followed: %v %v", pins, err)
 	}
 	requireEmptyAnonymousProbeScratch(t, scratch)
@@ -257,7 +255,7 @@ func TestPinnedAnonymousRestoreResourceStageSerializesParentClose(t *testing.T) 
 	}()
 	select {
 	case <-stage:
-	case <-time.After(12*time.Second):
+	case <-time.After(12 * time.Second):
 		t.Fatal("pin stage did not reach all-resource verification boundary")
 	}
 	closed := make(chan error, 1)
@@ -265,7 +263,7 @@ func TestPinnedAnonymousRestoreResourceStageSerializesParentClose(t *testing.T) 
 	select {
 	case err := <-closed:
 		t.Fatalf("parent ciphertext flock released during pin stage: %v", err)
-	case <-time.After(50*time.Millisecond):
+	case <-time.After(50 * time.Millisecond):
 	}
 	close(release)
 	select {
@@ -273,7 +271,7 @@ func TestPinnedAnonymousRestoreResourceStageSerializesParentClose(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(12*time.Second):
+	case <-time.After(12 * time.Second):
 		t.Fatal("pin stage deadlocked")
 	}
 	select {
@@ -281,7 +279,7 @@ func TestPinnedAnonymousRestoreResourceStageSerializesParentClose(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(12*time.Second):
+	case <-time.After(12 * time.Second):
 		t.Fatal("parent Close deadlocked")
 	}
 	requireEmptyAnonymousProbeScratch(t, scratch)
@@ -308,10 +306,10 @@ func TestPinnedAnonymousResourceReaderRejectsHashAndTruncation(t *testing.T) {
 	if err := item.file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{
-		name string
-		bytes []byte
-		n int64
+	for _, tc := range []struct {
+		name   string
+		bytes  []byte
+		n      int64
 		digest string
 	}{
 		{"hash", payload, int64(len(payload)), shaHex([]byte("not the resource"))},

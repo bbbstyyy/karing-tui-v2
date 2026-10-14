@@ -45,14 +45,14 @@ type pinnedAnonymousResource struct {
 // not durable across SIGKILL/restart. It has no exported resource FD or path
 // accessor and it is never passed to the runtime core.
 type InertPinnedRestoreResources struct {
-	mu           sync.Mutex
-	parent       *InertRestoreResourceLease
-	scratchPath  string
-	scratch      *os.File
-	identity     os.FileInfo
-	rules        []pinnedAnonymousResource
-	core         *pinnedAnonymousResource
-	evidence     InertPinnedResourceEvidence
+	mu          sync.Mutex
+	parent      *InertRestoreResourceLease
+	scratchPath string
+	scratch     *os.File
+	identity    os.FileInfo
+	rules       []pinnedAnonymousResource
+	core        *pinnedAnonymousResource
+	evidence    InertPinnedResourceEvidence
 }
 
 // PinAnonymousRestoreResources differs from ADR 0110's one-time probe by
@@ -114,10 +114,10 @@ func (l *InertRestoreResourceLease) pinAnonymousRestoreResources(
 		}
 	}()
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inventory, err := readAuthenticatedInventory(
 		bounded, l.candidate.archive, key, receipt)
@@ -175,15 +175,15 @@ func (l *InertRestoreResourceLease) pinAnonymousRestoreResources(
 		return nil, ErrInertPinnedRestoreResources
 	}
 	pins.evidence = InertPinnedResourceEvidence{
-		ArchiveSHA256: receipt.ArchiveSHA256,
-		InventorySHA256: receipt.InventorySHA256,
-		RuleSetCount: len(pins.rules),
-		RuleSetBytes: ruleBytes,
-		CoreIncluded: pins.core != nil,
-		CoreBytes: coreBytes,
-		DescriptorCount: len(pins.rules),
+		ArchiveSHA256:    receipt.ArchiveSHA256,
+		InventorySHA256:  receipt.InventorySHA256,
+		RuleSetCount:     len(pins.rules),
+		RuleSetBytes:     ruleBytes,
+		CoreIncluded:     pins.core != nil,
+		CoreBytes:        coreBytes,
+		DescriptorCount:  len(pins.rules),
 		RestoreSupported: false,
-		RestoreReady: false,
+		RestoreReady:     false,
 	}
 	if pins.core != nil {
 		pins.evidence.DescriptorCount++
