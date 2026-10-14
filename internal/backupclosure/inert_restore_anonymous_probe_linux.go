@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -76,7 +77,8 @@ func (l *InertRestoreResourceLease) probeAnonymousResources(
 	}
 	if scratchParent == l.candidate.directory ||
 		scratchParent == l.candidate.parent ||
-		scratchParent == filepath.Dir(l.candidate.parent) {
+		scratchParent == filepath.Dir(l.candidate.parent) ||
+		strings.HasPrefix(scratchParent, l.candidate.parent+string(os.PathSeparator)) {
 		return none, ErrInertRestoreAnonymousProbe
 	}
 	scratch, identity, err := openAnonymousScratchParent(scratchParent)
