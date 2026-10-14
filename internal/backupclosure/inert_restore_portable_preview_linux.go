@@ -220,7 +220,7 @@ func previewArchivedConfigRelocations(
 		if rebindErr != nil {
 			return "", 0, ErrInertPortablePathPreview
 		}
-		_, _ = io.WriteString(combined, configSHA+"\n"+manifestSHA+"\n"+reboundSHA+"\n")
+		_, _ = io.WriteString(combined, configSHA+"\n"+manifestSHA+"\n"+want.SourceMapSHA256+"\n"+reboundSHA+"\n")
 		if changed {
 			relocatedCount++
 		}
