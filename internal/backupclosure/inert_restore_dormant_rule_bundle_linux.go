@@ -192,20 +192,19 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 		}
 		created[name] = observed.info
 	}
-	if temp.Sync() != nil || verifyDormantRuleScope(root, tempName, temp, initial) != nil {
+	if temp.Sync() != nil ||
+		verifyDormantRulePayload(ctx, root, tempName, temp, initial,
+			inventory.RuleSets, created) != nil {
 		return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
-	}
-	for _, rule := range inventory.RuleSets {
-		name := strings.TrimPrefix(rule.RelativePath, "rule-sets/sha256/")
-		observed, checkErr := inspectTargetRule(ctx, temp, rule)
-		if checkErr != nil || !observed.exists || !os.SameFile(created[name], observed.info) {
-			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
-		}
 	}
 	if beforePublish != nil && beforePublish() != nil {
 		return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 	}
-	if verifyDormantRuleScope(root, tempName, temp, initial) != nil ||
+	// Untrusted same-UID writes at the injection boundary, late additions,
+	// and even byte-identical inode replacements must be refused before
+	// committing this private directory as a single inactive bundle.
+	if verifyDormantRulePayload(ctx, root, tempName, temp, initial,
+		inventory.RuleSets, created) != nil ||
 		p.verifyPinnedFiles(ctx) != nil ||
 		l.revalidateLocked(ctx, key) != nil ||
 		verifyDormantRuleScope(root, tempName, temp, initial) != nil ||
@@ -234,6 +233,58 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 		RestoreSupported: false,
 		RestoreReady:     false,
 	}, nil
+}
+
+// Re-open a fresh descriptor: ReadDir on the original staging directory
+// would retain an offset across validations. Require EXACTLY the expected
+// content-addressed files, not merely successful hashes for known names.
+func verifyDormantRulePayload(
+	ctx context.Context, root *os.File, name string, dir *os.File,
+	original os.FileInfo, rules []RuleDigest, created map[string]os.FileInfo,
+) error {
+	if ctx == nil || ctx.Err() != nil ||
+		verifyDormantRuleScope(root, name, dir, original) != nil ||
+		len(rules) == 0 || len(rules) != len(created) {
+		return ErrDormantRuleBundle
+	}
+	fd, err := unix.Openat(int(root.Fd()), name,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return ErrDormantRuleBundle
+	}
+	reader := os.NewFile(uintptr(fd), "inert-stage-check")
+	if reader == nil {
+		_ = unix.Close(fd)
+		return ErrDormantRuleBundle
+	}
+	info, statErr := reader.Stat()
+	if statErr != nil || !os.SameFile(info, original) {
+		_ = reader.Close()
+		return ErrDormantRuleBundle
+	}
+	entries, readErr := reader.ReadDir(len(rules) + 1)
+	closeErr := reader.Close()
+	if (readErr != nil && !errors.Is(readErr, io.EOF)) ||
+		closeErr != nil || len(entries) != len(rules) {
+		return ErrDormantRuleBundle
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || created[entry.Name()] == nil {
+			return ErrDormantRuleBundle
+		}
+	}
+	for _, rule := range rules {
+		leaf := strings.TrimPrefix(rule.RelativePath, "rule-sets/sha256/")
+		observed, err := inspectTargetRule(ctx, dir, rule)
+		if err != nil || !observed.exists || created[leaf] == nil ||
+			!os.SameFile(created[leaf], observed.info) {
+			return ErrDormantRuleBundle
+		}
+	}
+	if verifyDormantRuleScope(root, name, dir, original) != nil {
+		return ErrDormantRuleBundle
+	}
+	return nil
 }
 
 // Files are named ONLY inside the private, not-yet-published staging
