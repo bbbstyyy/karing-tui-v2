@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
 // Do not produce an encrypted archive which would capture an in-flight apply
@@ -161,7 +160,3 @@ func TestArchiveLifecycleAcceptsEmptyInitialDatabaseWithoutRestore(t *testing.T)
 		t.Fatalf("empty immutable state acquired restore authority: %+v %v", report, err)
 	}
 }
-
-// Ensure the storage import is pinned here for legacy checks without exposing
-// private candidate or SQL objects to the daemon HTTP API.
-var _ = storage.MaxConfirmedGenerationAudit
