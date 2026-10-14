@@ -21,11 +21,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gofmt -w internal/backupclosure/inert_restore_anonymous_probe_linux.go internal/backupclosure/inert_restore_pinned_resources_linux.go internal/backupclosure/inert_restore_pinned_resources_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go
-          if ! git diff --quiet -- internal/backupclosure/inert_restore_anonymous_probe_linux.go internal/backupclosure/inert_restore_pinned_resources_linux.go internal/backupclosure/inert_restore_pinned_resources_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go; then
+          gofmt -w internal/backupclosure/inert_restore_anonymous_probe_linux.go internal/backupclosure/inert_restore_resource_lease_linux.go internal/backupclosure/inert_restore_pinned_resources_linux.go internal/backupclosure/inert_restore_pinned_resources_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go
+          if ! git diff --quiet -- internal/backupclosure/inert_restore_anonymous_probe_linux.go internal/backupclosure/inert_restore_resource_lease_linux.go internal/backupclosure/inert_restore_pinned_resources_linux.go internal/backupclosure/inert_restore_pinned_resources_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -- internal/backupclosure/inert_restore_anonymous_probe_linux.go internal/backupclosure/inert_restore_pinned_resources_linux.go internal/backupclosure/inert_restore_pinned_resources_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go
+            git add -- internal/backupclosure/inert_restore_anonymous_probe_linux.go internal/backupclosure/inert_restore_resource_lease_linux.go internal/backupclosure/inert_restore_pinned_resources_linux.go internal/backupclosure/inert_restore_pinned_resources_linux_test.go internal/backupclosure/sealed_archive_integration_linux_test.go
             git commit -m "style(restore): gofmt pinned anonymous resource bundle"
             git push origin HEAD:refs/heads/feat/m0-m1-foundation
           fi
