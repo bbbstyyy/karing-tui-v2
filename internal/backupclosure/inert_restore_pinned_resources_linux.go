@@ -261,7 +261,6 @@ func verifyPinnedAnonymousResource(ctx context.Context, item *pinnedAnonymousRes
 	before, err := item.file.Stat()
 	if err != nil || !os.SameFile(item.identity, before) ||
 		!validAnonymousResourceFile(before, item.size, 0o400) {
-		item.file.Seek == nil {
 		return ErrInertPinnedRestoreResources
 	}
 	if _, err := item.file.Seek(0, io.SeekStart); err != nil {
