@@ -140,6 +140,21 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if resourceLease.Record().RestoreReady || resourceLease.Record().RestoreSupported {
 		t.Fatal("approved binary gained restore permissions")
 	}
+	// ADR 0111: authenticated SQLite is inspected in memory only. The
+	// source-native rule paths are rebound hypothetically to another Linux
+	// state root. Neither rewritten config nor plaintext core is published.
+	portable, err := resourceLease.PreviewPortableRulePaths(context.Background(),
+		filepath.Join(f.stateRoot, "portable-dry-run"), key)
+	if err != nil || portable.RestoreReady || portable.RestoreSupported ||
+		portable.GenerationCount != len(closure.Inventory.Generations) ||
+		portable.RuleSetCount != len(closure.Inventory.RuleSets) ||
+		portable.RelocatedGenerationCount == 0 ||
+		!validLowerSHA(portable.RelocatedConfigDigest) {
+		t.Fatalf("real core portable path preview failed: %+v %v", portable, err)
+	}
+	if _, err := os.Lstat(filepath.Join(f.stateRoot, "portable-dry-run")); !os.IsNotExist(err) {
+		t.Fatalf("real approved core preview wrote target files: %v", err)
+	}
 	if err := resourceLease.Close(); err != nil {
 		t.Fatal(err)
 	}
