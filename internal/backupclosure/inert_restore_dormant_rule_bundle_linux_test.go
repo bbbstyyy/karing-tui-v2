@@ -35,7 +35,7 @@ func makeDormantRuleBundleFixture(t *testing.T) (
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pins.Close() })
-	parent := filepath.Join(f.stateRoot, "inert-private-rule-stage")
+	parent := filepath.Join(f.stateRoot, dormantRuleRootName)
 	if err := os.Mkdir(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +177,22 @@ func TestDormantRuleStageRejectsUnrecognizedOrUnfinishedScopes(t *testing.T) {
 				t.Fatalf("unsafe stage parent was accepted: %+v %v", report, err)
 			}
 		})
+	}
+}
+
+func TestDormantRuleStageRejectsOwnedButArbitraryTargetDirectory(t *testing.T) {
+	f, _, pins, _, key, _ := makeDormantRuleBundleFixture(t)
+	wrong := filepath.Join(f.stateRoot, "core", "empty-inert-looking-tree")
+	if err := os.Mkdir(wrong, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	report, err := pins.StageDormantRuleBundle(context.Background(), wrong, key)
+	if !errors.Is(err, ErrDormantRuleBundle) ||
+		!reflect.DeepEqual(report, DormantRuleBundleReceipt{}) {
+		t.Fatalf("arbitrary private live-core child accepted as inactive root: %+v %v", report, err)
+	}
+	if len(dormantStageEntries(t, wrong)) != 0 {
+		t.Fatal("stage wrote to the active core tree")
 	}
 }
 
