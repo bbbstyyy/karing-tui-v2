@@ -301,9 +301,11 @@ func previewOneNativeRelocation(
 			return "", false, ErrInertPortablePathPreview
 		}
 		destination := filepath.Join(targetRoot, "core", relative)
-		if len(destination) > 4096 || destination == path {
-			// Do not mistake an identical source path for relocated data.
+		if len(destination) > 4096 {
 			return "", false, ErrInertPortablePathPreview
+		}
+		if destination != path {
+			changed = true
 		}
 		encoded, err := json.Marshal(destination)
 		if err != nil {
@@ -321,6 +323,11 @@ func previewOneNativeRelocation(
 	if len(seen) != len(expected) {
 		return "", false, ErrInertPortablePathPreview
 	}
+	if !changed {
+		// A backup moved back to its original canonical state root needs no
+		// JSON rewrite and must preserve its exact original config digest.
+		return shaHex(configJSON), false, nil
+	}
 	route["rule_set"], err = json.Marshal(ruleSets)
 	if err != nil {
 		return "", false, ErrInertPortablePathPreview
@@ -336,5 +343,5 @@ func previewOneNativeRelocation(
 	}
 	relocatedDigest := shaHex(relocated)
 	clear(relocated)
-	return relocatedDigest, true, nil
+	return relocatedDigest, changed, nil
 }
