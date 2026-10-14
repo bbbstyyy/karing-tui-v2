@@ -277,3 +277,60 @@ func TestDormantRuleStageSerializesPinCloseAndParentClose(t *testing.T) {
 		t.Fatalf("concurrent close interrupted final atomic publication: %+v", entries)
 	}
 }
+
+func TestDormantRuleStageFailsClosedOnLateStagedFileDrift(t *testing.T) {
+	for _, fault := range []string{"extra", "modified", "same_inode_swap", "directory_swap"} {
+		t.Run(fault, func(t *testing.T) {
+			f, _, pins, _, key, parent := makeDormantRuleBundleFixture(t)
+			report, err := pins.stageDormantRuleBundle(context.Background(), parent, key,
+				func() error {
+					entries, err := os.ReadDir(parent)
+					if err != nil || len(entries) != 1 {
+						return errors.New("stage is not private and singular")
+					}
+					temporary := filepath.Join(parent, entries[0].Name())
+					path := filepath.Join(temporary, f.ruleHash+".json")
+					switch fault {
+					case "extra":
+						return os.WriteFile(filepath.Join(temporary, "unexpected"), []byte("x"), 0o600)
+					case "modified":
+						if err := os.Chmod(path, 0o600); err != nil {
+							return err
+						}
+						if err := os.WriteFile(path, bytes.Repeat([]byte("z"), len(f.ruleData)), 0o600); err != nil {
+							return err
+						}
+						return os.Chmod(path, 0o400)
+					case "same_inode_swap":
+						other := filepath.Join(temporary, "replacement")
+						if err := os.WriteFile(other, f.ruleData, 0o400); err != nil {
+							return err
+						}
+						return os.Rename(other, path)
+					case "directory_swap":
+						if err := os.Rename(temporary, temporary+".old"); err != nil {
+							return err
+						}
+						return os.Mkdir(temporary, 0o700)
+					}
+					return errors.New("unknown fault")
+				})
+			if !errors.Is(err, ErrDormantRuleBundle) ||
+				!reflect.DeepEqual(report, DormantRuleBundleReceipt{}) {
+				t.Fatalf("%s published changed rules after audit: %+v %v", fault, report, err)
+			}
+			for _, entry := range dormantStageEntries(t, parent) {
+				if strings.HasPrefix(entry.Name(), dormantRuleBundlePrefix) {
+					t.Fatalf("%s published invalid final scope: %s", fault, entry.Name())
+				}
+			}
+			// An ambiguous orphan is safer than recursive deletion of
+			// content an independent actor added/replaced mid-publication.
+			if fault == "extra" || fault == "same_inode_swap" || fault == "directory_swap" {
+				if len(dormantStageEntries(t, parent)) == 0 {
+					t.Fatal("ambiguous tampered pending scope was silently erased")
+				}
+			}
+		})
+	}
+}
