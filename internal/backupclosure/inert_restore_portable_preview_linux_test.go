@@ -110,6 +110,11 @@ func TestOneNativePortablePathRewriteOnlyTouchesBoundLocalPaths(t *testing.T) {
 	if shaHex(expectedJSON) != hash {
 		t.Fatal("path preview changed other fields or failed to bind target path")
 	}
+	originalDigest, didChange, err := previewOneNativeRelocation(
+		artifacts.ConfigJSON, artifacts.ManifestJSON, f.stateRoot, allowed)
+	if err != nil || didChange || originalDigest != artifacts.ConfigSHA256 {
+		t.Fatalf("same-root relocation should be a stable no-op: %s %t %v", originalDigest, didChange, err)
+	}
 	if !bytes.Equal(source, artifacts.ConfigJSON) {
 		t.Fatal("preview changed archived native input bytes")
 	}
@@ -297,4 +302,60 @@ func TestInertPortablePathPreviewSerializesLeaseClose(t *testing.T) {
 	case <-time.After(12 * time.Second):
 		t.Fatal("lease Close blocked forever")
 	}
+}
+
+func TestInertPortablePathPreviewHandlesMixedRetainedHistory(t *testing.T) {
+	f := newFixture(t)
+	f.commit(t, true)
+	f.commit(t, false)
+	ctx := context.Background()
+	closure, err := Build(ctx, f.store, f.stateRoot, f.parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := testSealedDir(t, f)
+	path := filepath.Join(parent, "two-generations.ktbackup")
+	key := testSealedKey(t)
+	receipt, err := closure.SealInertArchive(ctx, path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closure.Close(); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := readAuthenticatedInventory(ctx, path, key, receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Generations) != 2 || len(inventory.RuleSets) != 1 {
+		t.Fatalf("history inventory changed: %+v", inventory)
+	}
+	contents, err := readAuthenticatedSQLiteBytes(ctx, path, key, receipt, inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(contents)
+	target := filepath.Join(f.stateRoot, "portable-mixed-history")
+	previewSHA, count, err := previewArchivedConfigRelocations(
+		ctx, contents, inventory, target)
+	if err != nil || !validLowerSHA(previewSHA) || count != 1 {
+		t.Fatalf("mixed history portable projection rejected: %s %d %v", previewSHA, count, err)
+	}
+	sameSHA, sameCount, err := previewArchivedConfigRelocations(
+		ctx, contents, inventory, f.stateRoot)
+	if err != nil || !validLowerSHA(sameSHA) || sameCount != 0 ||
+		sameSHA == previewSHA {
+		t.Fatalf("same-root history unexpectedly rewritten: %s %d %v", sameSHA, sameCount, err)
+	}
+	corrupt := bytes.Clone(contents)
+	corrupt[len(corrupt)/2] ^= 0x40
+	if _, _, err := previewArchivedConfigRelocations(ctx, corrupt,
+		inventory, target); !errors.Is(err, ErrInertPortablePathPreview) {
+		t.Fatalf("invalid source SQLite SHA accepted: %v", err)
+	}
+	clear(corrupt)
+	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("SQLite preview wrote target files: %v", err)
+	}
+	requireNoBackupScopes(t, f)
 }
