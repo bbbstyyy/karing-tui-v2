@@ -178,8 +178,7 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		targetReport.RestoreReady || targetReport.RestoreSupported {
 		t.Fatalf("real core target-path inspection changed authority: %+v %v", targetReport, err)
 	}
-	if entries, err := os.ReadDir(filepath.Join(targetRoot, "core", "rule-sets", "sha256"));
-		err != nil || len(entries) != 0 {
+	if entries, err := os.ReadDir(filepath.Join(targetRoot, "core", "rule-sets", "sha256")); err != nil || len(entries) != 0 {
 		t.Fatalf("real core target path inspection created resources: %+v %v", entries, err)
 	}
 	if err := resourceLease.Close(); err != nil {

@@ -22,16 +22,16 @@ var ErrInertPortableTargetTree = errors.New("inert portable target rule tree ref
 // current-process, READ-ONLY inspection, not a persistent target resource
 // lease, a migration plan, an import grant or a restore permit.
 type InertPortableTargetTreeReport struct {
-	ArchiveSHA256          string
-	InventorySHA256        string
-	TargetRootSHA256       string
-	RuleSetCount           int
-	ExistingRuleSets       int
-	MissingRuleSets        int
-	ExistingRuleSetBytes   int64
-	DirectoriesPinned      bool
-	RestoreSupported       bool
-	RestoreReady           bool
+	ArchiveSHA256        string
+	InventorySHA256      string
+	TargetRootSHA256     string
+	RuleSetCount         int
+	ExistingRuleSets     int
+	MissingRuleSets      int
+	ExistingRuleSetBytes int64
+	DirectoriesPinned    bool
+	RestoreSupported     bool
+	RestoreReady         bool
 }
 
 // InspectPortableTargetRuleTree verifies an ALREADY EXISTING Linux target
@@ -78,10 +78,10 @@ func (l *InertRestoreResourceLease) inspectPortableTargetRuleTree(
 		return empty, ErrInertPortableTargetTree
 	}
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inventory, err := readAuthenticatedInventory(bounded, l.candidate.archive, key, receipt)
 	if err != nil {
@@ -126,31 +126,31 @@ func (l *InertRestoreResourceLease) inspectPortableTargetRuleTree(
 		return empty, ErrInertPortableTargetTree
 	}
 	return InertPortableTargetTreeReport{
-		ArchiveSHA256: receipt.ArchiveSHA256,
-		InventorySHA256: receipt.InventorySHA256,
-		TargetRootSHA256: shaHex([]byte(targetStateRoot)),
-		RuleSetCount: len(inventory.RuleSets),
-		ExistingRuleSets: existing,
-		MissingRuleSets: len(inventory.RuleSets) - existing,
+		ArchiveSHA256:        receipt.ArchiveSHA256,
+		InventorySHA256:      receipt.InventorySHA256,
+		TargetRootSHA256:     shaHex([]byte(targetStateRoot)),
+		RuleSetCount:         len(inventory.RuleSets),
+		ExistingRuleSets:     existing,
+		MissingRuleSets:      len(inventory.RuleSets) - existing,
 		ExistingRuleSetBytes: existingBytes,
-		DirectoriesPinned: true,
-		RestoreSupported: false,
-		RestoreReady: false,
+		DirectoriesPinned:    true,
+		RestoreSupported:     false,
+		RestoreReady:         false,
 	}, nil
 }
 
 type portableDirComponent struct {
-	parent *os.File
-	dir *os.File
-	name string
-	info os.FileInfo
+	parent  *os.File
+	dir     *os.File
+	name    string
+	info    os.FileInfo
 	private bool
 }
 
 type privatePortableTargetTree struct {
-	root *os.File
+	root       *os.File
 	components []portableDirComponent
-	hasRules bool
+	hasRules   bool
 }
 
 func openPrivatePortableTargetTree(root string, hasRules bool) (_ *privatePortableTargetTree, err error) {
@@ -174,7 +174,7 @@ func openPrivatePortableTargetTree(root string, hasRules bool) (_ *privatePortab
 		}
 	}()
 	parts := strings.Split(strings.TrimPrefix(root, "/"), "/")
-	privateIndex := len(parts)-1
+	privateIndex := len(parts) - 1
 	if hasRules {
 		parts = append(parts, "core", "rule-sets", "sha256")
 	}
@@ -256,7 +256,7 @@ func (t *privatePortableTargetTree) Close() error {
 		return nil
 	}
 	var errs []error
-	for i := len(t.components)-1; i >= 0; i-- {
+	for i := len(t.components) - 1; i >= 0; i-- {
 		if err := t.components[i].dir.Close(); err != nil {
 			errs = append(errs, ErrInertPortableTargetTree)
 		}
@@ -273,7 +273,7 @@ func (t *privatePortableTargetTree) Close() error {
 
 type targetRuleObservation struct {
 	exists bool
-	info os.FileInfo
+	info   os.FileInfo
 }
 
 func sameTargetRuleObservation(a, b targetRuleObservation) bool {

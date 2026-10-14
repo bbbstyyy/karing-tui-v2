@@ -174,16 +174,16 @@ func TestPortableTargetTreeRejectsInvalidPathKeyAndCancellation(t *testing.T) {
 	wrong[0] ^= 0x11
 	for _, tc := range []struct {
 		name string
-		ctx context.Context
+		ctx  context.Context
 		root string
-		key [32]byte
+		key  [32]byte
 	}{
 		{"relative", context.Background(), "relative", key},
-		{"noncanonical", context.Background(), root+"/../other", key},
+		{"noncanonical", context.Background(), root + "/../other", key},
 		{"filesystem_root", context.Background(), "/", key},
-		{"nul", context.Background(), root+"\x00", key},
-		{"oversized", context.Background(), "/"+strings.Repeat("p", 1100), key},
-		{"missing", context.Background(), root+"-missing", key},
+		{"nul", context.Background(), root + "\x00", key},
+		{"oversized", context.Background(), "/" + strings.Repeat("p", 1100), key},
+		{"missing", context.Background(), root + "-missing", key},
 		{"wrong_key", context.Background(), root, wrong},
 		{"zero_key", context.Background(), root, [32]byte{}},
 		{"cancelled", cancelled, root, key},
@@ -218,7 +218,7 @@ func TestPortableTargetTreeRejectsInodeReplacementsAndCASDrift(t *testing.T) {
 			report, err := lease.inspectPortableTargetRuleTree(ctx, root, key, func() error {
 				switch change {
 				case "same_bytes":
-					replacement := path+".new"
+					replacement := path + ".new"
 					if err := os.WriteFile(replacement, f.ruleData, 0o600); err != nil {
 						return err
 					}
@@ -269,7 +269,7 @@ func TestPortableTargetTreeSerializesCiphertextLeaseClose(t *testing.T) {
 	}()
 	select {
 	case <-started:
-	case <-time.After(12*time.Second):
+	case <-time.After(12 * time.Second):
 		t.Fatal("target inspector did not reach validation seam")
 	}
 	closed := make(chan error, 1)
@@ -277,7 +277,7 @@ func TestPortableTargetTreeSerializesCiphertextLeaseClose(t *testing.T) {
 	select {
 	case err := <-closed:
 		t.Fatalf("Close dropped lease before target inspection ended: %v", err)
-	case <-time.After(50*time.Millisecond):
+	case <-time.After(50 * time.Millisecond):
 	}
 	close(release)
 	select {
@@ -285,7 +285,7 @@ func TestPortableTargetTreeSerializesCiphertextLeaseClose(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(12*time.Second):
+	case <-time.After(12 * time.Second):
 		t.Fatal("inspector blocked forever")
 	}
 	select {
@@ -293,7 +293,7 @@ func TestPortableTargetTreeSerializesCiphertextLeaseClose(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(12*time.Second):
+	case <-time.After(12 * time.Second):
 		t.Fatal("Close deadlocked")
 	}
 }
