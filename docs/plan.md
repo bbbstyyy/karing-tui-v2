@@ -1389,3 +1389,10 @@ docs/
 - 新增 `AcquireInertRestoreResourceLease` / `InertRestoreResourceLease.Revalidate` / `Close`：调用方显式指定日志 ID、已有的私有候选父目录与原始 32 字节密钥。必须先检查有界 v18 pending 日志、重新领取目录独占 `flock`、重新认证密文/清单/内存 SQLite/schema/profile、绑定该次存活租约的加密文件 inode，然后复核 SQLite 日志与当前配置。在同一租约期间，即使替换成**字节完全相同**但 inode 不同的密文也拒绝；Close/SIGKILL 仅释放锁，不删除密文和日志。
 - 新增并发 journal 修改、状态漂移、错误与取消、未知文件、相同密文不同 inode、跨进程 SIGKILL 后重新领用及真实已批准 sing-box v2 的不激活测试。日志放弃与文件删除仍为独立显式操作，不在失败时自动清理。
 - **边界**：磁盘持久的是日志与密文，Linux 的 `flock` 不跨进程死亡持久化；不能把本阶段称为生产级持久核心/规则资源租约，也不能将只读重新认证结果用于恢复提交。尚需真实隔离导入、同事务正式 CAS 应用、持久资源 pin、Check/Activate/Verify、双重回滚及 T15/T23 故障注入。仍无恢复 CLI/TUI/API，`RestoreSupported=false` 与 `RestoreReady=false` 不变。
+
+### 2026-10-14 M4 记录绑定的匿名资源试装载（ADR 0110）
+
+- 在 ADR 0108 已验证的、持锁密文恢复候选之上，新增仅内部调用的 `InertRestoreResourceLease.ProbeAnonymousResources`：全操作保持当前进程 ciphertext scope 的独占 `flock` 与对象互斥；开始与结束均重做完整密文/内存 SQLite/schema/profile 鉴定与 SQLite 记录/已应用及 LKG/声明/选择 CAS。
+- 调用方必须提供独立、已存在、当前 UID 所属的私有 0700 scratch 目录；只通过经 `O_NOFOLLOW` 验证的目录 FD 和 `O_TMPFILE|O_CLOEXEC` 逐个试装载规则集与已批准内核资源。每个暂存 inode 必须无名字、硬链接数为 0、0400 不可执行、长度与 SHA-256 复核、成功/失败均即时关闭；绝不生成带路径的明文资源、内核可执行文件或落盘 SQLite。Linux 文件系统不支持 `O_TMPFILE` 则失败关闭，无降级为普通临时文件。
+- 逐项拷贝仍需通过末尾整档 HMAC/SHA 核对，拒绝密钥错误、密文被替换、journal 或 live CAS 漂移、scratch 目录被替换及取消；返回仅脱敏的资源数量/字节/摘要，绝不返回文件描述符或原始数据。增加并发 Close/资源试装载序列化、无可见明文、脏内容与错误注入测试，以及真实批准 core 的非激活试装载集成。
+- **边界**：O_TMPFILE 没有文件名，不等于磁盘取证级清除或加密临时块；其内容可能短暂留在文件系统页缓存中，故只处理规则和 Core，不解包包含订阅凭据的 SQLite。正式导入、可移植路径重绑定、跨重启永久资源 pin、同事务恢复写 CAS、core Check/Activate/Verify 与双回滚/断电注入仍缺；无备份恢复 CLI/TUI/API，`restore_supported=false`、`restore_ready=false`。T15/T23/M4/M5 门槛继续开放。
