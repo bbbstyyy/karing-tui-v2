@@ -126,7 +126,15 @@ func (l *InertRestoreResourceLease) Revalidate(ctx context.Context, key [32]byte
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.candidate == nil || l.live == nil || l.fileIdentity == nil {
+	return l.revalidateLocked(ctx, key)
+}
+
+// revalidateLocked is shared with anonymous, ephemeral resource probing. The
+// caller holds l.mu throughout the complete probe so Close cannot release the
+// ciphertext directory flock between authentication and the final CAS.
+func (l *InertRestoreResourceLease) revalidateLocked(ctx context.Context, key [32]byte) error {
+	if ctx == nil || key == ([32]byte{}) ||
+		l.candidate == nil || l.live == nil || l.fileIdentity == nil {
 		return ErrInertRestoreResourceLeaseRefused
 	}
 	if err := ctx.Err(); err != nil {
