@@ -69,8 +69,7 @@ func TestAnonymousRestoreProbeStreamsRuleWithoutPlaintextFiles(t *testing.T) {
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if probe, err := lease.ProbeAnonymousResources(ctx, scratch, key);
-		!errors.Is(err, ErrInertRestoreAnonymousProbe) ||
+	if probe, err := lease.ProbeAnonymousResources(ctx, scratch, key); !errors.Is(err, ErrInertRestoreAnonymousProbe) ||
 		!reflect.DeepEqual(probe, InertRestoreAnonymousProbe{}) {
 		t.Fatalf("released resource lease still allowed staging: %+v %v", probe, err)
 	}
@@ -116,8 +115,7 @@ func TestAnonymousRestoreProbeRejectsWrongKeyScratchAndCancellation(t *testing.T
 	if err := os.Chmod(scratch, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if probe, err := lease.ProbeAnonymousResources(ctx, scratch, key);
-		!errors.Is(err, ErrInertRestoreAnonymousProbe) ||
+	if probe, err := lease.ProbeAnonymousResources(ctx, scratch, key); !errors.Is(err, ErrInertRestoreAnonymousProbe) ||
 		!reflect.DeepEqual(probe, InertRestoreAnonymousProbe{}) {
 		t.Fatalf("public scratch directory accepted: %+v %v", probe, err)
 	}
@@ -209,8 +207,7 @@ func TestAnonymousResourceFileIsUnlinkedNonExecutableAndHashChecked(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := materializeOneAnonymousResource(context.Background(),
-				bytes.NewReader(test.data), dir, test.size, test.hash);
-				!errors.Is(err, ErrInertRestoreAnonymousProbe) {
+				bytes.NewReader(test.data), dir, test.size, test.hash); !errors.Is(err, ErrInertRestoreAnonymousProbe) {
 				t.Fatalf("invalid anonymous payload accepted: %v", err)
 			}
 			requireEmptyAnonymousProbeScratch(t, scratch)

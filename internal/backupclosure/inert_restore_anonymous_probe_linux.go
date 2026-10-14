@@ -86,10 +86,10 @@ func (l *InertRestoreResourceLease) probeAnonymousResources(
 	defer scratch.Close()
 
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inventory, err := readAuthenticatedInventory(
 		bounded, l.candidate.archive, key, receipt)
