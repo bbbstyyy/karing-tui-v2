@@ -119,6 +119,24 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if err := resourceLease.Revalidate(context.Background(), key); err != nil {
 		t.Fatalf("approved-core encrypted resource lease drifted: %v", err)
 	}
+	// ADR 0110 streams the real, repository-locked executable and rules only
+	// through private UNLINKED Linux inodes; no executable or plaintext path
+	// survives this call, and the existing journal/lease remains inert.
+	scratch := filepath.Join(f.stateRoot, "anonymous-resource-probe")
+	if err := os.Mkdir(scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := resourceLease.ProbeAnonymousResources(
+		context.Background(), scratch, key)
+	if err != nil || !probe.AnonymousFilesChecked || !probe.CoreIncluded ||
+		probe.CoreBytes != closure.Inventory.Core.Size ||
+		probe.RuleSetCount != len(closure.Inventory.RuleSets) ||
+		probe.RestoreReady || probe.RestoreSupported {
+		t.Fatalf("real approved-core anonymous probe failed: %+v %v", probe, err)
+	}
+	if entries, err := os.ReadDir(scratch); err != nil || len(entries) != 0 {
+		t.Fatalf("probe left named plaintext resources: %+v %v", entries, err)
+	}
 	if resourceLease.Record().RestoreReady || resourceLease.Record().RestoreSupported {
 		t.Fatal("approved binary gained restore permissions")
 	}
