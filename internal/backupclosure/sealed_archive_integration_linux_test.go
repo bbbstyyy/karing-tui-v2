@@ -155,6 +155,33 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(f.stateRoot, "portable-dry-run")); !os.IsNotExist(err) {
 		t.Fatalf("real approved core preview wrote target files: %v", err)
 	}
+	// ADR 0112: inspect a separate existing 0700 target rule tree using
+	// pinned O_NOFOLLOW directory FDs; every absent resource is counted,
+	// never installed. Even an archive including the real approved binary
+	// remains non-activating and does not create a target Core executable.
+	targetRoot := filepath.Join(f.stateRoot, "portable-inspection-target")
+	for _, directory := range []string{
+		targetRoot, filepath.Join(targetRoot, "core"),
+		filepath.Join(targetRoot, "core", "rule-sets"),
+		filepath.Join(targetRoot, "core", "rule-sets", "sha256"),
+	} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targetReport, err := resourceLease.InspectPortableTargetRuleTree(
+		context.Background(), targetRoot, key)
+	if err != nil || !targetReport.DirectoriesPinned ||
+		targetReport.RuleSetCount != len(closure.Inventory.RuleSets) ||
+		targetReport.MissingRuleSets != len(closure.Inventory.RuleSets) ||
+		targetReport.ExistingRuleSets != 0 ||
+		targetReport.RestoreReady || targetReport.RestoreSupported {
+		t.Fatalf("real core target-path inspection changed authority: %+v %v", targetReport, err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(targetRoot, "core", "rule-sets", "sha256"));
+		err != nil || len(entries) != 0 {
+		t.Fatalf("real core target path inspection created resources: %+v %v", entries, err)
+	}
 	if err := resourceLease.Close(); err != nil {
 		t.Fatal(err)
 	}
