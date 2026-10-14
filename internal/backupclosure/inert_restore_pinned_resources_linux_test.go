@@ -55,8 +55,7 @@ func TestPinnedAnonymousRestoreResourcesRetainUnlinkedFilesWithoutAuthority(t *t
 			t.Fatalf("pinned resource cannot be revalidated: %v", err)
 		}
 	}
-	if duplicate, err := lease.PinAnonymousRestoreResources(ctx, scratch, key);
-		duplicate != nil || !errors.Is(err, ErrInertPinnedRestoreResources) {
+	if duplicate, err := lease.PinAnonymousRestoreResources(ctx, scratch, key); duplicate != nil || !errors.Is(err, ErrInertPinnedRestoreResources) {
 		t.Fatalf("second concurrent pinned FD bundle bypassed quota: %v %v", duplicate, err)
 	}
 	fd := pins.rules[0].file
