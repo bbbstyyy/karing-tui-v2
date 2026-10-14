@@ -159,3 +159,44 @@ func TestArchiveLifecycleAcceptsEmptyInitialDatabaseWithoutRestore(t *testing.T)
 		t.Fatalf("empty immutable state acquired restore authority: %+v %v", report, err)
 	}
 }
+
+func TestArchiveLifecycleRequiresLKGFromCommittedPast(t *testing.T) {
+	f := newFixture(t)
+	older := f.commit(t, true)
+	newer := f.commit(t, true)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", f.store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// Valid current generation with an older, still committed LKG is safe
+	// to inspect. Never require the two pointers to be identical.
+	if _, err := db.ExecContext(ctx,
+		"UPDATE daemon_state SET last_known_good_generation_id=? WHERE singleton=1",
+		older); err != nil {
+		t.Fatal(err)
+	}
+	closure, err := Build(ctx, f.store, f.stateRoot, f.parent)
+	if err != nil {
+		t.Fatalf("older committed LKG must remain inspectable: %v", err)
+	}
+	if err := closure.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Current state now claims revision 1, but LKG points to a committed
+	// generation from revision 2: a future LKG must never be adopted.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE daemon_state
+		SET config_revision=1, applied_generation_id=?,
+		    last_known_good_generation_id=?
+		WHERE singleton=1
+	`, older, newer); err != nil {
+		t.Fatal(err)
+	}
+	closure, err = Build(ctx, f.store, f.stateRoot, f.parent)
+	if closure != nil || !errors.Is(err, ErrUnsafeClosure) {
+		t.Fatalf("future LKG passed strict archive lifecycle audit: %v %v", closure, err)
+	}
+	requireNoBackupScopes(t, f)
+}
