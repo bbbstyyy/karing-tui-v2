@@ -60,7 +60,8 @@ func TestBuildClosureRefusesPendingInertRestoreBeforeSeal(t *testing.T) {
 		t.Fatalf("abandoned inert record blocked safe archive: %v", err)
 	}
 	defer closure.Close()
-	dest := filepath.Join(testSealedDir(t, f), "abandoned-history.ktbackup")
+	// createInertDryRunFixture already created the owned private archive parent.
+	dest := filepath.Join(f.stateRoot, "sealed-archives", "abandoned-history.ktbackup")
 	if _, err := closure.SealInertArchive(ctx, dest, key); err != nil {
 		t.Fatal(err)
 	}
