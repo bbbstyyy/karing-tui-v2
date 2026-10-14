@@ -158,6 +158,28 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if err := pins.Revalidate(context.Background(), key); err != nil {
 		t.Fatalf("approved-core anonymous pinned resource drifted: %v", err)
 	}
+	// ADR 0114 publishes RULES ONLY, under a private inactive directory.
+	// The actual approved binary stays an unlinkable FD and is never copied
+	// to this persisted scope or made executable.
+	dormantParent := filepath.Join(f.stateRoot, "inert-rule-bundles")
+	if err := os.Mkdir(dormantParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dormant, err := pins.StageDormantRuleBundle(
+		context.Background(), dormantParent, key)
+	if err != nil || !dormant.Inactive || dormant.RestoreReady ||
+		dormant.RestoreSupported ||
+		dormant.RuleCount != len(closure.Inventory.RuleSets) {
+		t.Fatalf("real approved-core dormant rule stage failed: %+v %v", dormant, err)
+	}
+	scopeEntries, err := os.ReadDir(dormantParent)
+	if err != nil || len(scopeEntries) != 1 {
+		t.Fatalf("inert rules publication not atomic: %+v %v", scopeEntries, err)
+	}
+	ruleEntries, err := os.ReadDir(filepath.Join(dormantParent, scopeEntries[0].Name()))
+	if err != nil || len(ruleEntries) != len(closure.Inventory.RuleSets) {
+		t.Fatalf("published historical core or unknown rules: %+v %v", ruleEntries, err)
+	}
 	if err := pins.Close(); err != nil {
 		t.Fatal(err)
 	}
