@@ -18,6 +18,7 @@ import (
 
 const (
 	MaxDormantRuleBundles    = 8
+	dormantRuleRootName      = "inert-rule-bundles"
 	dormantRuleBundlePrefix  = ".ktui-inert-rules-v1-"
 	dormantRulePendingPrefix = ".ktui-inert-rules-pending-"
 )
@@ -85,7 +86,11 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 	l := p.parent
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.candidate == nil || !l.pinnedResourcesActive ||
+	// Refuse arbitrary owned directories, including an empty live rule
+	// tree. This inactive directory is reserved directly beside the
+	// authoritative state DB, not within the active Core artifact layout.
+	if l.candidate == nil || l.live == nil || !l.pinnedResourcesActive ||
+		stageParent != filepath.Join(filepath.Dir(l.live.Path()), dormantRuleRootName) ||
 		stageParent == l.candidate.directory ||
 		stageParent == l.candidate.parent ||
 		stageParent == filepath.Dir(l.candidate.parent) ||
