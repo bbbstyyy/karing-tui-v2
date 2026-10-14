@@ -178,8 +178,12 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 			(name != rule.SHA256+".json" && name != rule.SHA256+".srs") {
 			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 		}
-		if writeDormantPrivateRule(ctx, temp, name, p.rules[i].file,
-			rule.Size, rule.SHA256) != nil {
+		owned, copyErr := writeDormantPrivateRule(ctx, temp, name,
+			p.rules[i].file, rule.Size, rule.SHA256)
+		if owned != nil {
+			created[name] = owned
+		}
+		if copyErr != nil {
 			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 		}
 		observed, checkErr := inspectTargetRule(ctx, temp, rule)
@@ -238,32 +242,43 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 func writeDormantPrivateRule(
 	ctx context.Context, dir *os.File, name string, source *os.File,
 	size int64, wantSHA string,
-) error {
+) (identity os.FileInfo, err error) {
 	if ctx == nil || dir == nil || source == nil || size <= 0 ||
 		!validLowerSHA(wantSHA) || filepath.Base(name) != name ||
 		(name != wantSHA+".json" && name != wantSHA+".srs") {
-		return ErrDormantRuleBundle
+		return nil, ErrDormantRuleBundle
 	}
 	fd, err := unix.Openat(int(dir.Fd()), name,
 		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return ErrDormantRuleBundle
+		return nil, ErrDormantRuleBundle
 	}
 	file := os.NewFile(uintptr(fd), "inert-pending-rule")
 	if file == nil {
 		_ = unix.Close(fd)
-		return ErrDormantRuleBundle
+		return nil, ErrDormantRuleBundle
 	}
-	defer file.Close()
+	defer func() {
+		if file.Close() != nil {
+			err = ErrDormantRuleBundle
+		}
+	}()
+	// Return the inode identity even on a copy failure; the caller can then
+	// remove ONLY this exact file, not any user-controlled replacement.
+	identity, err = file.Stat()
+	if err != nil || !identity.Mode().IsRegular() ||
+		identity.Mode().Perm() != 0o600 {
+		return nil, ErrDormantRuleBundle
+	}
 	hash := sha256.New()
 	n, err := io.CopyN(io.MultiWriter(file, hash),
 		sealedContextReader{ctx: ctx, src: source}, size)
 	if err != nil || n != size ||
 		hex.EncodeToString(hash.Sum(nil)) != wantSHA ||
 		file.Chmod(0o400) != nil || file.Sync() != nil || ctx.Err() != nil {
-		return ErrDormantRuleBundle
+		return identity, ErrDormantRuleBundle
 	}
-	return nil
+	return identity, nil
 }
 
 // Scan ONLY a dedicated, existing 0700 root while holding its exclusive
@@ -274,11 +289,10 @@ func inspectDormantRuleBundleRoot(ctx context.Context, root *os.File) error {
 		return ErrDormantRuleBundle
 	}
 	entries, err := root.ReadDir(MaxDormantRuleBundles + 2)
-	if err != nil && !errors.Is(err, os.ErrNotExist) &&
-		!errors.Is(err, syscall.EINVAL) && !errors.Is(err, io.EOF) {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return ErrDormantRuleBundle
 	}
-	if len(entries) > MaxDormantRuleBundles {
+	if len(entries) >= MaxDormantRuleBundles {
 		return ErrDormantRuleBundle
 	}
 	for _, entry := range entries {
