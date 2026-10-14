@@ -96,8 +96,7 @@ func TestDormantRuleStagePublishesOnlyRulesAtomicallyAndNeverActivates(t *testin
 	if err := pins.Revalidate(ctx, key); err != nil {
 		t.Fatalf("publisher linked/mutated original anonymous FD: %v", err)
 	}
-	if duplicate, err := pins.StageDormantRuleBundle(ctx, parent, key);
-		!errors.Is(err, ErrDormantRuleBundle) ||
+	if duplicate, err := pins.StageDormantRuleBundle(ctx, parent, key); !errors.Is(err, ErrDormantRuleBundle) ||
 		!reflect.DeepEqual(duplicate, DormantRuleBundleReceipt{}) {
 		t.Fatalf("a second stage silently overwrote durable bundle: %+v %v", duplicate, err)
 	}

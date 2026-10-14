@@ -4,21 +4,21 @@ package backupclosure
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
-	"io"
-	"crypto/sha256"
-	"encoding/hex"
 
 	"golang.org/x/sys/unix"
 )
 
 const (
-	MaxDormantRuleBundles = 8
-	dormantRuleBundlePrefix = ".ktui-inert-rules-v1-"
+	MaxDormantRuleBundles    = 8
+	dormantRuleBundlePrefix  = ".ktui-inert-rules-v1-"
 	dormantRulePendingPrefix = ".ktui-inert-rules-pending-"
 )
 
@@ -109,10 +109,10 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 		return report, ErrDormantRuleBundle
 	}
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inventory, err := readAuthenticatedInventory(ctx, l.candidate.archive, key, receipt)
 	if err != nil || len(inventory.RuleSets) != len(p.rules) ||
@@ -225,14 +225,14 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 		return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 	}
 	return DormantRuleBundleReceipt{
-		ArchiveSHA256: receipt.ArchiveSHA256,
-		InventorySHA256: receipt.InventorySHA256,
-		RuleCount: len(inventory.RuleSets),
-		RuleBytes: total,
-		ScopeSHA256: shaHex([]byte(finalName)),
-		Inactive: true,
+		ArchiveSHA256:    receipt.ArchiveSHA256,
+		InventorySHA256:  receipt.InventorySHA256,
+		RuleCount:        len(inventory.RuleSets),
+		RuleBytes:        total,
+		ScopeSHA256:      shaHex([]byte(finalName)),
+		Inactive:         true,
 		RestoreSupported: false,
-		RestoreReady: false,
+		RestoreReady:     false,
 	}, nil
 }
 
