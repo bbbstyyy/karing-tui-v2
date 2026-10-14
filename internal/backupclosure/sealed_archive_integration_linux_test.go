@@ -140,6 +140,30 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if resourceLease.Record().RestoreReady || resourceLease.Record().RestoreSupported {
 		t.Fatal("approved binary gained restore permissions")
 	}
+	// ADR 0113: preserve the real repository-approved Core and rule data in
+	// anonymous, NON-executable descriptors across independent same-process
+	// checks, then drop every FD before progressing. Never publish a path.
+	pins, err := resourceLease.PinAnonymousRestoreResources(
+		context.Background(), scratch, key)
+	if err != nil {
+		t.Fatalf("real approved-core pinned resource stage failed: %v", err)
+	}
+	pinEvidence := pins.Evidence()
+	if !pinEvidence.CoreIncluded || pinEvidence.CoreBytes != closure.Inventory.Core.Size ||
+		pinEvidence.RuleSetCount != len(closure.Inventory.RuleSets) ||
+		pinEvidence.DescriptorCount != pinEvidence.RuleSetCount+1 ||
+		pinEvidence.RestoreReady || pinEvidence.RestoreSupported {
+		t.Fatalf("approved-core descriptor bundle acquired restore authority: %+v", pinEvidence)
+	}
+	if err := pins.Revalidate(context.Background(), key); err != nil {
+		t.Fatalf("approved-core anonymous pinned resource drifted: %v", err)
+	}
+	if err := pins.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(scratch); err != nil || len(entries) != 0 {
+		t.Fatalf("pinned approved Core left named plaintext: %+v %v", entries, err)
+	}
 	// ADR 0111: authenticated SQLite is inspected in memory only. The
 	// source-native rule paths are rebound hypothetically to another Linux
 	// state root. Neither rewritten config nor plaintext core is published.
