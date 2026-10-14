@@ -53,6 +53,7 @@ type InertPinnedRestoreResources struct {
 	rules       []pinnedAnonymousResource
 	core        *pinnedAnonymousResource
 	evidence    InertPinnedResourceEvidence
+	registered  bool
 }
 
 // PinAnonymousRestoreResources differs from ADR 0110's one-time probe by
@@ -88,7 +89,9 @@ func (l *InertRestoreResourceLease) pinAnonymousRestoreResources(
 	// l.Close cannot drop the directory flock during this critical section.
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.revalidateLocked(bounded, key) != nil {
+	// One active bundle per ciphertext lease bounds anonymous open FDs and
+	// temporary disk occupancy even if a caller retains a prior bundle.
+	if l.pinnedResourcesActive || l.revalidateLocked(bounded, key) != nil {
 		return nil, ErrInertPinnedRestoreResources
 	}
 	if scratchParent == l.candidate.directory ||
@@ -188,6 +191,8 @@ func (l *InertRestoreResourceLease) pinAnonymousRestoreResources(
 	if pins.core != nil {
 		pins.evidence.DescriptorCount++
 	}
+	l.pinnedResourcesActive = true
+	pins.registered = true
 	ready = true
 	return pins, nil
 }
@@ -367,6 +372,12 @@ func (p *InertPinnedRestoreResources) Close() error {
 		}
 		p.scratch = nil
 	}
+	if p.registered && p.parent != nil {
+		p.parent.mu.Lock()
+		p.parent.pinnedResourcesActive = false
+		p.parent.mu.Unlock()
+	}
+	p.registered = false
 	p.parent = nil
 	p.identity = nil
 	p.scratchPath = ""
