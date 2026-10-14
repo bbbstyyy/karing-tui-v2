@@ -55,6 +55,10 @@ func TestPinnedAnonymousRestoreResourcesRetainUnlinkedFilesWithoutAuthority(t *t
 			t.Fatalf("pinned resource cannot be revalidated: %v", err)
 		}
 	}
+	if duplicate, err := lease.PinAnonymousRestoreResources(ctx, scratch, key);
+		duplicate != nil || !errors.Is(err, ErrInertPinnedRestoreResources) {
+		t.Fatalf("second concurrent pinned FD bundle bypassed quota: %v %v", duplicate, err)
+	}
 	fd := pins.rules[0].file
 	if err := pins.Close(); err != nil {
 		t.Fatal(err)
@@ -70,6 +74,15 @@ func TestPinnedAnonymousRestoreResourcesRetainUnlinkedFilesWithoutAuthority(t *t
 	}
 	if err := pins.Revalidate(ctx, key); !errors.Is(err, ErrInertPinnedRestoreResources) {
 		t.Fatalf("closed pinned lease revalidated: %v", err)
+	}
+	// Explicit Close releases the parent-owned per-lease FD reservation, so
+	// subsequent independent stages can proceed without a process restart.
+	again, err := lease.PinAnonymousRestoreResources(ctx, scratch, key)
+	if err != nil || again.Evidence().DescriptorCount != 1 {
+		t.Fatalf("closed FD reservation remained active: %+v %v", again, err)
+	}
+	if err := again.Close(); err != nil {
+		t.Fatal(err)
 	}
 	requireEmptyAnonymousProbeScratch(t, scratch)
 	if _, err := os.Lstat(filepath.Join(directory, inertRestoreCipherName)); err != nil {
