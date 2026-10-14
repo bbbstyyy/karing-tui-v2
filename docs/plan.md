@@ -1411,3 +1411,10 @@ docs/
 - 对认证清单声明的每个 `sha256/<digest>.json|.srs` 文件：缺失只能计数，不创建、不修复；已存在的文件必须是当前 UID 私有 0400/0600、不可执行、单硬链接、准确字节数及 SHA-256。文件以父目录 FD 为基准 `O_NOFOLLOW` 打开并核对 inode，扫描结束再次验证全部文件是否缺失/存在及 inode/数据身份；目录也重复验证，最终再次执行 journal/live CAS。
 - 返回只含脱敏数量、已验证字节数和归档/目标路径指纹的只读报告；不会写入现有或目标 SQLite、规则/Core 文件或任何申请恢复任务。新增同内容 inode 替换、晚到文件、目录替换、权限/链接、密文密钥、CAS 漂移、跨 goroutine Close 等测试，并在真实批准 Core 集成中验证只读扫描。
 - **仍未实现持久恢复**：返回时目标目录 FD 已关闭，检查结果不能抵御此后同 UID 修改或代替真实写事务；下一阶段仍需受限权限下的持久资源物化、目标运行时配置重新编译、隔离 SQLite schema migration、同事务 CAS、Core Check/Activate/Verify、双回滚以及 T15/T23 故障注入。恢复入口保持禁用；CN 28 组、五层分流、无 TUN 和无订阅/ISP 分流约束不变；保持 PR #1 Draft。
+
+### 2026-10-14 M4 可撤销的进程内匿名资源描述符租约（ADR 0113）
+
+- 将 ADR 0110 的规则/Core 一次性匿名试装载扩展为仅内部的 `PinAnonymousRestoreResources`：原 journal-bound 加密恢复候选持锁，完整复核密文 HMAC/SHA、归档内存 SQLite/schema/profile、v18 恢复日志和当前 Applied/LKG/声明/选择 CAS 后，通过同一个受认证数据流向独立 `O_TMPFILE` 逐个复制规则及可选批准 Core。资源保持原有数量、大小和磁盘预算；每个 FD 都必须为当前 UID、`nlink=0`、0400 不可执行、字节数与 SHA-256 匹配、fsync 后读回再校验。
+- 本轮返回的是进程内私有、受互斥保护的资源租约对象（不导出路径或 FD）。`Revalidate` 在同一对象内先后重新认证原密文及 SQLite 当前状态、scratch 目录身份和每个资源 inode/权限/内容；`Close` 关闭全部匿名 FD、幂等撤销证据且不触碰持久密文及 journal。任何阶段出错都必须关闭全部已创建的匿名资源，不会留下可见明文文件或修改运行配置。
+- 单个密文候选 lease 同时只允许持有 **一组** 匿名资源集合；显式 Close 后才释放名额，防止连续请求积累 FD 或临时磁盘空间。测试覆盖错误密钥/取消、资源篡改/可执行权限、目录 inode 交换、日志放弃/选择更改、parent Close、阶段故障清理、重复 Pin 限额和并发 Close；真实锁定的 Linux sing-box Core 只作为不可执行匿名 FD 持有、复核并立即关闭。
+- **安全限制**：匿名资源租约仅在进程存活期间有效，SIGKILL/重启不持久；不能将 `Evidence` 当作恢复许可或将匿名 FD 传给 sing-box。还没有持久资源发布/跨重启回收、目标 SQLite schema 迁移/原子写 CAS、Core Check/Activate/Verify、双重回滚、T15/T23 断电恢复和 72h/7d/30d 验收；`RestoreSupported=false` 与 `RestoreReady=false`、Draft PR #1、不合并 main 继续保持。
