@@ -1421,7 +1421,7 @@ docs/
 
 ### 2026-10-14 M4 非活动规则资源的隔离持久化与目录原子发布（ADR 0114）
 
-- 在 ADR 0113 已持有、每进程最多一组的已认证匿名规则/Core 描述符基础上，新增 **仅内部** `InertPinnedRestoreResources.StageDormantRuleBundle`：仍持有原 ciphertext/flock、v18 pending 恢复日志和 live Applied/LKG/声明/选择/Core CAS；要求单独的已存在、当前 UID 私有 0700 规则暂存父目录，严禁进入密文候选目录或匿名 scratch，父目录也通过独占 `flock` 串行化，并拒绝未知、待处理或超过 8 个完成的暂存 scope。
+- 在 ADR 0113 已持有、每进程最多一组的已认证匿名规则/Core 描述符基础上，新增 **仅内部** `InertPinnedRestoreResources.StageDormantRuleBundle`：仍持有原 ciphertext/flock、v18 pending 恢复日志和 live Applied/LKG/声明/选择/Core CAS；要求独立存在、位于权威 SQLite 状态库同目录下的固定 `inert-rule-bundles` 私有 0700 父目录，拒绝任意其他私有路径（包括活跃 Core 规则树），严禁进入密文候选目录或匿名 scratch，父目录也通过独占 `flock` 串行化，并拒绝未知、待处理或超过 8 个完成的暂存 scope。
 - 为源密文 SHA-256 建立唯一、无覆盖的私有非活动 `.ktui-inert-rules-v1-<digest>` 目录。规则先在只有 0700 访问权限的 `.ktui-inert-rules-pending-*` 内，以目录 FD 为基准用 `O_CREAT|O_EXCL|O_NOFOLLOW` 复制自独立验证的匿名 FD；文件复制期 0600，SHA/大小核对后 0400 不可执行、fsync。**不复制**批准 Core 可执行文件和含订阅凭据的 SQLite；原匿名文件 `nlink=0` 不变，当前 live `core/rule-sets` 不变。
 - 对暂存目录重新打开独立 FD、核对**完全等于清单**的文件条目集合、每个文件 inode/UID/权限/单硬链接/SHA/大小、目录 inode；注入点后的变更也必须再次执行独立文件扫描、原匿名 FD 核验和完整密文/当前状态 CAS。最终只通过 Linux `renameat2(RENAME_NOREPLACE)` 一次性发布该私有目录并 fsync 目录和父目录，绝不覆盖已有同源资源目录。
 - 常规失败仅删除**已确认本次创建且 inode 未变化**的私有文件，拒绝递归删除未知内容；SIGKILL 或非合作写入导致的残余 pending scope 必须阻止后续发布并等待显式审计。rename 完成但父目录 fsync 失败时，持久结果可能不确定，报错且**不删除**可能已发布的目录。返回仅哈希与数量、`Inactive=true` 和固定的两项恢复禁用标志。
