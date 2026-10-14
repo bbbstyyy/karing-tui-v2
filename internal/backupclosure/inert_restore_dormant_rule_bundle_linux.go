@@ -187,10 +187,12 @@ func (p *InertPinnedRestoreResources) stageDormantRuleBundle(
 			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 		}
 		observed, checkErr := inspectTargetRule(ctx, temp, rule)
-		if checkErr != nil || !observed.exists {
+		if checkErr != nil || !observed.exists || owned == nil ||
+			!os.SameFile(owned, observed.info) {
+			// Keep the original inode in the cleanup map; a path replaced
+			// after its exclusive creation is not ours to delete.
 			return DormantRuleBundleReceipt{}, ErrDormantRuleBundle
 		}
-		created[name] = observed.info
 	}
 	if temp.Sync() != nil ||
 		verifyDormantRulePayload(ctx, root, tempName, temp, initial,
