@@ -156,6 +156,18 @@ func buildWithCore(
 	// The source of truth for all references is this one SQLite copy, not
 	// separate reads of the live writable store.
 	generationRecords, rules, schema, readErr := enumerateSnapshot(ctx, snapshotDB, stateRoot)
+	if readErr == nil {
+		// Audit the SAME immutable database copy that supplies the generation
+		// and rule-set inventory. In particular, v18 snapshots with a pending
+		// inert restore journal cannot pass the sealed-archive preflight:
+		// refuse them BEFORE publishing an unusable encrypted backup.
+		var conn *sql.Conn
+		conn, readErr = snapshotDB.Conn(ctx)
+		if readErr == nil {
+			_, readErr = storage.VerifyArchivedSchemaAndDomains(ctx, conn, schema)
+			readErr = errors.Join(readErr, conn.Close())
+		}
+	}
 	closeErr := snapshotDB.Close()
 	if readErr != nil || closeErr != nil {
 		return nil, ErrUnsafeClosure
