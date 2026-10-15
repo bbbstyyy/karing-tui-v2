@@ -25,7 +25,7 @@ Add two internal Linux APIs on an explicitly reacquired `InertRestoreResourceLea
 ## Concurrency and crash guarantees
 
 - Lock order: ciphertext resource lease mutex/held candidate-directory flock → exclusive private-stage root flock. No existing lock order is reversed, and parent `Close` cannot race an in-process inspection or rename. This does **not** protect against deliberately malicious actors sharing the same UID outside the cooperative protocol.
-- Validation occurs on *real no-follow FDs*, not paths obtained from the caller. A same-inode mode or mtime drift and a same-byte inode replacement are detected through repeat scans/hashes and exact expected values; race injections after the first scan fail closed.
+- Validation occurs on *real no-follow FDs*, not paths obtained from the caller. Same-byte inode replacement **during one held-lock validation** is detected by pinned identities and repeat scans. A replacement **between independent calls** cannot be compared against the closed prior inode and is independently reauthenticated from its exact size/hash/UID/mode on the new call; a previous report is never a durable inode lease.
 - An expected parent-directory mtime change from the authorized rename is allowed, but the inode, UID and 0700 privacy and path identity must remain stable. Other unexpected changes fail.
 - Parent fsync only follows successful no-replace rename and reverified full bytes. An error after rename, including lost fsync, is **never** repaired automatically.
 - Recovery from a partial physical deletion is expressly **not implemented here**. Never use `RemoveAll`, broad globs or time/PID GC to attempt to recover space.
