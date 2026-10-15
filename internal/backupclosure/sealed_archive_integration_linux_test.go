@@ -230,6 +230,27 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if err := resourceLease.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// ADR 0116: after the real approved-Core anonymous pins and original
+	// ciphertext lease are CLOSED, reacquire a fresh authenticated candidate.
+	// Independently rehash only the persisted inactive RULES, never install
+	// or execute the historical Core and never grant restore permissions.
+	freshLease, err := AcquireInertRestoreResourceLease(
+		context.Background(), f.store, candidateParent, journal.ID, key)
+	if err != nil {
+		t.Fatalf("real core ciphertext lease could not be reopened: %v", err)
+	}
+	verifiedDormant, err := freshLease.AuthenticateDormantRuleBundle(context.Background(), key)
+	if err != nil || !verifiedDormant.RuleBytesVerified ||
+		!verifiedDormant.Inactive || !verifiedDormant.RequiresRevalidation ||
+		verifiedDormant.RuleCount != len(closure.Inventory.RuleSets) ||
+		verifiedDormant.RuleBytes != dormant.RuleBytes ||
+		verifiedDormant.ArchiveSHA256 != receipt.ArchiveSHA256 ||
+		verifiedDormant.RestoreSupported || verifiedDormant.RestoreReady {
+		t.Fatalf("real approved-Core dormant rules reauthentication failed: %+v %v", verifiedDormant, err)
+	}
+	if err := freshLease.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.store.AbandonInertRestoreRecord(
 		context.Background(), journal.ID, journal.CandidateScope,
 		journal.ArchiveSHA256); err != nil {
