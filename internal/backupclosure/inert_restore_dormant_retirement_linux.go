@@ -210,7 +210,10 @@ func (l *InertRestoreResourceLease) quarantineDormantRuleBundle(
 	rootAfter, rootErr := root.Stat()
 	atPath, pathErr := os.Lstat(rootPath)
 	if rootErr != nil || pathErr != nil ||
-		!sameLeasedFile(rootBefore, rootAfter) ||
+		// The authorized rename itself changes parent-directory timestamps.
+		// Keep the inode and private ownership pinned, not its old mtime.
+		!os.SameFile(rootBefore, rootAfter) ||
+		!privatePortableDirectory(rootAfter) ||
 		!os.SameFile(rootAfter, atPath) ||
 		verifySealedArchiveParent(rootPath) != nil ||
 		bounded.Err() != nil {
