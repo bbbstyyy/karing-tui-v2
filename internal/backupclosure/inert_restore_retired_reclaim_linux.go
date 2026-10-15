@@ -84,15 +84,15 @@ func (l *InertRestoreResourceLease) inspectRetiredDormantRuleBundle(
 		return zero, ErrRetiredRuleReclaim
 	}
 	return RetiredRuleInspection{
-		ArchiveSHA256: pins.receipt.ArchiveSHA256,
-		InventorySHA256: pins.receipt.InventorySHA256,
-		RetiredScopeSHA256: shaHex([]byte(pins.retiredName)),
-		RuleCount: len(pins.inventory.RuleSets),
-		RuleBytes: pins.bytes,
-		ContentVerified: true,
+		ArchiveSHA256:        pins.receipt.ArchiveSHA256,
+		InventorySHA256:      pins.receipt.InventorySHA256,
+		RetiredScopeSHA256:   shaHex([]byte(pins.retiredName)),
+		RuleCount:            len(pins.inventory.RuleSets),
+		RuleBytes:            pins.bytes,
+		ContentVerified:      true,
 		RequiresRevalidation: true,
-		RestoreSupported: false,
-		RestoreReady: false,
+		RestoreSupported:     false,
+		RestoreReady:         false,
 	}, nil
 }
 
@@ -184,37 +184,43 @@ func (l *InertRestoreResourceLease) beginRetiredDormantRuleReclaim(
 		return zero, ErrRetiredRuleReclaim
 	}
 	return RetiredRuleReclaimIntent{
-		ArchiveSHA256: pins.receipt.ArchiveSHA256,
-		InventorySHA256: pins.receipt.InventorySHA256,
-		ReclaimScopeSHA256: shaHex([]byte(newName)),
-		RuleCount: len(pins.inventory.RuleSets),
-		RuleBytes: pins.bytes,
-		IntentPublished: true,
-		BytesDeleted: false,
+		ArchiveSHA256:        pins.receipt.ArchiveSHA256,
+		InventorySHA256:      pins.receipt.InventorySHA256,
+		ReclaimScopeSHA256:   shaHex([]byte(newName)),
+		RuleCount:            len(pins.inventory.RuleSets),
+		RuleBytes:            pins.bytes,
+		IntentPublished:      true,
+		BytesDeleted:         false,
 		RequiresManualReview: true,
-		RestoreSupported: false,
-		RestoreReady: false,
+		RestoreSupported:     false,
+		RestoreReady:         false,
 	}, nil
 }
 
 type retiredRulePins struct {
-	root *os.File
-	dir *os.File
-	rootPath string
+	root        *os.File
+	dir         *os.File
+	rootPath    string
 	retiredName string
-	rootInfo os.FileInfo
-	scopeInfo os.FileInfo
-	receipt SealedArchiveReceipt
-	inventory Inventory
-	scopes []dormantRuleScopeObservation
-	files map[string]os.FileInfo
-	bytes int64
+	rootInfo    os.FileInfo
+	scopeInfo   os.FileInfo
+	receipt     SealedArchiveReceipt
+	inventory   Inventory
+	scopes      []dormantRuleScopeObservation
+	files       map[string]os.FileInfo
+	bytes       int64
 }
 
 func (p *retiredRulePins) Close() {
 	if p != nil {
-		if p.dir != nil { _ = p.dir.Close(); p.dir = nil }
-		if p.root != nil { _ = p.root.Close(); p.root = nil }
+		if p.dir != nil {
+			_ = p.dir.Close()
+			p.dir = nil
+		}
+		if p.root != nil {
+			_ = p.root.Close()
+			p.root = nil
+		}
 	}
 }
 
@@ -239,10 +245,10 @@ func openRetiredRuleInspection(
 		return nil, ErrRetiredRuleReclaim
 	}
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inventory, err := readAuthenticatedInventory(ctx,
 		l.candidate.archive, key, receipt)
@@ -260,19 +266,27 @@ func openRetiredRuleInspection(
 		total += rule.Size
 	}
 	p := &retiredRulePins{
-		rootPath: path,
+		rootPath:    path,
 		retiredName: dormantRuleRetiredPrefix + receipt.ArchiveSHA256,
-		receipt: receipt, inventory: inventory, bytes: total,
+		receipt:     receipt, inventory: inventory, bytes: total,
 	}
-	defer func() { if err != nil { p.Close() } }()
+	defer func() {
+		if err != nil {
+			p.Close()
+		}
+	}()
 	p.root, err = lockSealedArchiveParent(ctx, path)
-	if err != nil { return nil, ErrRetiredRuleReclaim }
+	if err != nil {
+		return nil, ErrRetiredRuleReclaim
+	}
 	p.rootInfo, err = p.root.Stat()
 	if err != nil || !privatePortableDirectory(p.rootInfo) {
 		return nil, ErrRetiredRuleReclaim
 	}
 	p.scopes, err = scanRetiredRuleRoot(ctx, p.root, "")
-	if err != nil { return nil, ErrRetiredRuleReclaim }
+	if err != nil {
+		return nil, ErrRetiredRuleReclaim
+	}
 	var scope *dormantRuleScopeObservation
 	for i := range p.scopes {
 		if p.scopes[i].name == p.retiredName {
@@ -285,7 +299,9 @@ func openRetiredRuleInspection(
 	}
 	fd, openErr := unix.Openat(int(p.root.Fd()), p.retiredName,
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if openErr != nil { return nil, ErrRetiredRuleReclaim }
+	if openErr != nil {
+		return nil, ErrRetiredRuleReclaim
+	}
 	p.dir = os.NewFile(uintptr(fd), "retired-rule-reauthentication")
 	if p.dir == nil {
 		_ = unix.Close(fd)
@@ -297,7 +313,9 @@ func openRetiredRuleInspection(
 		return nil, ErrRetiredRuleReclaim
 	}
 	p.files = make(map[string]os.FileInfo, len(scope.files))
-	for _, file := range scope.files { p.files[file.name] = file.info }
+	for _, file := range scope.files {
+		p.files[file.name] = file.info
+	}
 	if len(p.files) != len(inventory.RuleSets) ||
 		verifyDormantRulePayload(ctx, p.root, p.retiredName, p.dir,
 			p.scopeInfo, inventory.RuleSets, p.files) != nil {
@@ -331,7 +349,9 @@ func (p *retiredRulePins) revalidate(
 }
 
 func verifyRetiredRuleParent(path string, root *os.File, before os.FileInfo, changed bool) error {
-	if root == nil || before == nil { return ErrRetiredRuleReclaim }
+	if root == nil || before == nil {
+		return ErrRetiredRuleReclaim
+	}
 	now, err := root.Stat()
 	atPath, pathErr := os.Lstat(path)
 	if err != nil || pathErr != nil || !privatePortableDirectory(now) ||
@@ -339,7 +359,9 @@ func verifyRetiredRuleParent(path string, root *os.File, before os.FileInfo, cha
 		verifySealedArchiveParent(path) != nil {
 		return ErrRetiredRuleReclaim
 	}
-	if !changed && !sameLeasedFile(before, now) { return ErrRetiredRuleReclaim }
+	if !changed && !sameLeasedFile(before, now) {
+		return ErrRetiredRuleReclaim
+	}
 	return nil
 }
 
@@ -348,17 +370,26 @@ func verifyRetiredRuleParent(path string, root *os.File, before os.FileInfo, cha
 func scanRetiredRuleRoot(
 	ctx context.Context, root *os.File, allowReclaim string,
 ) ([]dormantRuleScopeObservation, error) {
-	if ctx == nil || root == nil || ctx.Err() != nil { return nil, ErrRetiredRuleReclaim }
+	if ctx == nil || root == nil || ctx.Err() != nil {
+		return nil, ErrRetiredRuleReclaim
+	}
 	fd, err := unix.Openat(int(root.Fd()), ".",
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if err != nil { return nil, ErrRetiredRuleReclaim }
+	if err != nil {
+		return nil, ErrRetiredRuleReclaim
+	}
 	reader := os.NewFile(uintptr(fd), "retired-rule-root-reader")
-	if reader == nil { _ = unix.Close(fd); return nil, ErrRetiredRuleReclaim }
+	if reader == nil {
+		_ = unix.Close(fd)
+		return nil, ErrRetiredRuleReclaim
+	}
 	defer reader.Close()
 	entries, err := reader.ReadDir(MaxDormantRuleAuditScopes + 1)
 	if (err != nil && !errors.Is(err, io.EOF)) ||
 		len(entries) > MaxDormantRuleAuditScopes ||
-		len(entries) > MaxDormantRuleBundles { return nil, ErrRetiredRuleReclaim }
+		len(entries) > MaxDormantRuleBundles {
+		return nil, ErrRetiredRuleReclaim
+	}
 	out := make([]dormantRuleScopeObservation, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
@@ -377,11 +408,15 @@ func scanRetiredRuleRoot(
 		default:
 			return nil, ErrRetiredRuleReclaim
 		}
-		if !entry.IsDir() || ctx.Err() != nil { return nil, ErrRetiredRuleReclaim }
+		if !entry.IsDir() || ctx.Err() != nil {
+			return nil, ErrRetiredRuleReclaim
+		}
 		// A retired rule is always private 0400. Call the existing strict
 		// shape verifier in its published (nonempty, read-only) mode.
 		scope, err := inspectDormantRuleScopeShape(ctx, root, name, "published_untrusted")
-		if err != nil { return nil, ErrRetiredRuleReclaim }
+		if err != nil {
+			return nil, ErrRetiredRuleReclaim
+		}
 		scope.phase = phase
 		out = append(out, scope)
 	}
@@ -393,7 +428,9 @@ func scanRetiredRuleRoot(
 func sameReclaimTransition(
 	before, after []dormantRuleScopeObservation, oldName, newName string,
 ) bool {
-	if len(before) != len(after) { return false }
+	if len(before) != len(after) {
+		return false
+	}
 	want := make([]dormantRuleScopeObservation, len(before))
 	copy(want, before)
 	changed := 0
@@ -404,7 +441,9 @@ func sameReclaimTransition(
 			changed++
 		}
 	}
-	if changed != 1 { return false }
+	if changed != 1 {
+		return false
+	}
 	sort.Slice(want, func(i, j int) bool { return want[i].name < want[j].name })
 	return sameDormantRuleScopes(want, after)
 }
