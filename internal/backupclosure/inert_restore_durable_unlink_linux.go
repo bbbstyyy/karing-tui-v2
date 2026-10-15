@@ -24,7 +24,7 @@ import (
 const (
 	reclaimPlanFileName = ".ktui-reclaim-plan-v1"
 	reclaimIntentPrefix = ".ktui-reclaim-intent-v1-"
-	reclaimPlanVersion = "karing-tui-v2-inert-reclaim-plan-v1"
+	reclaimPlanVersion  = "karing-tui-v2-inert-reclaim-plan-v1"
 	maxReclaimPlanBytes = 96 << 10
 )
 
@@ -34,67 +34,73 @@ var ErrDurableRuleReclaim = errors.New("durable inactive rule reclamation refuse
 // sum of file lengths absent under authenticated durable per-file intents,
 // not a promise that the filesystem has already released those disk blocks.
 type DurableRuleReclaimProgress struct {
-	ArchiveSHA256 string
-	InventorySHA256 string
-	PlanSHA256 string
-	ExpectedRules int
-	UnlinkedRules int
-	UnlinkedBytes int64
-	PreparedIntents int
-	AllRulesUnlinked bool
+	ArchiveSHA256        string
+	InventorySHA256      string
+	PlanSHA256           string
+	ExpectedRules        int
+	UnlinkedRules        int
+	UnlinkedBytes        int64
+	PreparedIntents      int
+	AllRulesUnlinked     bool
 	RequiresRevalidation bool
-	RestoreSupported bool
-	RestoreReady bool
+	RestoreSupported     bool
+	RestoreReady         bool
 }
 
 type DurableRuleUnlinkResult struct {
-	PlanSHA256 string
-	RuleSHA256 string
-	RuleBytes int64
-	RuleUnlinked bool
+	PlanSHA256           string
+	RuleSHA256           string
+	RuleBytes            int64
+	RuleUnlinked         bool
 	RequiresRevalidation bool
-	RestoreSupported bool
-	RestoreReady bool
+	RestoreSupported     bool
+	RestoreReady         bool
 }
 
 type reclaimPlannedRule struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
 	SHA256 string `json:"sha256"`
-	Size int64 `json:"size"`
+	Size   int64  `json:"size"`
 	Device uint64 `json:"device"`
-	Inode uint64 `json:"inode"`
+	Inode  uint64 `json:"inode"`
 }
 
 type reclaimPlanBody struct {
-	Version string `json:"version"`
-	ArchiveSHA256 string `json:"archive_sha256"`
-	InventorySHA256 string `json:"inventory_sha256"`
-	JournalID int64 `json:"journal_id"`
-	DirectoryDevice uint64 `json:"directory_device"`
-	DirectoryInode uint64 `json:"directory_inode"`
-	Rules []reclaimPlannedRule `json:"rules"`
+	Version         string               `json:"version"`
+	ArchiveSHA256   string               `json:"archive_sha256"`
+	InventorySHA256 string               `json:"inventory_sha256"`
+	JournalID       int64                `json:"journal_id"`
+	DirectoryDevice uint64               `json:"directory_device"`
+	DirectoryInode  uint64               `json:"directory_inode"`
+	Rules           []reclaimPlannedRule `json:"rules"`
 }
 
 type reclaimSignedPlan struct {
 	Body reclaimPlanBody `json:"body"`
-	MAC string `json:"mac"`
+	MAC  string          `json:"mac"`
 }
 
 type reclaimRuleScope struct {
-	root *os.File
-	dir *os.File
-	path string
-	name string
-	rootInfo os.FileInfo
-	dirInfo os.FileInfo
-	receipt SealedArchiveReceipt
+	root      *os.File
+	dir       *os.File
+	path      string
+	name      string
+	rootInfo  os.FileInfo
+	dirInfo   os.FileInfo
+	receipt   SealedArchiveReceipt
 	inventory Inventory
 }
 
 func (p *reclaimRuleScope) close() {
-	if p == nil { return }
-	if p.dir != nil { _ = p.dir.Close() }
-	if p.root != nil { _ = p.root.Close() }
+	if p == nil {
+		return
+	}
+	if p.dir != nil {
+		_ = p.dir.Close()
+	}
+	if p.root != nil {
+		_ = p.root.Close()
+	}
 }
 
 // PrepareDurableRuleReclaim creates one exact, HMAC-authenticated immutable
@@ -105,16 +111,24 @@ func (l *InertRestoreResourceLease) PrepareDurableRuleReclaim(
 	ctx context.Context, key [32]byte,
 ) (DurableRuleReclaimProgress, error) {
 	var zero DurableRuleReclaimProgress
-	if ctx == nil || l == nil || key == ([32]byte{}) { return zero, ErrDurableRuleReclaim }
-	if err := ctx.Err(); err != nil { return zero, err }
+	if ctx == nil || l == nil || key == ([32]byte{}) {
+		return zero, ErrDurableRuleReclaim
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
 	bounded, cancel := context.WithTimeout(ctx, 4*sealedArchiveTimeout)
 	defer cancel()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	p, err := openReclaimRuleScope(bounded, l, key)
-	if err != nil { return zero, ErrDurableRuleReclaim }
+	if err != nil {
+		return zero, ErrDurableRuleReclaim
+	}
 	defer p.close()
-	if err := verifyReclaimRoot(bounded, p); err != nil { return zero, ErrDurableRuleReclaim }
+	if err := verifyReclaimRoot(bounded, p); err != nil {
+		return zero, ErrDurableRuleReclaim
+	}
 	// An existing plan (even malformed or a symlink) can NEVER be overwritten.
 	var existing unix.Stat_t
 	if err := unix.Fstatat(int(p.dir.Fd()), reclaimPlanFileName,
@@ -122,7 +136,9 @@ func (l *InertRestoreResourceLease) PrepareDurableRuleReclaim(
 		return zero, ErrDurableRuleReclaim
 	}
 	observed, err := inspectCompleteReclaimRules(bounded, p)
-	if err != nil { return zero, ErrDurableRuleReclaim }
+	if err != nil {
+		return zero, ErrDurableRuleReclaim
+	}
 	plan, err := createReclaimPlan(bounded, p, l.record.ID, observed, key)
 	if err != nil || l.revalidateLocked(bounded, key) != nil ||
 		verifyReclaimRoot(bounded, p) != nil ||
@@ -130,7 +146,9 @@ func (l *InertRestoreResourceLease) PrepareDurableRuleReclaim(
 		return zero, ErrDurableRuleReclaim
 	}
 	payload, err := json.Marshal(plan)
-	if err != nil || len(payload) > maxReclaimPlanBytes { return zero, ErrDurableRuleReclaim }
+	if err != nil || len(payload) > maxReclaimPlanBytes {
+		return zero, ErrDurableRuleReclaim
+	}
 	if err := publishPrivateReclaimMarker(bounded, p.dir, reclaimPlanFileName, payload); err != nil {
 		return zero, ErrDurableRuleReclaim
 	}
@@ -158,17 +176,25 @@ func (l *InertRestoreResourceLease) InspectDurableRuleReclaim(
 	ctx context.Context, key [32]byte,
 ) (DurableRuleReclaimProgress, error) {
 	var zero DurableRuleReclaimProgress
-	if ctx == nil || l == nil || key == ([32]byte{}) { return zero, ErrDurableRuleReclaim }
-	if err := ctx.Err(); err != nil { return zero, err }
+	if ctx == nil || l == nil || key == ([32]byte{}) {
+		return zero, ErrDurableRuleReclaim
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
 	bounded, cancel := context.WithTimeout(ctx, 4*sealedArchiveTimeout)
 	defer cancel()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	p, err := openReclaimRuleScope(bounded, l, key)
-	if err != nil { return zero, ErrDurableRuleReclaim }
+	if err != nil {
+		return zero, ErrDurableRuleReclaim
+	}
 	defer p.close()
 	plan, payload, err := readReclaimPlan(bounded, p, l, key)
-	if err != nil { return zero, ErrDurableRuleReclaim }
+	if err != nil {
+		return zero, ErrDurableRuleReclaim
+	}
 	before, err := inspectReclaimRuleState(bounded, p, plan, key)
 	if err != nil || verifyReclaimRoot(bounded, p) != nil ||
 		l.revalidateLocked(bounded, key) != nil {
@@ -208,13 +234,17 @@ func (l *InertRestoreResourceLease) unlinkNextDurableReclaimRule(
 		expected.ExpectedRules > MaxClosureRuleSets {
 		return zero, ErrDurableRuleReclaim
 	}
-	if err := ctx.Err(); err != nil { return zero, err }
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
 	bounded, cancel := context.WithTimeout(ctx, 4*sealedArchiveTimeout)
 	defer cancel()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	p, err := openReclaimRuleScope(bounded, l, key)
-	if err != nil { return zero, ErrDurableRuleReclaim }
+	if err != nil {
+		return zero, ErrDurableRuleReclaim
+	}
 	defer p.close()
 	plan, payload, err := readReclaimPlan(bounded, p, l, key)
 	if err != nil || expected.ArchiveSHA256 != p.receipt.ArchiveSHA256 ||
@@ -237,10 +267,14 @@ func (l *InertRestoreResourceLease) unlinkNextDurableReclaimRule(
 	for i, rule := range plan.Body.Rules {
 		if _, found := state.present[rule.Name]; found {
 			index = i
-			if state.intents[i] { break } // resume prepared intent first
+			if state.intents[i] {
+				break
+			} // resume prepared intent first
 		}
 	}
-	if index == -1 { return zero, ErrDurableRuleReclaim }
+	if index == -1 {
+		return zero, ErrDurableRuleReclaim
+	}
 	rule := plan.Body.Rules[index]
 	markerName := reclaimIntentPrefix + fmt.Sprintf("%03d", index)
 	if !state.intents[index] {
@@ -311,7 +345,9 @@ func openReclaimRuleScope(ctx context.Context, l *InertRestoreResourceLease, key
 		return nil, ErrDurableRuleReclaim
 	}
 	db := l.live.Path()
-	if !filepath.IsAbs(db) || filepath.Clean(db) != db { return nil, ErrDurableRuleReclaim }
+	if !filepath.IsAbs(db) || filepath.Clean(db) != db {
+		return nil, ErrDurableRuleReclaim
+	}
 	path := filepath.Join(filepath.Dir(db), dormantRuleRootName)
 	if !validPortablePreviewRoot(path) ||
 		path == l.candidate.parent || path == l.candidate.directory ||
@@ -320,10 +356,10 @@ func openReclaimRuleScope(ctx context.Context, l *InertRestoreResourceLease, key
 		return nil, ErrDurableRuleReclaim
 	}
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inv, err := readAuthenticatedInventory(ctx, l.candidate.archive, key, receipt)
 	if err != nil || !validLowerSHA(receipt.ArchiveSHA256) ||
@@ -333,27 +369,42 @@ func openReclaimRuleScope(ctx context.Context, l *InertRestoreResourceLease, key
 	var total int64
 	for _, rule := range inv.RuleSets {
 		if rule.Size <= 0 || rule.Size > MaxClosureRuleBytes ||
-			total > MaxClosureRuleBytes-rule.Size { return nil, ErrDurableRuleReclaim }
+			total > MaxClosureRuleBytes-rule.Size {
+			return nil, ErrDurableRuleReclaim
+		}
 		total += rule.Size
 	}
 	p := &reclaimRuleScope{
-		path: path, name: dormantRuleReclaimPrefix+receipt.ArchiveSHA256,
+		path: path, name: dormantRuleReclaimPrefix + receipt.ArchiveSHA256,
 		receipt: receipt, inventory: inv,
 	}
-	defer func(){ if err != nil { p.close() } }()
+	defer func() {
+		if err != nil {
+			p.close()
+		}
+	}()
 	p.root, err = lockSealedArchiveParent(ctx, path)
-	if err != nil { return nil, ErrDurableRuleReclaim }
+	if err != nil {
+		return nil, ErrDurableRuleReclaim
+	}
 	p.rootInfo, err = p.root.Stat()
-	if err != nil || !privatePortableDirectory(p.rootInfo) { return nil, ErrDurableRuleReclaim }
+	if err != nil || !privatePortableDirectory(p.rootInfo) {
+		return nil, ErrDurableRuleReclaim
+	}
 	fd, openErr := unix.Openat(int(p.root.Fd()), p.name,
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if openErr != nil { return nil, ErrDurableRuleReclaim }
+	if openErr != nil {
+		return nil, ErrDurableRuleReclaim
+	}
 	p.dir = os.NewFile(uintptr(fd), "inert-durable-reclaim")
-	if p.dir == nil { _ = unix.Close(fd); return nil, ErrDurableRuleReclaim }
+	if p.dir == nil {
+		_ = unix.Close(fd)
+		return nil, ErrDurableRuleReclaim
+	}
 	p.dirInfo, err = p.dir.Stat()
 	if err != nil || !privatePortableDirectory(p.dirInfo) ||
 		verifyDormantRuleScope(p.root, p.name, p.dir, p.dirInfo) != nil ||
-		verifyReclaimRoot(ctx,p) != nil {
+		verifyReclaimRoot(ctx, p) != nil {
 		return nil, ErrDurableRuleReclaim
 	}
 	return p, nil
@@ -367,323 +418,434 @@ func verifyReclaimRoot(ctx context.Context, p *reclaimRuleScope) error {
 	}
 	fd, err := unix.Openat(int(p.root.Fd()), ".",
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if err != nil { return ErrDurableRuleReclaim }
+	if err != nil {
+		return ErrDurableRuleReclaim
+	}
 	reader := os.NewFile(uintptr(fd), "inert-reclaim-root-scan")
-	if reader == nil { _=unix.Close(fd); return ErrDurableRuleReclaim }
+	if reader == nil {
+		_ = unix.Close(fd)
+		return ErrDurableRuleReclaim
+	}
 	defer reader.Close()
-	entries, err := reader.ReadDir(MaxDormantRuleBundles+1)
-	if (err != nil && !errors.Is(err,io.EOF)) ||
-		len(entries) > MaxDormantRuleBundles { return ErrDurableRuleReclaim }
+	entries, err := reader.ReadDir(MaxDormantRuleBundles + 1)
+	if (err != nil && !errors.Is(err, io.EOF)) ||
+		len(entries) > MaxDormantRuleBundles {
+		return ErrDurableRuleReclaim
+	}
 	found := 0
 	for _, entry := range entries {
 		name := entry.Name()
-		if !entry.IsDir() { return ErrDurableRuleReclaim }
+		if !entry.IsDir() {
+			return ErrDurableRuleReclaim
+		}
 		switch {
 		case name == p.name:
 			found++
 		case strings.HasPrefix(name, dormantRuleBundlePrefix) &&
-			validLowerSHA(strings.TrimPrefix(name,dormantRuleBundlePrefix)):
-			if _,err:=inspectDormantRuleScopeShape(ctx,p.root,name,"published_untrusted");err!=nil {
+			validLowerSHA(strings.TrimPrefix(name, dormantRuleBundlePrefix)):
+			if _, err := inspectDormantRuleScopeShape(ctx, p.root, name, "published_untrusted"); err != nil {
 				return ErrDurableRuleReclaim
 			}
 		case strings.HasPrefix(name, dormantRuleRetiredPrefix) &&
-			validLowerSHA(strings.TrimPrefix(name,dormantRuleRetiredPrefix)):
-			if _,err:=inspectDormantRuleScopeShape(ctx,p.root,name,"published_untrusted");err!=nil {
+			validLowerSHA(strings.TrimPrefix(name, dormantRuleRetiredPrefix)):
+			if _, err := inspectDormantRuleScopeShape(ctx, p.root, name, "published_untrusted"); err != nil {
 				return ErrDurableRuleReclaim
 			}
 		default:
 			return ErrDurableRuleReclaim
 		}
 	}
-	if found!=1 || ctx.Err()!=nil {return ErrDurableRuleReclaim}
-	return nil
-}
-
-func inspectCompleteReclaimRules(ctx context.Context, p *reclaimRuleScope) (map[string]os.FileInfo,error) {
-	if p==nil || ctx==nil || ctx.Err()!=nil {return nil,ErrDurableRuleReclaim}
-	fd,err:=unix.Openat(int(p.root.Fd()),p.name,unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC,0)
-	if err!=nil{return nil,ErrDurableRuleReclaim}
-	reader:=os.NewFile(uintptr(fd),"inert-complete-rule-scanner")
-	if reader==nil{_ = unix.Close(fd);return nil,ErrDurableRuleReclaim}
-	defer reader.Close()
-	entries,err:=reader.ReadDir(MaxClosureRuleSets+1)
-	if (err!=nil&&!errors.Is(err,io.EOF))||len(entries)!=len(p.inventory.RuleSets){return nil,ErrDurableRuleReclaim}
-	result:=make(map[string]os.FileInfo,len(entries))
-	for _,rule:=range p.inventory.RuleSets{
-		leaf:=strings.TrimPrefix(rule.RelativePath,"rule-sets/sha256/")
-		if leaf==rule.RelativePath {return nil,ErrDurableRuleReclaim}
-		ob,err:=inspectTargetRule(ctx,p.dir,rule)
-		if err!=nil||!ob.exists||ob.info.Mode().Perm()!=0o400||result[leaf]!=nil{
-			return nil,ErrDurableRuleReclaim
-		}
-		result[leaf]=ob.info
-	}
-	for _,entry:=range entries{
-		if !entry.Type().IsRegular()||result[entry.Name()]==nil{return nil,ErrDurableRuleReclaim}
-	}
-	if verifyDormantRulePayload(ctx,p.root,p.name,p.dir,p.dirInfo,p.inventory.RuleSets,result)!=nil{
-		return nil,ErrDurableRuleReclaim
-	}
-	return result,nil
-}
-
-func inspectCompleteReclaimRulesEqual(ctx context.Context,p *reclaimRuleScope,expected map[string]os.FileInfo)error{
-	got,err:=inspectCompleteReclaimRules(ctx,p)
-	if err!=nil||len(got)!=len(expected){return ErrDurableRuleReclaim}
-	for name,info:=range expected{
-		if !sameReclaimFileInfo(info,got[name]){return ErrDurableRuleReclaim}
-	}
-	return nil
-}
-
-func createReclaimPlan(ctx context.Context,p *reclaimRuleScope,id int64,observed map[string]os.FileInfo,key [32]byte)(reclaimSignedPlan,error){
-	var zero reclaimSignedPlan
-	st,ok:=p.dirInfo.Sys().(*syscall.Stat_t)
-	if !ok||id<=0{return zero,ErrDurableRuleReclaim}
-	body:=reclaimPlanBody{
-		Version:reclaimPlanVersion,ArchiveSHA256:p.receipt.ArchiveSHA256,
-		InventorySHA256:p.receipt.InventorySHA256,JournalID:id,
-		DirectoryDevice:st.Dev,DirectoryInode:st.Ino,
-	}
-	for _,rule:=range p.inventory.RuleSets{
-		leaf:=strings.TrimPrefix(rule.RelativePath,"rule-sets/sha256/")
-		info:=observed[leaf]
-		if info==nil||info.Size()!=rule.Size{return zero,ErrDurableRuleReclaim}
-		meta,ok:=info.Sys().(*syscall.Stat_t)
-		if !ok{return zero,ErrDurableRuleReclaim}
-		body.Rules=append(body.Rules,reclaimPlannedRule{
-			Name:leaf,SHA256:rule.SHA256,Size:rule.Size,Device:meta.Dev,Inode:meta.Ino,
-		})
-	}
-	sort.Slice(body.Rules,func(i,j int)bool{return body.Rules[i].Name<body.Rules[j].Name})
-	mac,err:=reclaimPlanMAC(body,key)
-	if err!=nil{return zero,ErrDurableRuleReclaim}
-	return reclaimSignedPlan{Body:body,MAC:mac},nil
-}
-
-func reclaimPlanMAC(body reclaimPlanBody,key [32]byte)(string,error){
-	data,err:=json.Marshal(body)
-	if err!=nil{return "",err}
-	mac:=hmac.New(sha256.New,key[:])
-	_,_=mac.Write([]byte("karing-tui-v2/durable-rule-reclaim/plan-v1\x00"))
-	_,_=mac.Write(data)
-	return hex.EncodeToString(mac.Sum(nil)),nil
-}
-
-func sameReclaimPlan(a,b reclaimSignedPlan)bool{
-	x,err:=json.Marshal(a);if err!=nil{return false}
-	y,err:=json.Marshal(b);return err==nil&&string(x)==string(y)
-}
-
-func readReclaimPlan(ctx context.Context,p *reclaimRuleScope,l *InertRestoreResourceLease,key [32]byte)(reclaimSignedPlan,[]byte,error){
-	var zero reclaimSignedPlan
-	data,_,err:=readPrivateReclaimFile(ctx,p.dir,reclaimPlanFileName,maxReclaimPlanBytes)
-	if err!=nil{return zero,nil,ErrDurableRuleReclaim}
-	var plan reclaimSignedPlan
-	if json.Unmarshal(data,&plan)!=nil||
-		plan.Body.Version!=reclaimPlanVersion||
-		plan.Body.ArchiveSHA256!=p.receipt.ArchiveSHA256||
-		plan.Body.InventorySHA256!=p.receipt.InventorySHA256||
-		plan.Body.JournalID!=l.record.ID||
-		len(plan.Body.Rules)!=len(p.inventory.RuleSets)||
-		len(plan.Body.Rules)==0{return zero,nil,ErrDurableRuleReclaim}
-	meta,ok:=p.dirInfo.Sys().(*syscall.Stat_t)
-	if !ok||plan.Body.DirectoryDevice!=meta.Dev||
-		plan.Body.DirectoryInode!=meta.Ino{return zero,nil,ErrDurableRuleReclaim}
-	expected,err:=reclaimPlanMAC(plan.Body,key)
-	a,decodeErr:=hex.DecodeString(plan.MAC)
-	b,_:=hex.DecodeString(expected)
-	if err!=nil||decodeErr!=nil||len(a)!=sha256.Size||!hmac.Equal(a,b){
-		return zero,nil,ErrDurableRuleReclaim
-	}
-	byName:=make(map[string]RuleDigest,len(p.inventory.RuleSets))
-	for _,r:=range p.inventory.RuleSets{
-		leaf:=strings.TrimPrefix(r.RelativePath,"rule-sets/sha256/")
-		if leaf==r.RelativePath||byName[leaf].RelativePath!=""{return zero,nil,ErrDurableRuleReclaim}
-		byName[leaf]=r
-	}
-	for i,r:=range plan.Body.Rules{
-		inv,ok:=byName[r.Name]
-		if !ok||r.SHA256!=inv.SHA256||r.Size!=inv.Size||
-			r.Device==0||r.Inode==0||
-			(i>0&&plan.Body.Rules[i-1].Name>=r.Name) {
-			return zero,nil,ErrDurableRuleReclaim
-		}
-	}
-	canonical,err:=json.Marshal(plan)
-	if err!=nil||string(canonical)!=string(data){return zero,nil,ErrDurableRuleReclaim}
-	return plan,data,nil
-}
-
-func publishPrivateReclaimMarker(ctx context.Context,dir *os.File,name string,payload []byte)error{
-	if ctx==nil||ctx.Err()!=nil||dir==nil||filepath.Base(name)!=name||
-		len(payload)==0||len(payload)>maxReclaimPlanBytes{return ErrDurableRuleReclaim}
-	fd,err:=unix.Openat(int(dir.Fd()),name,unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC,0o600)
-	if err!=nil{return ErrDurableRuleReclaim}
-	file:=os.NewFile(uintptr(fd),"reclaim-durable-marker")
-	if file==nil{_ = unix.Close(fd);return ErrDurableRuleReclaim}
-	n,writeErr:=file.Write(payload)
-	modeErr:=file.Chmod(0o400)
-	syncErr:=file.Sync()
-	closeErr:=file.Close()
-	if writeErr!=nil||n!=len(payload)||modeErr!=nil||syncErr!=nil||closeErr!=nil||ctx.Err()!=nil{
+	if found != 1 || ctx.Err() != nil {
 		return ErrDurableRuleReclaim
 	}
 	return nil
 }
 
-func readPrivateReclaimFile(ctx context.Context,dir *os.File,name string,max int)([]byte,os.FileInfo,error){
-	if ctx==nil||ctx.Err()!=nil||dir==nil||filepath.Base(name)!=name{return nil,nil,ErrDurableRuleReclaim}
-	fd,err:=unix.Openat(int(dir.Fd()),name,unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC,0)
-	if err!=nil{return nil,nil,ErrDurableRuleReclaim}
-	file:=os.NewFile(uintptr(fd),"reclaim-private-reader")
-	if file==nil{_=unix.Close(fd);return nil,nil,ErrDurableRuleReclaim}
-	defer file.Close()
-	info,err:=file.Stat()
-	if err!=nil||!info.Mode().IsRegular()||info.Mode().Perm()!=0o400||
-		info.Size()<=0||info.Size()>int64(max){return nil,nil,ErrDurableRuleReclaim}
-	stat,ok:=info.Sys().(*syscall.Stat_t)
-	if !ok||stat.Uid!=uint32(os.Getuid())||stat.Nlink!=1{return nil,nil,ErrDurableRuleReclaim}
-	var atPath unix.Stat_t
-	if unix.Fstatat(int(dir.Fd()),name,&atPath,unix.AT_SYMLINK_NOFOLLOW)!=nil||
-		atPath.Ino!=stat.Ino||uint64(atPath.Dev)!=stat.Dev||
-		atPath.Mode&unix.S_IFMT!=unix.S_IFREG{return nil,nil,ErrDurableRuleReclaim}
-	data,err:=io.ReadAll(io.LimitReader(sealedContextReader{ctx:ctx,src:file},int64(max)+1))
-	after,statErr:=file.Stat()
-	if err!=nil||statErr!=nil||len(data)!=int(info.Size())||
-		!sameLeasedFile(info,after)||ctx.Err()!=nil{return nil,nil,ErrDurableRuleReclaim}
-	return data,info,nil
+func inspectCompleteReclaimRules(ctx context.Context, p *reclaimRuleScope) (map[string]os.FileInfo, error) {
+	if p == nil || ctx == nil || ctx.Err() != nil {
+		return nil, ErrDurableRuleReclaim
+	}
+	fd, err := unix.Openat(int(p.root.Fd()), p.name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrDurableRuleReclaim
+	}
+	reader := os.NewFile(uintptr(fd), "inert-complete-rule-scanner")
+	if reader == nil {
+		_ = unix.Close(fd)
+		return nil, ErrDurableRuleReclaim
+	}
+	defer reader.Close()
+	entries, err := reader.ReadDir(MaxClosureRuleSets + 1)
+	if (err != nil && !errors.Is(err, io.EOF)) || len(entries) != len(p.inventory.RuleSets) {
+		return nil, ErrDurableRuleReclaim
+	}
+	result := make(map[string]os.FileInfo, len(entries))
+	for _, rule := range p.inventory.RuleSets {
+		leaf := strings.TrimPrefix(rule.RelativePath, "rule-sets/sha256/")
+		if leaf == rule.RelativePath {
+			return nil, ErrDurableRuleReclaim
+		}
+		ob, err := inspectTargetRule(ctx, p.dir, rule)
+		if err != nil || !ob.exists || ob.info.Mode().Perm() != 0o400 || result[leaf] != nil {
+			return nil, ErrDurableRuleReclaim
+		}
+		result[leaf] = ob.info
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || result[entry.Name()] == nil {
+			return nil, ErrDurableRuleReclaim
+		}
+	}
+	if verifyDormantRulePayload(ctx, p.root, p.name, p.dir, p.dirInfo, p.inventory.RuleSets, result) != nil {
+		return nil, ErrDurableRuleReclaim
+	}
+	return result, nil
 }
 
-type reclaimState struct{
-	present map[string]os.FileInfo
-	intents map[int]bool
+func inspectCompleteReclaimRulesEqual(ctx context.Context, p *reclaimRuleScope, expected map[string]os.FileInfo) error {
+	got, err := inspectCompleteReclaimRules(ctx, p)
+	if err != nil || len(got) != len(expected) {
+		return ErrDurableRuleReclaim
+	}
+	for name, info := range expected {
+		if !sameReclaimFileInfo(info, got[name]) {
+			return ErrDurableRuleReclaim
+		}
+	}
+	return nil
+}
+
+func createReclaimPlan(ctx context.Context, p *reclaimRuleScope, id int64, observed map[string]os.FileInfo, key [32]byte) (reclaimSignedPlan, error) {
+	var zero reclaimSignedPlan
+	st, ok := p.dirInfo.Sys().(*syscall.Stat_t)
+	if !ok || id <= 0 {
+		return zero, ErrDurableRuleReclaim
+	}
+	body := reclaimPlanBody{
+		Version: reclaimPlanVersion, ArchiveSHA256: p.receipt.ArchiveSHA256,
+		InventorySHA256: p.receipt.InventorySHA256, JournalID: id,
+		DirectoryDevice: st.Dev, DirectoryInode: st.Ino,
+	}
+	for _, rule := range p.inventory.RuleSets {
+		leaf := strings.TrimPrefix(rule.RelativePath, "rule-sets/sha256/")
+		info := observed[leaf]
+		if info == nil || info.Size() != rule.Size {
+			return zero, ErrDurableRuleReclaim
+		}
+		meta, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return zero, ErrDurableRuleReclaim
+		}
+		body.Rules = append(body.Rules, reclaimPlannedRule{
+			Name: leaf, SHA256: rule.SHA256, Size: rule.Size, Device: meta.Dev, Inode: meta.Ino,
+		})
+	}
+	sort.Slice(body.Rules, func(i, j int) bool { return body.Rules[i].Name < body.Rules[j].Name })
+	mac, err := reclaimPlanMAC(body, key)
+	if err != nil {
+		return zero, ErrDurableRuleReclaim
+	}
+	return reclaimSignedPlan{Body: body, MAC: mac}, nil
+}
+
+func reclaimPlanMAC(body reclaimPlanBody, key [32]byte) (string, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, key[:])
+	_, _ = mac.Write([]byte("karing-tui-v2/durable-rule-reclaim/plan-v1\x00"))
+	_, _ = mac.Write(data)
+	return hex.EncodeToString(mac.Sum(nil)), nil
+}
+
+func sameReclaimPlan(a, b reclaimSignedPlan) bool {
+	x, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	y, err := json.Marshal(b)
+	return err == nil && string(x) == string(y)
+}
+
+func readReclaimPlan(ctx context.Context, p *reclaimRuleScope, l *InertRestoreResourceLease, key [32]byte) (reclaimSignedPlan, []byte, error) {
+	var zero reclaimSignedPlan
+	data, _, err := readPrivateReclaimFile(ctx, p.dir, reclaimPlanFileName, maxReclaimPlanBytes)
+	if err != nil {
+		return zero, nil, ErrDurableRuleReclaim
+	}
+	var plan reclaimSignedPlan
+	if json.Unmarshal(data, &plan) != nil ||
+		plan.Body.Version != reclaimPlanVersion ||
+		plan.Body.ArchiveSHA256 != p.receipt.ArchiveSHA256 ||
+		plan.Body.InventorySHA256 != p.receipt.InventorySHA256 ||
+		plan.Body.JournalID != l.record.ID ||
+		len(plan.Body.Rules) != len(p.inventory.RuleSets) ||
+		len(plan.Body.Rules) == 0 {
+		return zero, nil, ErrDurableRuleReclaim
+	}
+	meta, ok := p.dirInfo.Sys().(*syscall.Stat_t)
+	if !ok || plan.Body.DirectoryDevice != meta.Dev ||
+		plan.Body.DirectoryInode != meta.Ino {
+		return zero, nil, ErrDurableRuleReclaim
+	}
+	expected, err := reclaimPlanMAC(plan.Body, key)
+	a, decodeErr := hex.DecodeString(plan.MAC)
+	b, _ := hex.DecodeString(expected)
+	if err != nil || decodeErr != nil || len(a) != sha256.Size || !hmac.Equal(a, b) {
+		return zero, nil, ErrDurableRuleReclaim
+	}
+	byName := make(map[string]RuleDigest, len(p.inventory.RuleSets))
+	for _, r := range p.inventory.RuleSets {
+		leaf := strings.TrimPrefix(r.RelativePath, "rule-sets/sha256/")
+		if leaf == r.RelativePath || byName[leaf].RelativePath != "" {
+			return zero, nil, ErrDurableRuleReclaim
+		}
+		byName[leaf] = r
+	}
+	for i, r := range plan.Body.Rules {
+		inv, ok := byName[r.Name]
+		if !ok || r.SHA256 != inv.SHA256 || r.Size != inv.Size ||
+			r.Device == 0 || r.Inode == 0 ||
+			(i > 0 && plan.Body.Rules[i-1].Name >= r.Name) {
+			return zero, nil, ErrDurableRuleReclaim
+		}
+	}
+	canonical, err := json.Marshal(plan)
+	if err != nil || string(canonical) != string(data) {
+		return zero, nil, ErrDurableRuleReclaim
+	}
+	return plan, data, nil
+}
+
+func publishPrivateReclaimMarker(ctx context.Context, dir *os.File, name string, payload []byte) error {
+	if ctx == nil || ctx.Err() != nil || dir == nil || filepath.Base(name) != name ||
+		len(payload) == 0 || len(payload) > maxReclaimPlanBytes {
+		return ErrDurableRuleReclaim
+	}
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return ErrDurableRuleReclaim
+	}
+	file := os.NewFile(uintptr(fd), "reclaim-durable-marker")
+	if file == nil {
+		_ = unix.Close(fd)
+		return ErrDurableRuleReclaim
+	}
+	n, writeErr := file.Write(payload)
+	modeErr := file.Chmod(0o400)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil || n != len(payload) || modeErr != nil || syncErr != nil || closeErr != nil || ctx.Err() != nil {
+		return ErrDurableRuleReclaim
+	}
+	return nil
+}
+
+func readPrivateReclaimFile(ctx context.Context, dir *os.File, name string, max int) ([]byte, os.FileInfo, error) {
+	if ctx == nil || ctx.Err() != nil || dir == nil || filepath.Base(name) != name {
+		return nil, nil, ErrDurableRuleReclaim
+	}
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, nil, ErrDurableRuleReclaim
+	}
+	file := os.NewFile(uintptr(fd), "reclaim-private-reader")
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, nil, ErrDurableRuleReclaim
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o400 ||
+		info.Size() <= 0 || info.Size() > int64(max) {
+		return nil, nil, ErrDurableRuleReclaim
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) || stat.Nlink != 1 {
+		return nil, nil, ErrDurableRuleReclaim
+	}
+	var atPath unix.Stat_t
+	if unix.Fstatat(int(dir.Fd()), name, &atPath, unix.AT_SYMLINK_NOFOLLOW) != nil ||
+		atPath.Ino != stat.Ino || uint64(atPath.Dev) != stat.Dev ||
+		atPath.Mode&unix.S_IFMT != unix.S_IFREG {
+		return nil, nil, ErrDurableRuleReclaim
+	}
+	data, err := io.ReadAll(io.LimitReader(sealedContextReader{ctx: ctx, src: file}, int64(max)+1))
+	after, statErr := file.Stat()
+	if err != nil || statErr != nil || len(data) != int(info.Size()) ||
+		!sameLeasedFile(info, after) || ctx.Err() != nil {
+		return nil, nil, ErrDurableRuleReclaim
+	}
+	return data, info, nil
+}
+
+type reclaimState struct {
+	present  map[string]os.FileInfo
+	intents  map[int]bool
 	prepared int
 	unlinked int
-	bytes int64
+	bytes    int64
 }
 
-func inspectReclaimRuleState(ctx context.Context,p *reclaimRuleScope,plan reclaimSignedPlan,key [32]byte)(reclaimState,error){
+func inspectReclaimRuleState(ctx context.Context, p *reclaimRuleScope, plan reclaimSignedPlan, key [32]byte) (reclaimState, error) {
 	var zero reclaimState
-	if ctx==nil||p==nil||ctx.Err()!=nil{return zero,ErrDurableRuleReclaim}
-	fd,err:=unix.Openat(int(p.root.Fd()),p.name,
-		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC,0)
-	if err!=nil{return zero,ErrDurableRuleReclaim}
-	reader:=os.NewFile(uintptr(fd),"reclaim-state-scan")
-	if reader==nil{_=unix.Close(fd);return zero,ErrDurableRuleReclaim}
+	if ctx == nil || p == nil || ctx.Err() != nil {
+		return zero, ErrDurableRuleReclaim
+	}
+	fd, err := unix.Openat(int(p.root.Fd()), p.name,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return zero, ErrDurableRuleReclaim
+	}
+	reader := os.NewFile(uintptr(fd), "reclaim-state-scan")
+	if reader == nil {
+		_ = unix.Close(fd)
+		return zero, ErrDurableRuleReclaim
+	}
 	defer reader.Close()
-	info,err:=reader.Stat()
-	if err!=nil||!os.SameFile(p.dirInfo,info)||!privatePortableDirectory(info){
-		return zero,ErrDurableRuleReclaim
+	info, err := reader.Stat()
+	if err != nil || !os.SameFile(p.dirInfo, info) || !privatePortableDirectory(info) {
+		return zero, ErrDurableRuleReclaim
 	}
-	entries,err:=reader.ReadDir(2*MaxClosureRuleSets+2)
-	if (err!=nil&&!errors.Is(err,io.EOF))||len(entries)>2*MaxClosureRuleSets+1{
-		return zero,ErrDurableRuleReclaim
+	entries, err := reader.ReadDir(2*MaxClosureRuleSets + 2)
+	if (err != nil && !errors.Is(err, io.EOF)) || len(entries) > 2*MaxClosureRuleSets+1 {
+		return zero, ErrDurableRuleReclaim
 	}
-	state:=reclaimState{present:map[string]os.FileInfo{},intents:map[int]bool{}}
-	byName:=map[string]int{}
-	for i,r:=range plan.Body.Rules{byName[r.Name]=i}
-	planSeen:=0
-	planDigestBytes,_:=json.Marshal(plan)
-	planDigest:=shaHex(planDigestBytes)
-	for _,entry:=range entries{
-		if !entry.Type().IsRegular(){return zero,ErrDurableRuleReclaim}
-		name:=entry.Name()
-		switch{
-		case name==reclaimPlanFileName:
+	state := reclaimState{present: map[string]os.FileInfo{}, intents: map[int]bool{}}
+	byName := map[string]int{}
+	for i, r := range plan.Body.Rules {
+		byName[r.Name] = i
+	}
+	planSeen := 0
+	planDigestBytes, _ := json.Marshal(plan)
+	planDigest := shaHex(planDigestBytes)
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			return zero, ErrDurableRuleReclaim
+		}
+		name := entry.Name()
+		switch {
+		case name == reclaimPlanFileName:
 			planSeen++
-			d,_,err:=readPrivateReclaimFile(ctx,p.dir,name,maxReclaimPlanBytes)
-			if err!=nil||string(d)!=string(planDigestBytes){return zero,ErrDurableRuleReclaim}
-		case strings.HasPrefix(name,reclaimIntentPrefix):
-			indexText:=strings.TrimPrefix(name,reclaimIntentPrefix)
-			index,err:=strconv.Atoi(indexText)
-			if err!=nil||index<0||index>=len(plan.Body.Rules)||
-				name!=reclaimIntentPrefix+fmt.Sprintf("%03d",index)||
-				state.intents[index]{return zero,ErrDurableRuleReclaim}
-			payload,_,err:=readPrivateReclaimFile(ctx,p.dir,name,128)
-			expected:=reclaimIntentMAC(key,planDigest,index,plan.Body.Rules[index].Name)
-			raw,decodeErr:=hex.DecodeString(string(payload))
-			want,_:=hex.DecodeString(expected)
-			if err!=nil||decodeErr!=nil||len(raw)!=sha256.Size||!hmac.Equal(raw,want){
-				return zero,ErrDurableRuleReclaim
+			d, _, err := readPrivateReclaimFile(ctx, p.dir, name, maxReclaimPlanBytes)
+			if err != nil || string(d) != string(planDigestBytes) {
+				return zero, ErrDurableRuleReclaim
 			}
-			state.intents[index]=true
+		case strings.HasPrefix(name, reclaimIntentPrefix):
+			indexText := strings.TrimPrefix(name, reclaimIntentPrefix)
+			index, err := strconv.Atoi(indexText)
+			if err != nil || index < 0 || index >= len(plan.Body.Rules) ||
+				name != reclaimIntentPrefix+fmt.Sprintf("%03d", index) ||
+				state.intents[index] {
+				return zero, ErrDurableRuleReclaim
+			}
+			payload, _, err := readPrivateReclaimFile(ctx, p.dir, name, 128)
+			expected := reclaimIntentMAC(key, planDigest, index, plan.Body.Rules[index].Name)
+			raw, decodeErr := hex.DecodeString(string(payload))
+			want, _ := hex.DecodeString(expected)
+			if err != nil || decodeErr != nil || len(raw) != sha256.Size || !hmac.Equal(raw, want) {
+				return zero, ErrDurableRuleReclaim
+			}
+			state.intents[index] = true
 			state.prepared++
 		default:
-			index,ok:=byName[name]
-			if !ok||state.present[name]!=nil{return zero,ErrDurableRuleReclaim}
-			rule:=reclaimDigestForName(p.inventory.RuleSets,name)
-			if rule.RelativePath=="" {return zero,ErrDurableRuleReclaim}
-			ob,err:=inspectTargetRule(ctx,p.dir,rule)
-			if err!=nil||!ob.exists||ob.info.Mode().Perm()!=0o400||
-				!sameReclaimInode(ob.info,plan.Body.Rules[index]){
-				return zero,ErrDurableRuleReclaim
+			index, ok := byName[name]
+			if !ok || state.present[name] != nil {
+				return zero, ErrDurableRuleReclaim
 			}
-			state.present[name]=ob.info
+			rule := reclaimDigestForName(p.inventory.RuleSets, name)
+			if rule.RelativePath == "" {
+				return zero, ErrDurableRuleReclaim
+			}
+			ob, err := inspectTargetRule(ctx, p.dir, rule)
+			if err != nil || !ob.exists || ob.info.Mode().Perm() != 0o400 ||
+				!sameReclaimInode(ob.info, plan.Body.Rules[index]) {
+				return zero, ErrDurableRuleReclaim
+			}
+			state.present[name] = ob.info
 		}
 	}
-	if planSeen!=1||len(entries)!=1+state.prepared+len(state.present){
-		return zero,ErrDurableRuleReclaim
+	if planSeen != 1 || len(entries) != 1+state.prepared+len(state.present) {
+		return zero, ErrDurableRuleReclaim
 	}
-	for i,r:=range plan.Body.Rules{
-		if state.present[r.Name]==nil{
-			if !state.intents[i]{return zero,ErrDurableRuleReclaim}
+	for i, r := range plan.Body.Rules {
+		if state.present[r.Name] == nil {
+			if !state.intents[i] {
+				return zero, ErrDurableRuleReclaim
+			}
 			state.unlinked++
-			state.bytes+=r.Size
+			state.bytes += r.Size
 		}
 	}
-	if verifyDormantRuleScope(p.root,p.name,p.dir,p.dirInfo)!=nil||ctx.Err()!=nil{
-		return zero,ErrDurableRuleReclaim
+	if verifyDormantRuleScope(p.root, p.name, p.dir, p.dirInfo) != nil || ctx.Err() != nil {
+		return zero, ErrDurableRuleReclaim
 	}
-	return state,nil
+	return state, nil
 }
 
-func reclaimDigestForName(rules []RuleDigest,name string)RuleDigest{
-	for _,r:=range rules{
-		if strings.TrimPrefix(r.RelativePath,"rule-sets/sha256/")==name{return r}
+func reclaimDigestForName(rules []RuleDigest, name string) RuleDigest {
+	for _, r := range rules {
+		if strings.TrimPrefix(r.RelativePath, "rule-sets/sha256/") == name {
+			return r
+		}
 	}
 	return RuleDigest{}
 }
 
-func sameReclaimInode(info os.FileInfo,want reclaimPlannedRule)bool{
-	if info==nil||info.Size()!=want.Size||info.Mode().Perm()!=0o400{return false}
-	meta,ok:=info.Sys().(*syscall.Stat_t)
-	return ok&&meta.Dev==want.Device&&meta.Ino==want.Inode
+func sameReclaimInode(info os.FileInfo, want reclaimPlannedRule) bool {
+	if info == nil || info.Size() != want.Size || info.Mode().Perm() != 0o400 {
+		return false
+	}
+	meta, ok := info.Sys().(*syscall.Stat_t)
+	return ok && meta.Dev == want.Device && meta.Ino == want.Inode
 }
 
-func sameReclaimFileInfo(a,b os.FileInfo)bool{
-	return a!=nil&&b!=nil&&sameLeasedFile(a,b)
+func sameReclaimFileInfo(a, b os.FileInfo) bool {
+	return a != nil && b != nil && sameLeasedFile(a, b)
 }
 
-func samePresentReclaimRules(a,b map[string]os.FileInfo)bool{
-	if len(a)!=len(b){return false}
-	for name,info:=range a{if !sameReclaimFileInfo(info,b[name]){return false}}
+func samePresentReclaimRules(a, b map[string]os.FileInfo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for name, info := range a {
+		if !sameReclaimFileInfo(info, b[name]) {
+			return false
+		}
+	}
 	return true
 }
 
-func sameReclaimState(a,b reclaimState)bool{
-	if a.prepared!=b.prepared||a.unlinked!=b.unlinked||a.bytes!=b.bytes||
-		len(a.intents)!=len(b.intents)||!samePresentReclaimRules(a.present,b.present){return false}
-	for i:=range a.intents{if !b.intents[i]{return false}}
+func sameReclaimState(a, b reclaimState) bool {
+	if a.prepared != b.prepared || a.unlinked != b.unlinked || a.bytes != b.bytes ||
+		len(a.intents) != len(b.intents) || !samePresentReclaimRules(a.present, b.present) {
+		return false
+	}
+	for i := range a.intents {
+		if !b.intents[i] {
+			return false
+		}
+	}
 	return true
 }
 
-func reclaimIntentMAC(key [32]byte,planSHA string,index int,name string)string{
-	mac:=hmac.New(sha256.New,key[:])
-	_,_=mac.Write([]byte("karing-tui-v2/durable-rule-reclaim/leaf-v1\x00"))
-	_,_=mac.Write([]byte(fmt.Sprintf("%s/%03d/%s",planSHA,index,name)))
+func reclaimIntentMAC(key [32]byte, planSHA string, index int, name string) string {
+	mac := hmac.New(sha256.New, key[:])
+	_, _ = mac.Write([]byte("karing-tui-v2/durable-rule-reclaim/leaf-v1\x00"))
+	_, _ = mac.Write([]byte(fmt.Sprintf("%s/%03d/%s", planSHA, index, name)))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func reclaimProgress(p *reclaimRuleScope,plan reclaimSignedPlan,payload []byte,state reclaimState)DurableRuleReclaimProgress{
+func reclaimProgress(p *reclaimRuleScope, plan reclaimSignedPlan, payload []byte, state reclaimState) DurableRuleReclaimProgress {
 	return DurableRuleReclaimProgress{
-		ArchiveSHA256:p.receipt.ArchiveSHA256,
-		InventorySHA256:p.receipt.InventorySHA256,
-		PlanSHA256:shaHex(payload),
-		ExpectedRules:len(plan.Body.Rules),
-		UnlinkedRules:state.unlinked,UnlinkedBytes:state.bytes,
-		PreparedIntents:state.prepared,
-		AllRulesUnlinked:state.unlinked==len(plan.Body.Rules),
-		RequiresRevalidation:true,RestoreSupported:false,RestoreReady:false,
+		ArchiveSHA256:   p.receipt.ArchiveSHA256,
+		InventorySHA256: p.receipt.InventorySHA256,
+		PlanSHA256:      shaHex(payload),
+		ExpectedRules:   len(plan.Body.Rules),
+		UnlinkedRules:   state.unlinked, UnlinkedBytes: state.bytes,
+		PreparedIntents:      state.prepared,
+		AllRulesUnlinked:     state.unlinked == len(plan.Body.Rules),
+		RequiresRevalidation: true, RestoreSupported: false, RestoreReady: false,
 	}
 }
