@@ -324,6 +324,39 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		reclaimPlanFileName)); err != nil {
 		t.Fatalf("approved Core reclaim plan did not persist: %v", err)
 	}
+	// ADR 0120 is terminal EVIDENCE ONLY: explicitly complete any remaining
+	// rule leaves in this test, then seal a signed completion marker without
+	// deleting audit metadata, touching active files or running the Core.
+	for i := 1; i < len(closure.Inventory.RuleSets); i++ {
+		step, err := freshLease.UnlinkNextDurableReclaimRule(
+			context.Background(), key, deletedEvidence)
+		if err != nil || !step.RuleUnlinked {
+			t.Fatalf("approved Core remaining private unlink failed: %+v %v", step, err)
+		}
+		deletedEvidence, err = freshLease.InspectDurableRuleReclaim(context.Background(), key)
+		if err != nil || deletedEvidence.UnlinkedRules != i+1 {
+			t.Fatalf("approved Core remaining evidence invalid: %+v %v", deletedEvidence, err)
+		}
+	}
+	if !deletedEvidence.AllRulesUnlinked {
+		t.Fatalf("terminal proof attempted before all private rules were absent: %+v", deletedEvidence)
+	}
+	sealed, err := freshLease.SealCompletedDurableReclaim(
+		context.Background(), key, deletedEvidence)
+	if err != nil || !sealed.CompletionSealed || !sealed.MetadataRetained ||
+		sealed.RuleCount != len(closure.Inventory.RuleSets) ||
+		sealed.PlanSHA256 != deletePlan.PlanSHA256 ||
+		sealed.RestoreReady || sealed.RestoreSupported {
+		t.Fatalf("approved Core terminal reclaim seal failed: %+v %v", sealed, err)
+	}
+	sealAgain, err := freshLease.InspectSealedDurableReclaim(context.Background(), key)
+	if err != nil || sealAgain != sealed {
+		t.Fatalf("approved Core terminal evidence not independently auditable: %+v %v", sealAgain, err)
+	}
+	sealedFiles, err := os.ReadDir(filepath.Join(dormantParent, toReclaim[0].Name()))
+	if err != nil || len(sealedFiles) != len(closure.Inventory.RuleSets)+2 {
+		t.Fatalf("terminal scope changed more than audit metadata: %+v %v", sealedFiles, err)
+	}
 	if err := freshLease.Close(); err != nil {
 		t.Fatal(err)
 	}
