@@ -248,6 +248,26 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		verifiedDormant.RestoreSupported || verifiedDormant.RestoreReady {
 		t.Fatalf("real approved-Core dormant rules reauthentication failed: %+v %v", verifiedDormant, err)
 	}
+	// ADR 0117: with the real approved Core still unexecuted, explicitly
+	// quarantine only the authenticated inactive rule bundle. No plaintext
+	// SQLite or approved Core executable is persisted, and no rule is removed.
+	retired, err := freshLease.QuarantineDormantRuleBundle(
+		context.Background(), key, verifiedDormant)
+	if err != nil || !retired.Quarantined || !retired.RequiresManualReview ||
+		retired.RestoreReady || retired.RestoreSupported ||
+		retired.RuleCount != len(closure.Inventory.RuleSets) ||
+		retired.RuleBytes != dormant.RuleBytes {
+		t.Fatalf("approved-Core dormant quarantine changed recovery boundary: %+v %v", retired, err)
+	}
+	retiredEntries, err := os.ReadDir(dormantParent)
+	if err != nil || len(retiredEntries) != 1 ||
+		retiredEntries[0].Name() != dormantRuleRetiredPrefix+receipt.ArchiveSHA256 {
+		t.Fatalf("real-core quarantine did not atomically rename only inactive rules: %+v %v", retiredEntries, err)
+	}
+	retiredFiles, err := os.ReadDir(filepath.Join(dormantParent, retiredEntries[0].Name()))
+	if err != nil || len(retiredFiles) != len(closure.Inventory.RuleSets) {
+		t.Fatalf("real-core retirement removed rules or retained executable: %+v %v", retiredFiles, err)
+	}
 	if err := freshLease.Close(); err != nil {
 		t.Fatal(err)
 	}
