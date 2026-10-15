@@ -192,6 +192,45 @@ func TestRetiredReclaimRejectsBadExpectationsAndUnsafeEntries(t *testing.T) {
 	}
 }
 
+// A digest/count report is not a cross-call inode lease. If a cooperating
+// operator replaces one file BETWEEN calls with equally authenticated,
+// non-executable private bytes, the next explicit operation must rehash and
+// independently pin the new inode rather than trusting the previous FD.
+func TestRetiredReclaimReauthenticatesEquivalentReplacementAcrossCalls(t *testing.T) {
+	f, lease, record, key, parent := makeRetiredReclaimFixture(t)
+	ctx := context.Background()
+	report, err := lease.InspectRetiredDormantRuleBundle(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(parent, dormantRuleRetiredPrefix+record.ArchiveSHA256)
+	leaf := filepath.Join(dir, f.ruleHash+".json")
+	old, err := os.Stat(leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(dir, "replacement")
+	if err := os.WriteFile(replacement, f.ruleData, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, leaf); err != nil {
+		t.Fatal(err)
+	}
+	next, err := os.Stat(leaf)
+	if err != nil || os.SameFile(old, next) {
+		t.Fatalf("fixture failed to replace original inode: %v", err)
+	}
+	intent, err := lease.BeginRetiredDormantRuleReclaim(ctx, key, report)
+	if err != nil || !intent.IntentPublished || intent.BytesDeleted {
+		t.Fatalf("fresh complete authentication rejected equal private bytes: %+v %v", intent, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(parent,
+		dormantRuleReclaimPrefix+record.ArchiveSHA256, f.ruleHash+".json")); err != nil ||
+		!bytes.Equal(data, f.ruleData) {
+		t.Fatalf("reclaim intent did not preserve verified new bytes: %v", err)
+	}
+}
+
 func TestRetiredReclaimDetectsLateDriftBeforeRename(t *testing.T) {
 	for _, fault := range []string{
 		"injected_error", "same_byte_inode", "changed_content", "new_scope",
