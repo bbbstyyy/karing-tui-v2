@@ -19,16 +19,16 @@ var ErrDormantRuleAuthentication = errors.New("dormant rule bundle authenticatio
 // ciphertext inventory. It is never a durable file lease or restore permit.
 // No file path, plaintext rule, archived Core or SQLite payload is returned.
 type AuthenticatedDormantRuleReport struct {
-	ArchiveSHA256          string
-	InventorySHA256        string
-	ScopeSHA256            string
-	RuleCount              int
-	RuleBytes              int64
-	RuleBytesVerified      bool
-	Inactive               bool
-	RequiresRevalidation   bool
-	RestoreSupported       bool
-	RestoreReady           bool
+	ArchiveSHA256        string
+	InventorySHA256      string
+	ScopeSHA256          string
+	RuleCount            int
+	RuleBytes            int64
+	RuleBytesVerified    bool
+	Inactive             bool
+	RequiresRevalidation bool
+	RestoreSupported     bool
+	RestoreReady         bool
 }
 
 // AuthenticateDormantRuleBundle works after the original stage process,
@@ -77,10 +77,10 @@ func (l *InertRestoreResourceLease) authenticateDormantRuleBundle(
 		return empty, ErrDormantRuleAuthentication
 	}
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inventory, err := readAuthenticatedInventory(
 		bounded, l.candidate.archive, key, receipt)
@@ -187,15 +187,15 @@ func (l *InertRestoreResourceLease) authenticateDormantRuleBundle(
 		return empty, ErrDormantRuleAuthentication
 	}
 	return AuthenticatedDormantRuleReport{
-		ArchiveSHA256: receipt.ArchiveSHA256,
-		InventorySHA256: receipt.InventorySHA256,
-		ScopeSHA256: shaHex([]byte(finalName)),
-		RuleCount: len(inventory.RuleSets),
-		RuleBytes: total,
-		RuleBytesVerified: true,
-		Inactive: true,
+		ArchiveSHA256:        receipt.ArchiveSHA256,
+		InventorySHA256:      receipt.InventorySHA256,
+		ScopeSHA256:          shaHex([]byte(finalName)),
+		RuleCount:            len(inventory.RuleSets),
+		RuleBytes:            total,
+		RuleBytesVerified:    true,
+		Inactive:             true,
 		RequiresRevalidation: true,
-		RestoreSupported: false,
-		RestoreReady: false,
+		RestoreSupported:     false,
+		RestoreReady:         false,
 	}, nil
 }
