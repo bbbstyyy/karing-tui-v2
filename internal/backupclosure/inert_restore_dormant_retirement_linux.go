@@ -91,10 +91,10 @@ func (l *InertRestoreResourceLease) quarantineDormantRuleBundle(
 		return empty, ErrDormantRuleRetirement
 	}
 	receipt := SealedArchiveReceipt{
-		ArchiveSHA256: l.record.ArchiveSHA256,
+		ArchiveSHA256:   l.record.ArchiveSHA256,
 		InventorySHA256: l.record.InventorySHA256,
-		Bytes: l.record.ArchiveBytes,
-		Format: l.candidate.receipt.Format,
+		Bytes:           l.record.ArchiveBytes,
+		Format:          l.candidate.receipt.Format,
 	}
 	inventory, err := readAuthenticatedInventory(
 		bounded, l.candidate.archive, key, receipt)
@@ -217,14 +217,14 @@ func (l *InertRestoreResourceLease) quarantineDormantRuleBundle(
 		return empty, ErrDormantRuleRetirement
 	}
 	return DormantRuleRetirementReceipt{
-		ArchiveSHA256: receipt.ArchiveSHA256,
-		InventorySHA256: receipt.InventorySHA256,
-		RetiredScopeSHA256: shaHex([]byte(retiredName)),
-		RuleCount: len(inventory.RuleSets),
-		RuleBytes: total,
-		Quarantined: true,
+		ArchiveSHA256:        receipt.ArchiveSHA256,
+		InventorySHA256:      receipt.InventorySHA256,
+		RetiredScopeSHA256:   shaHex([]byte(retiredName)),
+		RuleCount:            len(inventory.RuleSets),
+		RuleBytes:            total,
+		Quarantined:          true,
 		RequiresManualReview: true,
-		RestoreSupported: false,
-		RestoreReady: false,
+		RestoreSupported:     false,
+		RestoreReady:         false,
 	}, nil
 }
