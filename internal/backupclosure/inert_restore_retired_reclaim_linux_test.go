@@ -112,7 +112,7 @@ func TestRetiredReclaimRejectsBadExpectationsAndUnsafeEntries(t *testing.T) {
 	for _, fault := range []string{
 		"zero", "wrong_archive", "wrong_inventory", "wrong_scope", "wrong_bytes",
 		"wrong_count", "forged_ready", "wrong_key", "canceled", "closed",
-		"modified_rule", "same_byte_inode", "symlink", "hardlink",
+		"modified_rule", "executable_file", "symlink", "hardlink",
 		"extra_file", "public_scope", "public_root", "pending", "unknown",
 	} {
 		t.Run(fault, func(t *testing.T) {
@@ -157,12 +157,8 @@ func TestRetiredReclaimRejectsBadExpectationsAndUnsafeEntries(t *testing.T) {
 				if mutation == nil {
 					mutation = os.Chmod(leaf, 0o400)
 				}
-			case "same_byte_inode":
-				replacement := filepath.Join(ruleDir, "replacement")
-				mutation = os.WriteFile(replacement, f.ruleData, 0o400)
-				if mutation == nil {
-					mutation = os.Rename(replacement, leaf)
-				}
+			case "executable_file":
+				mutation = os.Chmod(leaf, 0o500)
 			case "symlink":
 				mutation = os.Remove(leaf)
 				if mutation == nil {
