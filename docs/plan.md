@@ -1432,3 +1432,10 @@ docs/
 - Added internal **read-only**, size/count-bounded inspection of the dedicated `inert-rule-bundles` staging root created by ADR 0114. The report distinguishes unfinished pending directories from published-looking but **unauthenticated** directories, returns only scope-name digests, file counts/bytes and pending-journal count, and never exports rule content or absolute paths.
 - Uses the stage-parent `flock`, UID/private-mode/no-follow checks and repeat directory/entry identity scans; unknown entries, symlinks, drift, cancellation and quota overflow refuse the entire report. Added fault-injection tests and ADR 0115.
 - **Not accomplished:** no orphan deletion/adoption, no post-restart rule-byte reauthentication, no live resource publication, SQLite/credential restore or Core activation. `restore_ready` and `restore_supported` remain false. Actual restore T15/T23, long-duration soak, CN offline licensing and release gates are still open; PR #1 remains Draft.
+
+### 2026-10-15 — M4 ADR 0116 重启后的非活动规则包独立内容认证
+
+- 在 ADR 0114 的非活动规则目录原子发布及 ADR 0115 的只读遗留目录盘点之后，增加 **仅内部** `InertRestoreResourceLease.AuthenticateDormantRuleBundle`。原规则/Core 匿名 FD 与旧进程可以完全退出；新进程必须通过明确的 v18 pending 恢复日志 ID、32 字节密钥，重新独占打开加密候选，在全程持有密文 `flock` 与对象互斥的情况下重新验证整档 HMAC/SHA、内存 SQLite/schema/profile、Applied/LKG/声明/选择/Core CAS。
+- 不接受调用者指定的规则文件夹或 scope；只允许现有权威 SQLite 状态目录下的固定私有 `inert-rule-bundles`，独立持有 staging 目录 `flock`，禁止 pending、未知、超过预算、所有者或权限不合格的目录。完成目录必须以同一密文 SHA 命名，并与加密归档认证清单的 **完整文件集合** 逐个一一对应；两次独立读取 SHA-256、准确字节数、inode/硬链接/无符号链接/不可执行权限，验证后重复目录身份与 journal/live CAS。
+- 正向验证包括关闭全部原资源 pin 后重新打开 SQLite 和候选，加上隔离子进程通过认证后 SIGKILL、父进程重新取得 `flock` 并复核；错误密钥、关闭的租约、篡改/替换、未知与 pending 条目、权限错误、晚到文件、选择与恢复日志漂移、取消等场景均必须失败且不得更改 live state。
+- **能力边界**：成功报告只说明该次调用在持锁期间完整比对了字节，`RuleBytesVerified=true` 不能作为后续时刻的持久 inode pin 或正式恢复许可；始终 `Inactive=true`、`RequiresRevalidation=true`、`RestoreSupported=false`、`RestoreReady=false`。本次无删除/领养遗留目录、无当前运行规则树发布、无 SQLite/凭据迁移或 Core 激活。M4 的显式清理、正式恢复同事务 CAS、Check/Activate/Verify、双回滚、T15/T23 与 M5 的 CN 离线资源许可及 72h/7d/30d 仍是发布阻塞项；PR #1 继续 Draft。
