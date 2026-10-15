@@ -1426,3 +1426,9 @@ docs/
 - 对暂存目录重新打开独立 FD、核对**完全等于清单**的文件条目集合、每个文件 inode/UID/权限/单硬链接/SHA/大小、目录 inode；注入点后的变更也必须再次执行独立文件扫描、原匿名 FD 核验和完整密文/当前状态 CAS。最终只通过 Linux `renameat2(RENAME_NOREPLACE)` 一次性发布该私有目录并 fsync 目录和父目录，绝不覆盖已有同源资源目录。
 - 常规失败仅删除**已确认本次创建且 inode 未变化**的私有文件，拒绝递归删除未知内容；SIGKILL 或非合作写入导致的残余 pending scope 必须阻止后续发布并等待显式审计。rename 完成但父目录 fsync 失败时，持久结果可能不确定，报错且**不删除**可能已发布的目录。返回仅哈希与数量、`Inactive=true` 和固定的两项恢复禁用标志。
 - **仍非真正持久恢复**：完成的规则暂存包不能直接供 sing-box 使用，也不是跨重启的受信资源租约。未实现 orphan 的跨重启鉴定/安全清理、完整目标资源安装、SQLite 凭据隔离迁移与原子恢复 CAS、Core Check/Activate/Verify、双层回滚及 T15/T23 断电验证；CN 原 28 组、五层分流、无 TUN、排除订阅/ISP 分流约束不变，PR #1 保持 Draft。
+
+### 2026-10-15 — M4 ADR 0115 private dormant-bundle orphan inspection
+
+- Added internal **read-only**, size/count-bounded inspection of the dedicated `inert-rule-bundles` staging root created by ADR 0114. The report distinguishes unfinished pending directories from published-looking but **unauthenticated** directories, returns only scope-name digests, file counts/bytes and pending-journal count, and never exports rule content or absolute paths.
+- Uses the stage-parent `flock`, UID/private-mode/no-follow checks and repeat directory/entry identity scans; unknown entries, symlinks, drift, cancellation and quota overflow refuse the entire report. Added fault-injection tests and ADR 0115.
+- **Not accomplished:** no orphan deletion/adoption, no post-restart rule-byte reauthentication, no live resource publication, SQLite/credential restore or Core activation. `restore_ready` and `restore_supported` remain false. Actual restore T15/T23, long-duration soak, CN offline licensing and release gates are still open; PR #1 remains Draft.
