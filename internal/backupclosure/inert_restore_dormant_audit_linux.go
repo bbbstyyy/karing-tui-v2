@@ -124,7 +124,7 @@ func inspectDormantRuleBundles(
 	for _, observed := range first {
 		report.Scopes = append(report.Scopes, DormantRuleScopeAudit{
 			ScopeSHA256: shaHex([]byte(observed.name)),
-			Phase: observed.phase, RuleFiles: len(observed.files),
+			Phase:       observed.phase, RuleFiles: len(observed.files),
 			RuleBytes: observed.bytes,
 		})
 		if observed.phase == "pending" {
