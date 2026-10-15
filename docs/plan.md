@@ -1447,3 +1447,11 @@ docs/
 - **本阶段的唯一实际磁盘修改是单次不可覆盖的 Linux `renameat2(RENAME_NOREPLACE)`：**把完整、未激活、私有规则包原子改名为 `.ktui-inert-rules-retired-v1-<digest>`，然后复核原名消失、新目录 inode 与全部规则内容未改变并 fsync 目录/父目录。绝不 unlink/delete、移动活动规则集、落盘凭据 SQLite、写入新配置代际或运行 Core。新名字故意不能被普通恢复审计/发布逻辑接受；物理空间未回收。
 - 注入 rename 前文件同内容 inode 替换、字节损坏、未知/待处理 scope、选择/journal CAS 漂移与取消均拒绝退役；rename 后、parent fsync 前故障会返回无成功收据且保留隔离目录待人工复查，禁止自动撤销/再次采用。另有子进程在 rename 后被 SIGKILL 的回归验证、保留规则字节与活动 Applied/LKG 完全不变；真实已锁定 Core 集成同样要求仅退役规则而不复制/执行 Core。详见 ADR 0117。
 - **尚未完成真实清理与恢复：**缺乏已退役 scope 的跨重启明确盘点、inode 精确可恢复物理删除与配额回收；更无正式资源安装、加密凭据迁移、同事务 SQLite 恢复 CAS、Core Check/Activate/Verify、双重回滚及 T15/T23。CN 离线资源许可、72h/7d/30d 长稳验证和发布门槛仍开放。无任何用户可调用的 backup/restore/cleanup 命令；`RestoreSupported=false` 与 `RestoreReady=false`，PR #1 继续 Draft。
+
+### 2026-10-15 — M4 ADR 0118 退役规则跨重启鉴定与零删除的持久回收意图
+
+- 新增 **内部只读** `InertRestoreResourceLease.InspectRetiredDormantRuleBundle`：最初规则匿名 FD 与负责退役的进程都已关闭后，调用方以明确的 v18 pending journal ID 和独立提供的 32 字节密钥重新获取持有 `flock` 的密文 lease，再重做完整 HMAC/SHA、加密归档清单与 SQLite/schema/profile 鉴定及 live Applied/LKG/声明/选择/Core CAS。
+- 专门识别私有 `inert-rule-bundles` 根中的 `.ktui-inert-rules-retired-v1-<archive-sha>`，并要求准确匹配加密认证清单的 **完整** 1–128 个规则叶子（≤128 MiB）：UID/0700 目录、0400 单硬链接常规文件、O_NOFOLLOW 描述符、大小和 SHA-256、两次新 FD 全目录扫描与源数据/CAS 双重校验。允许同时存在其他完整、格式受限的普通或退役 scope，但不接受 pending/未知/回收中的 scope。旧 ADR 0114/0115 与普通恢复入口仍拒绝退役目录；无任何路径或明文泄露。
+- 新增 **显式但仍不删除文件** `BeginRetiredDormantRuleReclaim(ctx, key, expected)`：先前认证报告只是期望哈希/数量，事务再次独立检查原密文、journal/live CAS 与全部规则 inode/内容；在锁定的 0700 根中只执行一次 `renameat2(RENAME_NOREPLACE)`，将完整的 `retired-v1` 目录转换成唯一 `reclaim-v1` 待回收命名空间，再检查 inode/规则字节完全一致并 fsync 目录与父目录。`BytesDeleted=false`、`RestoreSupported=false`、`RestoreReady=false` 永远不变；已在回收中的 scope 无法被旧发布/审计/重启认证操作默默认领。
+- 故障注入覆盖相同内容 inode 替换、篡改、未知/待处理目录、live 选择与 journal 漂移、密钥/期望证据错误、取消、关闭租约、已存在目标、rename 后/父目录 fsync 前注入失败和 Linux 子进程 SIGKILL，检验失败返回零成功凭据，仍保留所有规则字节、Applied/LKG 与日志不变。真实批准 Core 集成要求所有已认证并标记为待回收的资源仍只含规则，不能复制/启动 Core。
+- **本轮不宣称磁盘回收完成**：没有 `unlinkat`、递归删除、按时间/进程号 GC 或回收状态自动恢复；仍缺经持久化校验的逐文件删除日志、允许规则集“剩余子集”的完整认证、SIGKILL/断电后的精确恢复和物理空间回收。真正恢复还缺 SQLite/凭据隔离导入、目标规则正式安装、同事务 CAS、Core Check/Activate/Verify、双回滚、T15/T23、电源故障验证、CN 离线许可及 72h/7d/30d 长稳证据。PR #1 仍 Draft，不提供 backup/restore/cleanup CLI/TUI/API。
