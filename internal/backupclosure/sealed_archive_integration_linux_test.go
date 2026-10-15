@@ -297,6 +297,33 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if err != nil || len(stillPresent) != len(closure.Inventory.RuleSets) {
 		t.Fatalf("reclaim-intent lost rules or staged executable: %+v %v", stillPresent, err)
 	}
+	// ADR 0119: fsync a signed, complete one-scope deletion plan first.
+	// Each private rule unlink requires a separate durable HMAC intent and
+	// is never performed against the real live Core/rule-set tree.
+	deletePlan, err := freshLease.PrepareDurableRuleReclaim(context.Background(), key)
+	if err != nil || !validLowerSHA(deletePlan.PlanSHA256) ||
+		deletePlan.ExpectedRules != len(closure.Inventory.RuleSets) ||
+		deletePlan.UnlinkedRules != 0 || deletePlan.PreparedIntents != 0 ||
+		deletePlan.RestoreReady || deletePlan.RestoreSupported {
+		t.Fatalf("approved Core signed reclaim plan invalid: %+v %v", deletePlan, err)
+	}
+	deleteStep, err := freshLease.UnlinkNextDurableReclaimRule(
+		context.Background(), key, deletePlan)
+	if err != nil || !deleteStep.RuleUnlinked || deleteStep.RuleBytes <= 0 ||
+		deleteStep.RestoreReady || deleteStep.RestoreSupported {
+		t.Fatalf("approved Core private rule unlink refused: %+v %v", deleteStep, err)
+	}
+	deletedEvidence, err := freshLease.InspectDurableRuleReclaim(context.Background(), key)
+	if err != nil || deletedEvidence.UnlinkedRules != 1 ||
+		deletedEvidence.PreparedIntents != 1 ||
+		deletedEvidence.PlanSHA256 != deletePlan.PlanSHA256 ||
+		deletedEvidence.RestoreReady || deletedEvidence.RestoreSupported {
+		t.Fatalf("approved Core durable deletion evidence refused: %+v %v", deletedEvidence, err)
+	}
+	if _, err := os.Stat(filepath.Join(dormantParent, toReclaim[0].Name(),
+		reclaimPlanFileName)); err != nil {
+		t.Fatalf("approved Core reclaim plan did not persist: %v", err)
+	}
 	if err := freshLease.Close(); err != nil {
 		t.Fatal(err)
 	}
