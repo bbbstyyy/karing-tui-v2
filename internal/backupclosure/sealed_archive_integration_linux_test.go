@@ -268,6 +268,35 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if err != nil || len(retiredFiles) != len(closure.Inventory.RuleSets) {
 		t.Fatalf("real-core retirement removed rules or retained executable: %+v %v", retiredFiles, err)
 	}
+	// ADR 0118: independently inspect the RETIRED scope and publish only
+	// a durable, non-deleting reclamation intent. The real locked Core is
+	// never written to this namespace or executed by this prerequisite.
+	retiredCheck, err := freshLease.InspectRetiredDormantRuleBundle(context.Background(), key)
+	if err != nil || !retiredCheck.ContentVerified ||
+		!retiredCheck.RequiresRevalidation ||
+		retiredCheck.RuleCount != len(closure.Inventory.RuleSets) ||
+		retiredCheck.RuleBytes != dormant.RuleBytes ||
+		retiredCheck.RestoreSupported || retiredCheck.RestoreReady {
+		t.Fatalf("approved core retired-rule attestation failed: %+v %v", retiredCheck, err)
+	}
+	reclaimIntent, err := freshLease.BeginRetiredDormantRuleReclaim(
+		context.Background(), key, retiredCheck)
+	if err != nil || !reclaimIntent.IntentPublished ||
+		reclaimIntent.BytesDeleted || !reclaimIntent.RequiresManualReview ||
+		reclaimIntent.RuleCount != len(closure.Inventory.RuleSets) ||
+		reclaimIntent.RuleBytes != dormant.RuleBytes ||
+		reclaimIntent.RestoreSupported || reclaimIntent.RestoreReady {
+		t.Fatalf("approved core reclaim intent unexpectedly removed resources: %+v %v", reclaimIntent, err)
+	}
+	toReclaim, err := os.ReadDir(dormantParent)
+	if err != nil || len(toReclaim) != 1 ||
+		toReclaim[0].Name() != dormantRuleReclaimPrefix+receipt.ArchiveSHA256 {
+		t.Fatalf("real-core reclamation intent published unexpected scope: %+v %v", toReclaim, err)
+	}
+	stillPresent, err := os.ReadDir(filepath.Join(dormantParent, toReclaim[0].Name()))
+	if err != nil || len(stillPresent) != len(closure.Inventory.RuleSets) {
+		t.Fatalf("reclaim-intent lost rules or staged executable: %+v %v", stillPresent, err)
+	}
 	if err := freshLease.Close(); err != nil {
 		t.Fatal(err)
 	}
