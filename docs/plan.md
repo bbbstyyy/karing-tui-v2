@@ -1439,3 +1439,11 @@ docs/
 - 不接受调用者指定的规则文件夹或 scope；只允许现有权威 SQLite 状态目录下的固定私有 `inert-rule-bundles`，独立持有 staging 目录 `flock`，禁止 pending、未知、超过预算、所有者或权限不合格的目录。完成目录必须以同一密文 SHA 命名，并与加密归档认证清单的 **完整文件集合** 逐个一一对应；两次独立读取 SHA-256、准确字节数、inode/硬链接/无符号链接/不可执行权限，验证后重复目录身份与 journal/live CAS。
 - 正向验证包括关闭全部原资源 pin 后重新打开 SQLite 和候选，加上隔离子进程通过认证后 SIGKILL、父进程重新取得 `flock` 并复核；错误密钥、关闭的租约、篡改/替换、未知与 pending 条目、权限错误、晚到文件、选择与恢复日志漂移、取消等场景均必须失败且不得更改 live state。
 - **能力边界**：成功报告只说明该次调用在持锁期间完整比对了字节，`RuleBytesVerified=true` 不能作为后续时刻的持久 inode pin 或正式恢复许可；始终 `Inactive=true`、`RequiresRevalidation=true`、`RestoreSupported=false`、`RestoreReady=false`。本次无删除/领养遗留目录、无当前运行规则树发布、无 SQLite/凭据迁移或 Core 激活。M4 的显式清理、正式恢复同事务 CAS、Check/Activate/Verify、双回滚、T15/T23 与 M5 的 CN 离线资源许可及 72h/7d/30d 仍是发布阻塞项；PR #1 继续 Draft。
+
+### 2026-10-15 — M4 ADR 0117 已认证非活动规则包的显式隔离退役
+
+- 在 ADR 0116 已重开加密候选、完整 HMAC/内存 SQLite/schema/profile 与 live CAS 并认证非活动私有规则目录的基础上，新增 **仅内部调用** `InertRestoreResourceLease.QuarantineDormantRuleBundle(ctx, key, expected)`。调用方须显式提交先前的 `AuthenticatedDormantRuleReport` 作为预期哈希/规则数/字节数，而非恢复或删除许可；真正提交前，仍在同一候选密文 flock + 活动状态 CAS + 私有 staging-root flock 下重新比对整档、journal 与完整文件摘要/inode/权限/单硬链接。
+- 只接受权威 SQLite state-root 下的固定 `inert-rule-bundles` 0700 目录、最多 8 个正常已发布目录，以及确切由已认证 archive SHA 命名的 `.ktui-inert-rules-v1-<digest>`。拒绝未知、pending、已退役、来源目录替换、内容变更、晚到文件、错误密钥、过期选择/恢复日志；故障必须返回空证据。
+- **本阶段的唯一实际磁盘修改是单次不可覆盖的 Linux `renameat2(RENAME_NOREPLACE)`：**把完整、未激活、私有规则包原子改名为 `.ktui-inert-rules-retired-v1-<digest>`，然后复核原名消失、新目录 inode 与全部规则内容未改变并 fsync 目录/父目录。绝不 unlink/delete、移动活动规则集、落盘凭据 SQLite、写入新配置代际或运行 Core。新名字故意不能被普通恢复审计/发布逻辑接受；物理空间未回收。
+- 注入 rename 前文件同内容 inode 替换、字节损坏、未知/待处理 scope、选择/journal CAS 漂移与取消均拒绝退役；rename 后、parent fsync 前故障会返回无成功收据且保留隔离目录待人工复查，禁止自动撤销/再次采用。另有子进程在 rename 后被 SIGKILL 的回归验证、保留规则字节与活动 Applied/LKG 完全不变；真实已锁定 Core 集成同样要求仅退役规则而不复制/执行 Core。详见 ADR 0117。
+- **尚未完成真实清理与恢复：**缺乏已退役 scope 的跨重启明确盘点、inode 精确可恢复物理删除与配额回收；更无正式资源安装、加密凭据迁移、同事务 SQLite 恢复 CAS、Core Check/Activate/Verify、双重回滚及 T15/T23。CN 离线资源许可、72h/7d/30d 长稳验证和发布门槛仍开放。无任何用户可调用的 backup/restore/cleanup 命令；`RestoreSupported=false` 与 `RestoreReady=false`，PR #1 继续 Draft。
