@@ -209,14 +209,25 @@ func (l *InertRestoreResourceLease) InspectRetainedReclaimAttestation(
 	}
 	defer parent.Close()
 	name := reclaimAttestationPrefix + p.receipt.ArchiveSHA256
+	var priorMarker os.FileInfo
+	var priorEvidence map[string]os.FileInfo
 	for i := 0; i < 2; i++ {
-		if verifyPrivateReclaimAttestation(bounded, dir, name, payload) != nil ||
-			parent.verify() != nil || verifyReclaimRoot(bounded, p) != nil {
+		marker, err := inspectPrivateReclaimAttestation(bounded, dir, name, payload)
+		if err != nil || parent.verify() != nil || verifyReclaimRoot(bounded, p) != nil {
 			return zero, ErrRetainedReclaimAttestation
 		}
-		if _, err := scanSealedReclaimEvidence(bounded, p, plan, planBytes, completion, key); err != nil || l.revalidateLocked(bounded, key) != nil {
+		evidence, err := scanSealedReclaimEvidence(bounded, p, plan, planBytes, completion, key)
+		if err != nil || l.revalidateLocked(bounded, key) != nil {
 			return zero, ErrRetainedReclaimAttestation
 		}
+		if i > 0 && (!sameLeasedFile(priorMarker, marker) ||
+			!sameSealedReclaimEvidence(priorEvidence, evidence)) {
+			// A same-content inode swap between independent complete scans
+			// must not be mistaken for stable post-restart provenance.
+			return zero, ErrRetainedReclaimAttestation
+		}
+		priorMarker = marker
+		priorEvidence = evidence
 	}
 	if bounded.Err() != nil {
 		return zero, ErrRetainedReclaimAttestation
@@ -292,18 +303,25 @@ func createReclaimAttestation(p *reclaimRuleScope, journalID int64, planBytes, c
 	return payload, nil
 }
 
-func verifyPrivateReclaimAttestation(ctx context.Context, dir *os.File,
+func inspectPrivateReclaimAttestation(ctx context.Context, dir *os.File,
 	name string, expected []byte,
-) error {
+) (os.FileInfo, error) {
 	raw, first, err := readPrivateReclaimFile(ctx, dir, name, maxReclaimAttestationBytes)
 	if err != nil || !bytes.Equal(raw, expected) {
-		return ErrRetainedReclaimAttestation
+		return nil, ErrRetainedReclaimAttestation
 	}
 	raw, second, err := readPrivateReclaimFile(ctx, dir, name, maxReclaimAttestationBytes)
 	if err != nil || !bytes.Equal(raw, expected) || !sameLeasedFile(first, second) {
-		return ErrRetainedReclaimAttestation
+		return nil, ErrRetainedReclaimAttestation
 	}
-	return nil
+	return second, nil
+}
+
+func verifyPrivateReclaimAttestation(ctx context.Context, dir *os.File,
+	name string, expected []byte,
+) error {
+	_, err := inspectPrivateReclaimAttestation(ctx, dir, name, expected)
+	return err
 }
 
 func retainedReclaimAttestation(sealed CompletedRuleReclaimReceipt, payload []byte) RetainedReclaimAttestation {
