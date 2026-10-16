@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -356,6 +357,39 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	sealedFiles, err := os.ReadDir(filepath.Join(dormantParent, toReclaim[0].Name()))
 	if err != nil || len(sealedFiles) != len(closure.Inventory.RuleSets)+2 {
 		t.Fatalf("terminal scope changed more than audit metadata: %+v %v", sealedFiles, err)
+	}
+	// ADR 0121: the signed completion can receive one independently
+	// retained audit anchor outside the reclaim scope. Real approved-Core
+	// bytes, active rule files and SQLite live state must remain untouched.
+	beforeAnchor, err := f.store.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor, err := freshLease.AttestSealedDurableReclaim(context.Background(), key, sealed)
+	if err != nil || !anchor.AttestationRetained || !anchor.OriginalEvidenceRetained ||
+		anchor.ArchiveSHA256 != receipt.ArchiveSHA256 ||
+		anchor.CompletionSHA256 != sealed.CompletionSHA256 ||
+		anchor.RuleCount != len(closure.Inventory.RuleSets) ||
+		anchor.RestoreReady || anchor.RestoreSupported {
+		t.Fatalf("approved Core independent audit anchor refused: %+v %v", anchor, err)
+	}
+	verifiedAnchor, err := freshLease.InspectRetainedReclaimAttestation(context.Background(), key)
+	if err != nil || verifiedAnchor != anchor {
+		t.Fatalf("approved Core off-scope anchor could not be read back: %+v %v", verifiedAnchor, err)
+	}
+	originalProofs, err := os.ReadDir(filepath.Join(dormantParent, toReclaim[0].Name()))
+	if err != nil || len(originalProofs) != len(sealedFiles) {
+		t.Fatalf("off-scope audit destroyed original proof: %+v %v", originalProofs, err)
+	}
+	for _, rule := range closure.Inventory.RuleSets {
+		if _, err := os.Stat(filepath.Join(f.stateRoot, "core", "rule-sets", "sha256",
+			filepath.Base(rule.RelativePath))); err != nil {
+			t.Fatalf("off-scope anchor removed active rule file: %v", err)
+		}
+	}
+	afterAnchor, err := f.store.Snapshot(context.Background())
+	if err != nil || !reflect.DeepEqual(beforeAnchor, afterAnchor) {
+		t.Fatalf("off-scope anchor modified live SQLite generation: %v", err)
 	}
 	if err := freshLease.Close(); err != nil {
 		t.Fatal(err)
