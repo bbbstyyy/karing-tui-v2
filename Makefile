@@ -15,4 +15,9 @@ vet:
 	go vet ./...
 
 fmt-check:
-	@test -z "$$(gofmt -l .)" || (echo "gofmt required:"; gofmt -l .; exit 1)
+	@unformatted="$$(gofmt -l .)"; \
+	 if test -n "$$unformatted"; then \
+	   printf 'gofmt required:\n%s\n' "$$unformatted"; \
+	   printf '%s\n' "$$unformatted" | while IFS= read -r file; do gofmt -d "$$file"; done; \
+	   exit 1; \
+	 fi
