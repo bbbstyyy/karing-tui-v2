@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	reclaimAttestationPrefix = ".ktui-inert-reclaim-attest-v1-"
-	reclaimAttestationVersion = "karing-tui-v2-inert-reclaim-attest-v1"
+	reclaimAttestationPrefix   = ".ktui-inert-reclaim-attest-v1-"
+	reclaimAttestationVersion  = "karing-tui-v2-inert-reclaim-attest-v1"
 	maxReclaimAttestationBytes = 2048
 )
 
@@ -28,36 +28,36 @@ var ErrRetainedReclaimAttestation = errors.New("off-scope reclaim attestation re
 // RetainedReclaimAttestation is expiring audit evidence only. In particular it
 // cannot authorize deleting the original plan, intents, scope or ciphertext.
 type RetainedReclaimAttestation struct {
-	ArchiveSHA256 string
-	InventorySHA256 string
-	PlanSHA256 string
-	CompletionSHA256 string
-	AttestationSHA256 string
-	RuleCount int
-	UnlinkedBytes int64
-	AttestationRetained bool
+	ArchiveSHA256            string
+	InventorySHA256          string
+	PlanSHA256               string
+	CompletionSHA256         string
+	AttestationSHA256        string
+	RuleCount                int
+	UnlinkedBytes            int64
+	AttestationRetained      bool
 	OriginalEvidenceRetained bool
-	RequiresRevalidation bool
-	RestoreSupported bool
-	RestoreReady bool
+	RequiresRevalidation     bool
+	RestoreSupported         bool
+	RestoreReady             bool
 }
 
 type reclaimAttestationBody struct {
-	Version string `json:"version"`
-	ArchiveSHA256 string `json:"archive_sha256"`
-	InventorySHA256 string `json:"inventory_sha256"`
-	PlanSHA256 string `json:"plan_sha256"`
+	Version          string `json:"version"`
+	ArchiveSHA256    string `json:"archive_sha256"`
+	InventorySHA256  string `json:"inventory_sha256"`
+	PlanSHA256       string `json:"plan_sha256"`
 	CompletionSHA256 string `json:"completion_sha256"`
-	JournalID int64 `json:"journal_id"`
-	ScopeDevice uint64 `json:"scope_device"`
-	ScopeInode uint64 `json:"scope_inode"`
-	RuleCount int `json:"rule_count"`
-	UnlinkedBytes int64 `json:"unlinked_bytes"`
+	JournalID        int64  `json:"journal_id"`
+	ScopeDevice      uint64 `json:"scope_device"`
+	ScopeInode       uint64 `json:"scope_inode"`
+	RuleCount        int    `json:"rule_count"`
+	UnlinkedBytes    int64  `json:"unlinked_bytes"`
 }
 
 type reclaimSignedAttestation struct {
 	Body reclaimAttestationBody `json:"body"`
-	MAC string `json:"mac"`
+	MAC  string                 `json:"mac"`
 }
 
 // AttestSealedDurableReclaim writes an independent immutable, HMAC-signed
@@ -214,8 +214,7 @@ func (l *InertRestoreResourceLease) InspectRetainedReclaimAttestation(
 			parent.verify() != nil || verifyReclaimRoot(bounded, p) != nil {
 			return zero, ErrRetainedReclaimAttestation
 		}
-		if _, err := scanSealedReclaimEvidence(bounded, p, plan, planBytes, completion, key);
-			err != nil || l.revalidateLocked(bounded, key) != nil {
+		if _, err := scanSealedReclaimEvidence(bounded, p, plan, planBytes, completion, key); err != nil || l.revalidateLocked(bounded, key) != nil {
 			return zero, ErrRetainedReclaimAttestation
 		}
 	}
@@ -265,16 +264,16 @@ func createReclaimAttestation(p *reclaimRuleScope, journalID int64, planBytes, c
 		return nil, ErrRetainedReclaimAttestation
 	}
 	body := reclaimAttestationBody{
-		Version: reclaimAttestationVersion,
-		ArchiveSHA256: sealed.ArchiveSHA256,
-		InventorySHA256: sealed.InventorySHA256,
-		PlanSHA256: sealed.PlanSHA256,
+		Version:          reclaimAttestationVersion,
+		ArchiveSHA256:    sealed.ArchiveSHA256,
+		InventorySHA256:  sealed.InventorySHA256,
+		PlanSHA256:       sealed.PlanSHA256,
 		CompletionSHA256: sealed.CompletionSHA256,
-		JournalID: journalID,
-		ScopeDevice: meta.Dev,
-		ScopeInode: meta.Ino,
-		RuleCount: sealed.RuleCount,
-		UnlinkedBytes: sealed.UnlinkedBytes,
+		JournalID:        journalID,
+		ScopeDevice:      meta.Dev,
+		ScopeInode:       meta.Ino,
+		RuleCount:        sealed.RuleCount,
+		UnlinkedBytes:    sealed.UnlinkedBytes,
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -285,7 +284,7 @@ func createReclaimAttestation(p *reclaimRuleScope, journalID int64, planBytes, c
 	_, _ = mac.Write(raw)
 	payload, err := json.Marshal(reclaimSignedAttestation{
 		Body: body,
-		MAC: hex.EncodeToString(mac.Sum(nil)),
+		MAC:  hex.EncodeToString(mac.Sum(nil)),
 	})
 	if err != nil || len(payload) == 0 || len(payload) > maxReclaimAttestationBytes {
 		return nil, ErrRetainedReclaimAttestation
@@ -309,17 +308,17 @@ func verifyPrivateReclaimAttestation(ctx context.Context, dir *os.File,
 
 func retainedReclaimAttestation(sealed CompletedRuleReclaimReceipt, payload []byte) RetainedReclaimAttestation {
 	return RetainedReclaimAttestation{
-		ArchiveSHA256: sealed.ArchiveSHA256,
-		InventorySHA256: sealed.InventorySHA256,
-		PlanSHA256: sealed.PlanSHA256,
-		CompletionSHA256: sealed.CompletionSHA256,
-		AttestationSHA256: shaHex(payload),
-		RuleCount: sealed.RuleCount,
-		UnlinkedBytes: sealed.UnlinkedBytes,
-		AttestationRetained: true,
+		ArchiveSHA256:            sealed.ArchiveSHA256,
+		InventorySHA256:          sealed.InventorySHA256,
+		PlanSHA256:               sealed.PlanSHA256,
+		CompletionSHA256:         sealed.CompletionSHA256,
+		AttestationSHA256:        shaHex(payload),
+		RuleCount:                sealed.RuleCount,
+		UnlinkedBytes:            sealed.UnlinkedBytes,
+		AttestationRetained:      true,
 		OriginalEvidenceRetained: true,
-		RequiresRevalidation: true,
-		RestoreSupported: false,
-		RestoreReady: false,
+		RequiresRevalidation:     true,
+		RestoreSupported:         false,
+		RestoreReady:             false,
 	}
 }
