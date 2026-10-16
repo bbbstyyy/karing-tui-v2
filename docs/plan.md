@@ -1473,3 +1473,11 @@ docs/
 - 新增 `InspectSealedDurableReclaim(ctx,key)` 供进程重启后显式重新获得密文 lease、反复复核整个私有目录：只允许**精确原始完整计划 + 每叶 HMAC 删除意图 + 终态 HMAC 完成凭据**，不得有任何原规则、未知条目或符号/硬链接。两轮新 FD 全量审计+inode 元数据检查、原密文/journal/live CAS 重新验证。ADR 0119 的普通 `InspectDurableRuleReclaim` / `UnlinkNextDurableReclaimRule` 遇到完成标记仍拒绝，不会再次删除。
 - 故障回归包括：仍有叶文件、缺失意图、伪造计划/字节/计数、错误 key、改变权限/符号链接、额外条目、选择/journal 漂移、提交前晚到故障、提交标记文件 fsync 后与目录 fsync 前的错误返回空凭据、专门子进程 SIGKILL 后新独立 lease 对仍可见元数据重新鉴定。真实锁定 Core 集成新增对规则全部移除后签署完成标记的检查，不能改写活动 Core、规则树、SQLite 或当前代际。
 - **仍无最终目录/元数据删除**：计划、逐规则意图和完成标记永久保留在本阶段的私有不可导入 scope。后续必须设计另行持久化、跨重启/断电可验证的终态证明或保留策略，才能物理移除这些唯一审计证据；不得使用 RemoveAll、TTL/PID GC 或自动完成。仍缺真实电源故障回放 T15/T23、pending orphan 回收、SQLite/凭据隔离恢复、目标资源正式安装、Core Check/Activate/Verify、多级双向回滚、CN 离线资源许可与 72h/7d/30d 长稳测试。无用户可调用 backup/restore/cleanup CLI/TUI/API；PR #1 不合并，`RestoreSupported=false`、`RestoreReady=false`。
+
+### 2026-10-17 — M4 ADR 0121 回收终态的独立外置签名审计（尚非最终清理）
+
+- 按 §13/§18 的数据恢复与安全停止约束，新增仅内部使用的 `AttestSealedDurableReclaim(ctx,key,expected)` 与 `InspectRetainedReclaimAttestation(ctx,key)`。在原规则回收 scope **不删除任何原始 HMAC plan / 每叶删除意图 / completion 证据** 的前提下，将一份单独域分隔 HMAC 签名的只读 0400 证明放在已经存在且 UID 私有的 SQLite 状态目录。位置只能从当前 live DB 导出，不能由 archive、TUI、CLI 或调用者任选。
+- 证明绑定原密文/资源目录 SHA、完成标记、原始计划 SHA、确切 prepared v18 journal ID、回收目录 dev/inode、原始规则数量与已认证缺失字节数。O_EXCL/O_NOFOLLOW 与文件及父目录 fsync；完整重验原始密文、归档 SQLite/schema/profile、CurrentSelected/声明/Applied/LKG/Core/live CAS，已有/损坏证明绝不覆盖或自动修复。外置证明不授予任何物理 unlink/rmdir 或历史恢复权限。
+- 独立跨重启读取必须重新取得原始 ciphertext lease 和用户显式提供的密钥，两次全量校验外部证明与全部原始审计记录的 SHA/HMAC/私有 inode，比较扫描前后的 inode 身份，不能把旧回执或同内容换 inode 当作持久权限。新增专门子进程在外部证明文件 fsync 完成、父目录 fsync 之前遭 SIGKILL 的回归，父进程重新获得 lease 审计仍可见证据；这**不是**真实断电持久性认证。
+- 新提交先修复上一轮 ADR 0121 `gofmt` 门禁失败，并增强 `Makefile` 格式错误输出；完整 Go 单测、Race 与 Managed Core CI 需以最新分支提交结果为准，不能把仅格式通过误称全面通过。
+- **保留全部发布阻塞项**：尚无元数据终态删除/保留期决策、旧 pending orphan 的安全处置、真实断电 T15/T23、完整 SQLite/凭据恢复与资源发布、Core Check/Activate/Verify 双重回滚、CN 规则离线许可闭环及 72h/7d/30d 稳定性结果。PR #1 继续 Draft，不发布 backup/restore/cleanup API、CLI、TUI，`RestoreSupported=false` 与 `RestoreReady=false`。
