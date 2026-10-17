@@ -198,9 +198,10 @@ def observe_db(path: Path) -> dict:
 
 
 def strict_args(args: argparse.Namespace) -> tuple[Path, Path]:
-    if args.case not in vm.CASES or not vm.NONCE_RE.fullmatch(args.nonce):
-        refuse("unsupported fault checkpoint or nonce")
-    expected_ack = "GUEST_AUDIT:" + args.case + ":" + args.nonce
+    if (args.case not in vm.CASES or not vm.NONCE_RE.fullmatch(args.nonce) or
+            not vm.DOMAIN_RE.fullmatch(args.domain) or not vm.UUID_RE.fullmatch(args.uuid)):
+        refuse("unsupported disposable VM identity, checkpoint or nonce")
+    expected_ack = "GUEST_AUDIT:" + args.domain + ":" + args.uuid + ":" + args.case + ":" + args.nonce
     if os.geteuid() == 0 or os.environ.get("KTUI_LAB_GUEST_AUDIT_ACK") != expected_ack:
         refuse("explicit disposable guest-only acknowledgement missing")
     state_base = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
@@ -241,7 +242,8 @@ def inspect(args: argparse.Namespace) -> dict:
         stack.callback(os.close, private_fd(witness, 0, directory=True))
         state = observe_db(db_path)
         baseline_name = "baseline-" + args.nonce + ".json"
-        base_doc = {"format": VERSION, "case": args.case, "nonce": args.nonce, "state": state}
+        base_doc = {"format": VERSION, "case": args.case, "nonce": args.nonce,
+                    "domain": args.domain, "domain_uuid": args.uuid, "state": state}
         if args.mode == "capture":
             digest = write_private_baseline(witness, baseline_name, base_doc)
             return {"status": "baseline_captured_no_reboot_claim", "baseline_sha256": digest,
@@ -250,13 +252,16 @@ def inspect(args: argparse.Namespace) -> dict:
         if not SHA.fullmatch(args.baseline_sha256 or ""):
             refuse("expected offline-pinned baseline SHA-256 missing")
         baseline, baseline_hash = private_json(witness / baseline_name)
-        if baseline_hash != args.baseline_sha256 or baseline.get("format") != VERSION or (
-                baseline.get("case"), baseline.get("nonce")) != (args.case, args.nonce):
+        if (baseline_hash != args.baseline_sha256 or baseline.get("format") != VERSION or
+                (baseline.get("case"), baseline.get("nonce"), baseline.get("domain"),
+                 baseline.get("domain_uuid")) !=
+                (args.case, args.nonce, args.domain, args.uuid)):
             refuse("baseline changed, invalid or not bound to this experiment")
         observation, _ = private_json(witness / ("observation-" + args.nonce + ".json"))
         if (observation.get("schema_version") != 1 or
                 observation.get("status") != "virtual_guest_forced_off_observed" or
                 observation.get("case") != args.case or observation.get("nonce") != args.nonce or
+                observation.get("domain") != args.domain or observation.get("domain_uuid") != args.uuid or
                 observation.get("physical_power_loss_verified") is not False or
                 observation.get("post_reboot_consistency_verified") is not False or
                 observation.get("restore_authorized") is not False or
@@ -281,6 +286,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", required=True, choices=("capture", "verify"))
     parser.add_argument("--case", required=True, choices=vm.CASES)
+    parser.add_argument("--domain", required=True)
+    parser.add_argument("--uuid", required=True)
     parser.add_argument("--nonce", required=True)
     parser.add_argument("--witness", required=True)
     parser.add_argument("--baseline-sha256")
