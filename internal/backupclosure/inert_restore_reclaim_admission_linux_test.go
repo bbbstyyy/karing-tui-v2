@@ -32,8 +32,7 @@ func TestRetainedEvidenceAdmissionSerializesTwoIndependentDirectoryHandles(t *te
 	if err != nil {
 		t.Fatalf("first writer cannot lock private state directory: %v", err)
 	}
-	if second, err := beginRetainedEvidenceAdmission(ctx, secondFD, name, payload);
-		err == nil || second != nil || !errors.Is(err, ErrRetainedEvidenceAdmission) {
+	if second, err := beginRetainedEvidenceAdmission(ctx, secondFD, name, payload); err == nil || second != nil || !errors.Is(err, ErrRetainedEvidenceAdmission) {
 		t.Fatalf("second independent writer bypassed flock: %+v %v", second, err)
 	}
 	if err := first.checkBefore(ctx); err != nil {
@@ -49,8 +48,7 @@ func TestRetainedEvidenceAdmissionSerializesTwoIndependentDirectoryHandles(t *te
 		t.Fatalf("fsynced O_EXCL proof not accepted: %v", err)
 	}
 	first.close()
-	if second, err := beginRetainedEvidenceAdmission(ctx, secondFD, name, payload);
-		err == nil || second != nil {
+	if second, err := beginRetainedEvidenceAdmission(ctx, secondFD, name, payload); err == nil || second != nil {
 		t.Fatalf("duplicate proof name was not rejected: %+v %v", second, err)
 	}
 	newName := reclaimMirrorPrefix + strings.Repeat("b", 64)
@@ -161,8 +159,7 @@ func TestRetainedEvidencePublishersUseSharedBudgetAndPreserveLiveState(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report, err := lease.AttestSealedDurableReclaim(ctx, key, sealed);
-		err == nil || report != (RetainedReclaimAttestation{}) {
+	if report, err := lease.AttestSealedDurableReclaim(ctx, key, sealed); err == nil || report != (RetainedReclaimAttestation{}) {
 		t.Fatalf("attestation bypassed shared parent lock: %+v %v", report, err)
 	}
 	locked.close()
@@ -177,8 +174,7 @@ func TestRetainedEvidencePublishersUseSharedBudgetAndPreserveLiveState(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report, err := lease.MirrorSealedReclaimEvidence(ctx, key, anchor);
-		err == nil || report != (ReclaimEvidenceMirrorReceipt{}) {
+	if report, err := lease.MirrorSealedReclaimEvidence(ctx, key, anchor); err == nil || report != (ReclaimEvidenceMirrorReceipt{}) {
 		t.Fatalf("mirror bypassed shared state-parent lock: %+v %v", report, err)
 	}
 	locked.close()
@@ -217,8 +213,7 @@ func TestRetainedEvidencePublicationRefusesOccupiedProofBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if receipt, err := lease.AttestSealedDurableReclaim(ctx, key, sealed);
-		err == nil || receipt != (RetainedReclaimAttestation{}) {
+	if receipt, err := lease.AttestSealedDurableReclaim(ctx, key, sealed); err == nil || receipt != (RetainedReclaimAttestation{}) {
 		t.Fatalf("proof budget exceeded but writer published: %+v %v", receipt, err)
 	}
 	if _, err := os.Lstat(filepath.Join(root,
