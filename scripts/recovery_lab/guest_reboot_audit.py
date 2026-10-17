@@ -70,21 +70,35 @@ def file_identity(fd: int, path: Path):
                 b.st_ctime_ns)
 
 
-def private_json(path: Path, maximum=MAX_WITNESS) -> tuple[dict, str]:
-    fd = private_fd(path, maximum)
+def private_json_at(dfd: int, name: str, maximum=MAX_WITNESS) -> tuple[dict, str]:
+    # All witness reads are descriptor-relative to the same private directory
+    # that was validated before the SQLite inspection. No path-based reopen.
+    if not re.fullmatch(r"(baseline|observation)-[0-9a-f]{32}\.json", name):
+        refuse("invalid witness name")
     try:
-        info = os.fstat(fd)
-        raw = os.pread(fd, maximum + 1, 0)
-        if len(raw) != info.st_size or not file_identity(fd, path):
-            refuse("witness changed while being read")
-        doc = json.loads(raw)
-        if not isinstance(doc, dict):
-            refuse("witness must be a JSON object")
-        return doc, hashlib.sha256(raw).hexdigest()
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
+        try:
+            info = os.fstat(fd)
+            named = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or
+                    info.st_nlink != 1 or stat.S_IMODE(info.st_mode) not in (0o400, 0o600) or
+                    not 0 < info.st_size <= maximum or
+                    (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino)):
+                refuse("invalid private witness identity")
+            raw = os.pread(fd, maximum + 1, 0)
+            later = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            if (len(raw) != info.st_size or
+                    (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) !=
+                    (later.st_dev, later.st_ino, later.st_size, later.st_mtime_ns)):
+                refuse("witness changed while being read")
+            doc = json.loads(raw)
+            if not isinstance(doc, dict):
+                refuse("witness must be a JSON object")
+            return doc, hashlib.sha256(raw).hexdigest()
+        finally:
+            os.close(fd)
     except (ValueError, UnicodeError, OSError) as exc:
         raise AuditRefusal("invalid private witness") from exc
-    finally:
-        os.close(fd)
 
 
 def sha_blob(raw, expected) -> str:
@@ -215,22 +229,21 @@ def strict_args(args: argparse.Namespace) -> tuple[Path, Path]:
     return witness, app / "state.db"
 
 
-def write_private_baseline(parent: Path, name: str, report: dict) -> str:
+def write_private_baseline(dfd: int, name: str, report: dict) -> str:
+    if not re.fullmatch(r"baseline-[0-9a-f]{32}\.json", name):
+        refuse("invalid baseline filename")
     raw = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
     if len(raw) > MAX_WITNESS:
         refuse("baseline exceeded audit limit")
-    fd = os.open(parent / name,
-                 os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    fd = os.open(name,
+                 os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                 0o600, dir_fd=dfd)
     try:
         with os.fdopen(fd, "wb", closefd=False) as f:
             f.write(raw)
             f.flush()
             os.fsync(fd)
-        folder = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            os.fsync(folder)
-        finally:
-            os.close(folder)
+        os.fsync(dfd)
     finally:
         os.close(fd)
     return hashlib.sha256(raw).hexdigest()
@@ -239,25 +252,28 @@ def write_private_baseline(parent: Path, name: str, report: dict) -> str:
 def inspect(args: argparse.Namespace) -> dict:
     witness, db_path = strict_args(args)
     with ExitStack() as stack:
-        stack.callback(os.close, private_fd(witness, 0, directory=True))
+        dfd = private_fd(witness, 0, directory=True)
+        stack.callback(os.close, dfd)
         state = observe_db(db_path)
         baseline_name = "baseline-" + args.nonce + ".json"
         base_doc = {"format": VERSION, "case": args.case, "nonce": args.nonce,
                     "domain": args.domain, "domain_uuid": args.uuid, "state": state}
         if args.mode == "capture":
-            digest = write_private_baseline(witness, baseline_name, base_doc)
+            digest = write_private_baseline(dfd, baseline_name, base_doc)
+            if not file_identity(dfd, witness):
+                refuse("witness directory changed after baseline creation")
             return {"status": "baseline_captured_no_reboot_claim", "baseline_sha256": digest,
                     "physical_power_loss_verified": False, "restore_authorized": False,
                     "metadata_deletion_authorized": False}
         if not SHA.fullmatch(args.baseline_sha256 or ""):
             refuse("expected offline-pinned baseline SHA-256 missing")
-        baseline, baseline_hash = private_json(witness / baseline_name)
+        baseline, baseline_hash = private_json_at(dfd, baseline_name)
         if (baseline_hash != args.baseline_sha256 or baseline.get("format") != VERSION or
                 (baseline.get("case"), baseline.get("nonce"), baseline.get("domain"),
                  baseline.get("domain_uuid")) !=
                 (args.case, args.nonce, args.domain, args.uuid)):
             refuse("baseline changed, invalid or not bound to this experiment")
-        observation, _ = private_json(witness / ("observation-" + args.nonce + ".json"))
+        observation, _ = private_json_at(dfd, "observation-" + args.nonce + ".json")
         if (observation.get("schema_version") != 1 or
                 observation.get("status") != "virtual_guest_forced_off_observed" or
                 observation.get("case") != args.case or observation.get("nonce") != args.nonce or
@@ -267,6 +283,8 @@ def inspect(args: argparse.Namespace) -> dict:
                 observation.get("restore_authorized") is not False or
                 observation.get("metadata_deletion_authorized") is not False):
             refuse("host witness is not a non-authorizing observed virtual stop")
+        if not file_identity(dfd, witness):
+            refuse("private lab witness directory replaced")
         if baseline.get("state") != state:
             refuse("guest post-boot SQLite snapshot differs from trusted baseline")
         if state["recovery_required"] or state["active_apply_attempt"] is not None:
