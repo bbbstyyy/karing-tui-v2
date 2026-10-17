@@ -255,3 +255,112 @@ func TestDetachedMirrorRejectsValidOuterMACWithFalseNestedClaims(t *testing.T) {
 		})
 	}
 }
+
+// Even if all five historical signatures are recomputed with the correct test
+// key, no mirrored history can override the immutable encrypted archive's
+// actual rule digest/length inventory. This guards against "trust signed
+// metadata alone" regressions in the detached source-less verifier.
+func TestDetachedMirrorRejectsFullyResignedInventoryMismatch(t *testing.T) {
+	f, lease, record, key, _, expected := makeMirroredReclaimFixture(t)
+	ctx := context.Background()
+	if _, err := lease.MirrorSealedReclaimEvidence(ctx, key, expected); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Dir(f.store.Path())
+	mirrorPath := filepath.Join(parent, reclaimMirrorPrefix+record.ArchiveSHA256)
+	anchorPath := filepath.Join(parent, reclaimAttestationPrefix+record.ArchiveSHA256)
+	raw, err := os.ReadFile(mirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mirror reclaimSignedMirror
+	if err := json.Unmarshal(raw, &mirror); err != nil {
+		t.Fatal(err)
+	}
+	var plan reclaimSignedPlan
+	if err := json.Unmarshal(mirror.Body.Plan, &plan); err != nil {
+		t.Fatal(err)
+	}
+	plan.Body.Rules[0].Size++
+	plan.MAC, err = reclaimPlanMAC(plan.Body, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPlan, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirror.Body.Plan = newPlan
+	mirror.Body.PlanSHA256 = shaHex(newPlan)
+	mirror.Body.Intents[0].MAC = reclaimIntentMAC(
+		key, mirror.Body.PlanSHA256, 0, plan.Body.Rules[0].Name)
+
+	var completion reclaimSignedCompletion
+	if err := json.Unmarshal(mirror.Body.Completion, &completion); err != nil {
+		t.Fatal(err)
+	}
+	completion.Body.PlanSHA256 = mirror.Body.PlanSHA256
+	completion.Body.UnlinkedBytes++
+	completion.MAC, err = reclaimCompletionMAC(completion.Body, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newCompletion, err := json.Marshal(completion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirror.Body.Completion = newCompletion
+	mirror.Body.CompletionSHA256 = shaHex(newCompletion)
+
+	var anchor reclaimSignedAttestation
+	if err := json.Unmarshal(mirror.Body.Attestation, &anchor); err != nil {
+		t.Fatal(err)
+	}
+	anchor.Body.PlanSHA256 = mirror.Body.PlanSHA256
+	anchor.Body.CompletionSHA256 = mirror.Body.CompletionSHA256
+	anchor.Body.UnlinkedBytes++
+	rawAnchorBody, err := json.Marshal(anchor.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchorMAC := hmac.New(sha256.New, key[:])
+	_, _ = anchorMAC.Write([]byte("karing-tui-v2/durable-rule-reclaim/off-scope-attestation-v1\x00"))
+	_, _ = anchorMAC.Write(rawAnchorBody)
+	anchor.MAC = hex.EncodeToString(anchorMAC.Sum(nil))
+	newAnchor, err := json.Marshal(anchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirror.Body.Attestation = newAnchor
+	mirror.Body.AttestationSHA256 = shaHex(newAnchor)
+	mirror.Body.UnlinkedBytes++
+	rawMirrorBody, err := json.Marshal(mirror.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrorMAC := hmac.New(sha256.New, key[:])
+	_, _ = mirrorMAC.Write([]byte("karing-tui-v2/durable-rule-reclaim/full-proof-mirror-v1\x00"))
+	_, _ = mirrorMAC.Write(rawMirrorBody)
+	mirror.MAC = hex.EncodeToString(mirrorMAC.Sum(nil))
+	newMirror, err := json.Marshal(mirror)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []struct {
+		path string
+		data []byte
+	}{{anchorPath, newAnchor}, {mirrorPath, newMirror}} {
+		if err := os.Chmod(file.path, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file.path, file.data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(file.path, 0400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if audit, err := lease.InspectDetachedReclaimMirror(ctx, key); err == nil || !reflect.DeepEqual(audit, DetachedReclaimMirrorAudit{}) {
+		t.Fatalf("re-signed but archive-inconsistent rule inventory accepted: %+v %v", audit, err)
+	}
+}
