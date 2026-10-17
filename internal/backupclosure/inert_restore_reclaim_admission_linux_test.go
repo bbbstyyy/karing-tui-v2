@@ -30,7 +30,10 @@ func TestRetainedEvidenceAdmissionSerializesTwoIndependentDirectoryHandles(t *te
 	payload := []byte("private signed audit fixture")
 	first, err := beginRetainedEvidenceAdmission(ctx, firstFD, name, payload)
 	if err != nil {
-		t.Fatalf("first writer cannot lock private state directory: %v", err)
+		info, statErr := os.Stat(root)
+		snapshot, scanErr := scanReclaimEvidenceFootprint(ctx, firstFD)
+		t.Fatalf("first writer refused: %v; root stat=%v info=%v; direct scan=%v snapshot=%+v; canonical=%v",
+			err, statErr, info, scanErr, snapshot, validRetainedEvidenceName(name))
 	}
 	if second, err := beginRetainedEvidenceAdmission(ctx, secondFD, name, payload); err == nil || second != nil || !errors.Is(err, ErrRetainedEvidenceAdmission) {
 		t.Fatalf("second independent writer bypassed flock: %+v %v", second, err)
