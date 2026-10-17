@@ -42,6 +42,8 @@ jobs:
         run: make fmt-check
       - name: Vet
         run: make vet
+      - name: Guarded T15/T23 VM host tool unit tests (mock libvirt only)
+        run: python3 -m unittest discover -s scripts/recovery_lab -p 'test_*.py' -v
       - name: Test
         run: make test
       - name: Integration compile check
