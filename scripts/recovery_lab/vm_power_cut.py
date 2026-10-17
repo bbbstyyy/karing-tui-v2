@@ -46,8 +46,14 @@ def fail_if_bad_args(args: argparse.Namespace) -> None:
     if args.case not in CASES or not NONCE_RE.fullmatch(args.nonce):
         raise LabRefusal("unknown case or noncanonical 128-bit run nonce")
     path = Path(args.sandbox)
-    if not path.is_absolute() or ".." in path.parts or str(path) != os.path.realpath(path):
-        raise LabRefusal("sandbox must be an absolute, non-symlinked private path")
+    state_root = os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+    if not os.path.isabs(state_root) or ".." in Path(state_root).parts:
+        raise LabRefusal("host XDG state root must be an absolute private path")
+    expected = os.path.join(state_root, "karing-tui-v2", "recovery-lab",
+                            "ktui-powercut-disposable-" + args.nonce)
+    if (not path.is_absolute() or ".." in path.parts or
+            str(path) != os.path.realpath(path) or str(path) != expected):
+        raise LabRefusal("sandbox must be the dedicated per-nonce disposable recovery-lab directory")
 
 
 def open_private_sandbox(path: str) -> int:
