@@ -236,7 +236,6 @@ func fmtReclaimBudgetDigest(i int) string {
 	return string(b[:])
 }
 
-
 func newPrivateAdmissionTestDir(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
