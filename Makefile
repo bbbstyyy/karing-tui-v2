@@ -14,9 +14,9 @@ RACE_SHARDS ?= 4
 RACE_SHARD ?= 0
 
 test-race:
-	@shard=0; while test "$shard" -lt "$(RACE_SHARDS)"; do \
-	  sh scripts/test-race-shard.sh "$shard" "$(RACE_SHARDS)" || exit $?; \
-	  shard=$((shard + 1)); \
+	@shard=0; while test "$$shard" -lt "$(RACE_SHARDS)"; do \
+	  sh scripts/test-race-shard.sh "$$shard" "$(RACE_SHARDS)" || exit $$?; \
+	  shard=$$((shard + 1)); \
 	done
 
 test-race-shard:
