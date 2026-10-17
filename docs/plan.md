@@ -1541,3 +1541,5 @@ docs/
 - 真正的 Go storage 事务完成、SQLite 关闭和状态目录 fsync 后，才使用目录描述符 + O_EXCL/O_NOFOLLOW 发布 0600 精确 phase/case/nonce 文件，并对文件+父目录 fsync 与 inode/内容复查。随后 guest 进程挂起以供**独立经人工明确批准的宿主 ADR 0128** 定点关机；该测试本身绝不 kill 进程/VM/宿主、不自动修改 Core，也不能标志物理掉电通过。
 - 普通 CI/Race 独立创建一次性 0700 临时数据库，真实跑一轮应用 journal 事务，拒绝复用 DB/覆盖 marker，读取全同的 marker，重新打开 SQLite 并使用仅对该测试临时数据库的 `RecoverInterrupted` 验证：第二次 prepared 仅被中断而未激活，原 Applied/LKG 与 revision 均保持。真正 guest 断电/启动回放**本轮没有运行**。仍需收集外部 VM 事件、实际 WAL/fdatasync/资源 inode、独立 SQLite 日志审计和实测 Core 流量；ADR 0129 在 active prepared journal 尚未独立恢复前的拒绝是正确的人工保留而非失败误报。T15/T23、双回滚、正式备份恢复、物理元数据删除和 72h/7d/30d 长稳仍未达成。
 - 详见 [ADR 0130](adr/0130-t15-real-prepared-journal-guest-lab.md) 和 [guest 操作手册](runbooks/t15-real-prepared-journal-guest.md)，保持 Linux 普通用户、无 TUN、CN 28 组原始预置、Custom → GeoSite → GeoIP → ACL → FINAL 五层以及**去除订阅/ISP 分流**的原约束。
+
+- **ADR 0130 新增隔离边界**：生产 `state.db` 不存在仍不足以证明无现有用户状态，因此 guest-only fixture 进一步要求应用 state parent 初始**仅**包含 `recovery-lab` 子目录、单次 nonce witness 目录在启动前完全为空。任意旧 marker/observation 或其他配置文件均拒绝；回归断言绝不删除或覆盖异源文件。
