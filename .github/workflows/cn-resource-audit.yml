@@ -1,0 +1,53 @@
+name: cn-resource-audit
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cn-resource-audit.yml'
+      - 'cmd/cn-resource-audit/**'
+      - 'internal/preset/cn.json'
+      - 'internal/preset/cn.go'
+      - 'internal/preset/cn_resources.go'
+      - 'internal/preset/cn_resources_test.go'
+      - 'go.mod'
+      - 'go.sum'
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v5
+
+      - name: Checkout pinned Karing assets
+        uses: actions/checkout@v5
+        with:
+          repository: KaringX/karing
+          ref: 9d28b22fbbcca5818d147629aae151d49d4dcb7b
+          path: upstream-karing
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Generate immutable CN resource audit
+        run: |
+          go run ./cmd/cn-resource-audit             --asset-root upstream-karing/assets/datas             --compact | tee cn-ruleset-audit.json
+
+      - name: Upload CN resource audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: cn-ruleset-audit
+          path: cn-ruleset-audit.json
+          if-no-files-found: error
+          retention-days: 7

@@ -15,3 +15,12 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Go build/test output
+/karing-tui
+*.test
+coverage.out
+
+# Local runtime/data generated while developing
+.dev-runtime/
+.dev-state/
