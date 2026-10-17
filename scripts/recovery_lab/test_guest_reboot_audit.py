@@ -173,7 +173,7 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         outside.chmod(0o600)
         baseline.unlink()
         baseline.symlink_to(outside)
-        with self.assertRaises(OSError):
+        with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
 
