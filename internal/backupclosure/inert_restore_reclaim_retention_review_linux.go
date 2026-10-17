@@ -14,24 +14,24 @@ var ErrReclaimRetentionReview = errors.New("terminal reclaim retention review re
 // permit. A signed historical mirror proves neither present-day rule absence
 // nor durability under a real power loss.
 type ReclaimRetentionReview struct {
-	ArchiveSHA256              string
-	InventorySHA256            string
-	PlanSHA256                 string
-	CompletionSHA256           string
-	AttestationSHA256          string
-	MirrorSHA256               string
-	RuleCount                  int
-	DocumentedUnlinkedBytes    int64
-	HistoricalProofsVerified   bool
-	SourceProofsVerified       bool
-	SourceStatus               string
-	RetentionPolicyApproved    bool
-	PowerLossReplayVerified    bool
-	PhysicalCleanupAuthorized  bool
-	RequiresManualReview       bool
-	RequiresRevalidation       bool
-	RestoreSupported           bool
-	RestoreReady               bool
+	ArchiveSHA256             string
+	InventorySHA256           string
+	PlanSHA256                string
+	CompletionSHA256          string
+	AttestationSHA256         string
+	MirrorSHA256              string
+	RuleCount                 int
+	DocumentedUnlinkedBytes   int64
+	HistoricalProofsVerified  bool
+	SourceProofsVerified      bool
+	SourceStatus              string
+	RetentionPolicyApproved   bool
+	PowerLossReplayVerified   bool
+	PhysicalCleanupAuthorized bool
+	RequiresManualReview      bool
+	RequiresRevalidation      bool
+	RestoreSupported          bool
+	RestoreReady              bool
 }
 
 const (
