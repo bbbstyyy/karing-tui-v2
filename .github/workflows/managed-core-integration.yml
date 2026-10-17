@@ -19,6 +19,10 @@ on:
       - 'scripts/verify-core-build.sh'
       - 'scripts/smoke-core-runtime.sh'
 
+concurrency:
+  group: managed-core-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
