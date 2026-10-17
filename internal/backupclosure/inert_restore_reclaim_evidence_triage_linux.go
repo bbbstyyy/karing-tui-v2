@@ -60,6 +60,14 @@ type RetainedEvidenceTriage struct {
 func (l *InertRestoreResourceLease) InspectRetainedEvidenceTriage(
 	ctx context.Context, key [32]byte,
 ) (RetainedEvidenceTriage, error) {
+	return l.inspectRetainedEvidenceTriage(ctx, key, nil)
+}
+
+// A package-private hook allows tests to model a concurrent noncooperating
+// file replacement or CAS drift between independently authenticated scans.
+func (l *InertRestoreResourceLease) inspectRetainedEvidenceTriage(
+	ctx context.Context, key [32]byte, betweenScans func() error,
+) (RetainedEvidenceTriage, error) {
 	var zero RetainedEvidenceTriage
 	if l == nil || ctx == nil || key == ([32]byte{}) {
 		return zero, ErrRetainedEvidenceTriage
@@ -90,6 +98,9 @@ func (l *InertRestoreResourceLease) InspectRetainedEvidenceTriage(
 	footprintA, err := l.InspectReclaimEvidenceFootprint(ctx, key)
 	if err != nil || !validTriageFootprint(footprintA) ||
 		footprintA.ArchiveSHA256 != first.ArchiveSHA256 {
+		return zero, ErrRetainedEvidenceTriage
+	}
+	if betweenScans != nil && betweenScans() != nil {
 		return zero, ErrRetainedEvidenceTriage
 	}
 	// Reauthenticate the entire current archive and original source
