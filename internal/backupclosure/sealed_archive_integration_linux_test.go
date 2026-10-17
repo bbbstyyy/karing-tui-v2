@@ -423,6 +423,22 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		detached.DocumentedUnlinkedBytes != sealed.UnlinkedBytes {
 		t.Fatalf("approved Core detached historic mirror audit refused: %+v %v", detached, err)
 	}
+	// ADR 0124: non-authorizing manual retention preview reconciles the
+	// independent signed history with currently still-present source proofs.
+	// It must not turn an audit receipt into cleanup/restore/Core authority.
+	review, err := freshLease.ReviewTerminalReclaimRetention(context.Background(), key)
+	if err != nil || !review.HistoricalProofsVerified || !review.SourceProofsVerified ||
+		review.SourceStatus != reclaimSourceVerified ||
+		review.ArchiveSHA256 != receipt.ArchiveSHA256 ||
+		review.MirrorSHA256 != fullMirror.MirrorSHA256 ||
+		review.RuleCount != len(closure.Inventory.RuleSets) ||
+		review.DocumentedUnlinkedBytes != sealed.UnlinkedBytes ||
+		review.RetentionPolicyApproved || review.PowerLossReplayVerified ||
+		review.PhysicalCleanupAuthorized || review.RestoreSupported ||
+		review.RestoreReady || !review.RequiresManualReview ||
+		!review.RequiresRevalidation {
+		t.Fatalf("approved Core non-authorizing retention review refused: %+v %v", review, err)
+	}
 	mirrorScope, err := os.ReadDir(filepath.Join(dormantParent, toReclaim[0].Name()))
 	if err != nil || len(mirrorScope) != len(sealedFiles) {
 		t.Fatalf("full proof mirror modified original private scope: %+v %v", mirrorScope, err)
