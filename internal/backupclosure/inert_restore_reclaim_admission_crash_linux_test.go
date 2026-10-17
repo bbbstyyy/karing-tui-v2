@@ -38,7 +38,7 @@ func TestRetainedEvidenceAdmissionCrashHelper(t *testing.T) {
 }
 
 func TestRetainedEvidenceAdmissionSIGKILLReleasesOnlyKernelFlock(t *testing.T) {
-	root := t.TempDir()
+	root := newPrivateAdmissionTestDir(t)
 	childCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(childCtx, os.Args[0],
