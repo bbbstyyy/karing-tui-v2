@@ -1041,6 +1041,8 @@ CI 启用 Go race 检查和取消/超时测试。内核不可通过 Go 应用 ra
 
 **门槛：** 普通用户可以不编辑运行 JSON，完成订阅导入、组选择、规则/DNS 调整、状态查看、故障定位和回滚。
 
+**T15/T23 隔离断电实验入口（M4 ADR 0128，尚未验收）：** 在正式恢复/元数据删除能力开放前，新增只用于开发实验的 `scripts/recovery_lab/vm_power_cut.py`，以及 [独立 disposable VM 操作手册](runbooks/t15-t23-virtual-powercut-lab.md)。宿主侧默认只预检；仅对 `qemu:///session` 下显式确认的 disposable VM（固定 UUID、唯一 nonce、真实 guest 阶段标记、专用 XDG 0700 lab 路径、精确环境确认）才可强制模拟 VM 断电，写入仅表示**停机事件**的 fsync intent/observation。普通 CI 仅运行 mock libvirt 安全测试，不会停止任何 VM。VM 强制关机**不等于真实硬件突然断电**；未实施独立 guest 真实故障点、完整重启后 SQLite/journal/Applied/LKG/资源/归档/Core 检查，故 T15/T23、`PowerLossReplayVerified`、`RestoreSupported`、`RestoreReady` 均保持未通过/false，无自动删除、恢复事务或新公开接口。
+
 ### M5：发行候选与长期稳定性
 
 完成两种架构发行、来源清单、升级/回退测试、无网络启动验证；运行 72 小时、7 天、30 天测试并归档证据。
