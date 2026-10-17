@@ -40,14 +40,20 @@ class PowerCutGuardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ktui-disposable-powercut-")
         self.addCleanup(self.temp.cleanup)
-        self.root = pathlib.Path(self.temp.name)
-        self.root.chmod(0o700)
+        self.environment = mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.temp.name})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
         self.fake = FakeSession()
+        nonce = "a" * 32
+        self.root = (pathlib.Path(self.temp.name) / "karing-tui-v2" / "recovery-lab" /
+                     ("ktui-powercut-disposable-" + nonce))
+        self.root.mkdir(mode=0o700, parents=True)
+        self.root.chmod(0o700)
         self.args = argparse.Namespace(
             domain="ktui-t15t23-disposable-lab1",
             uuid=self.fake.uuid,
             case="T23-signed-reclaim-proof",
-            nonce="a" * 32,
+            nonce=nonce,
             sandbox=str(self.root),
             execute=False,
         )
@@ -173,6 +179,15 @@ class PowerCutGuardTests(unittest.TestCase):
             with self.assertRaises(lab.LabRefusal):
                 lab.run_case(self.args, runner=unreliable, effective_uid=1000)
         self.assertEqual(self.fake.commands.count(("destroy", self.args.domain)), 1)
+
+    def test_arbitrary_private_directory_is_not_an_allowed_host_witness_target(self):
+        other = pathlib.Path(self.temp.name) / "karing-tui-v2"
+        other.mkdir(exist_ok=True)
+        other.chmod(0o700)
+        self.args.sandbox = str(other)
+        with self.assertRaises(lab.LabRefusal):
+            lab.run_case(self.args, runner=self.fake)
+        self.assertEqual(self.fake.commands, [])
 
     def test_vm_must_be_running_and_nonce_must_be_unique(self):
         self.fake.state = "shut off"
