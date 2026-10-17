@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	maxReclaimEvidenceDirectoryEntries = 4096
-	maxReclaimEvidenceProofFiles = 256
-	maxReclaimEvidenceProofBytes int64 = 40 << 20
+	maxReclaimEvidenceDirectoryEntries       = 4096
+	maxReclaimEvidenceProofFiles             = 256
+	maxReclaimEvidenceProofBytes       int64 = 40 << 20
 )
 
 var ErrReclaimEvidenceFootprint = errors.New("private retained reclaim evidence footprint refused")
@@ -25,40 +25,40 @@ var ErrReclaimEvidenceFootprint = errors.New("private retained reclaim evidence 
 // In particular, a matched filename pair does not prove an HMAC or authorise
 // disposal of the original source or either retained proof.
 type ReclaimEvidenceFootprint struct {
-	ArchiveSHA256 string
-	DirectoryEntriesSeen int
-	AttestationFiles int
-	MirrorFiles int
-	NamedPairs int
-	UnpairedFiles int
-	RetainedBytes int64
-	ReviewEntryLimit int
-	ReviewFileLimit int
-	ReviewByteLimit int64
-	NamesOnly bool
+	ArchiveSHA256               string
+	DirectoryEntriesSeen        int
+	AttestationFiles            int
+	MirrorFiles                 int
+	NamedPairs                  int
+	UnpairedFiles               int
+	RetainedBytes               int64
+	ReviewEntryLimit            int
+	ReviewFileLimit             int
+	ReviewByteLimit             int64
+	NamesOnly                   bool
 	CryptographicProofsVerified bool
-	QuotaEnforced bool
-	PhysicalCleanupAuthorized bool
-	RequiresManualReview bool
-	RequiresRevalidation bool
-	RestoreSupported bool
-	RestoreReady bool
+	QuotaEnforced               bool
+	PhysicalCleanupAuthorized   bool
+	RequiresManualReview        bool
+	RequiresRevalidation        bool
+	RestoreSupported            bool
+	RestoreReady                bool
 }
 
 type retainedProofObservation struct {
 	info os.FileInfo
-	sha string
+	sha  string
 	size int64
 }
 
 type retainedEvidenceSnapshot struct {
-	proofs map[string]retainedProofObservation
+	proofs           map[string]retainedProofObservation
 	directoryEntries int
-	attestations int
-	mirrors int
-	pairs int
-	unpaired int
-	bytes int64
+	attestations     int
+	mirrors          int
+	pairs            int
+	unpaired         int
+	bytes            int64
 }
 
 // InspectReclaimEvidenceFootprint is a bounded, read-only capacity review of
@@ -113,24 +113,24 @@ func (l *InertRestoreResourceLease) inspectReclaimEvidenceFootprint(
 		return zero, ErrReclaimEvidenceFootprint
 	}
 	return ReclaimEvidenceFootprint{
-		ArchiveSHA256: l.record.ArchiveSHA256,
-		DirectoryEntriesSeen: second.directoryEntries,
-		AttestationFiles: second.attestations,
-		MirrorFiles: second.mirrors,
-		NamedPairs: second.pairs,
-		UnpairedFiles: second.unpaired,
-		RetainedBytes: second.bytes,
-		ReviewEntryLimit: maxReclaimEvidenceDirectoryEntries,
-		ReviewFileLimit: maxReclaimEvidenceProofFiles,
-		ReviewByteLimit: maxReclaimEvidenceProofBytes,
-		NamesOnly: true,
+		ArchiveSHA256:               l.record.ArchiveSHA256,
+		DirectoryEntriesSeen:        second.directoryEntries,
+		AttestationFiles:            second.attestations,
+		MirrorFiles:                 second.mirrors,
+		NamedPairs:                  second.pairs,
+		UnpairedFiles:               second.unpaired,
+		RetainedBytes:               second.bytes,
+		ReviewEntryLimit:            maxReclaimEvidenceDirectoryEntries,
+		ReviewFileLimit:             maxReclaimEvidenceProofFiles,
+		ReviewByteLimit:             maxReclaimEvidenceProofBytes,
+		NamesOnly:                   true,
 		CryptographicProofsVerified: false,
-		QuotaEnforced: false,
-		PhysicalCleanupAuthorized: false,
-		RequiresManualReview: true,
-		RequiresRevalidation: true,
-		RestoreSupported: false,
-		RestoreReady: false,
+		QuotaEnforced:               false,
+		PhysicalCleanupAuthorized:   false,
+		RequiresManualReview:        true,
+		RequiresRevalidation:        true,
+		RestoreSupported:            false,
+		RestoreReady:                false,
 	}, nil
 }
 
@@ -168,7 +168,7 @@ func scanReclaimEvidenceFootprint(ctx context.Context, dir *os.File) (
 	}
 
 	snapshot := retainedEvidenceSnapshot{
-		proofs: make(map[string]retainedProofObservation),
+		proofs:           make(map[string]retainedProofObservation),
 		directoryEntries: len(entries),
 	}
 	bindings := make(map[string]uint8)
