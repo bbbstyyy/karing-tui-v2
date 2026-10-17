@@ -72,8 +72,7 @@ func TestRetainedEvidenceAdmissionSIGKILLReleasesOnlyKernelFlock(t *testing.T) {
 	defer parent.Close()
 	name := reclaimMirrorPrefix + strings.Repeat("a", 64)
 	if accepted, err := beginRetainedEvidenceAdmission(
-		context.Background(), parent, name, []byte("new"));
-		err == nil || accepted != nil {
+		context.Background(), parent, name, []byte("new")); err == nil || accepted != nil {
 		t.Fatalf("separate process bypassed existing held directory flock: %+v %v", accepted, err)
 	}
 	if err := cmd.Process.Kill(); err != nil {
