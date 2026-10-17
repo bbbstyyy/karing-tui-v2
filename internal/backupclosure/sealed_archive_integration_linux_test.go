@@ -456,6 +456,25 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		!footprint.RequiresManualReview {
 		t.Fatalf("approved Core non-authorizing proof census refused: %+v %v", footprint, err)
 	}
+	// ADR 0127: shared-lock, source-aware manual retention triage joins
+	// current-archive HMAC verification to a bounded names-only global
+	// footprint without mutating SQLite, original rules or live Core.
+	triage, err := freshLease.InspectRetainedEvidenceTriage(context.Background(), key)
+	if err != nil || !triage.HistoricalProofsVerified ||
+		!triage.OriginalSourceProofsVerified ||
+		triage.SourceStatus != reclaimSourceVerified ||
+		triage.ReviewReason != retainedTriageManualPolicy ||
+		triage.ArchiveSHA256 != receipt.ArchiveSHA256 ||
+		triage.MirrorSHA256 != fullMirror.MirrorSHA256 ||
+		triage.AttestationFiles != 1 || triage.MirrorFiles != 1 ||
+		triage.NamedPairs != 1 || triage.UnpairedFiles != 0 ||
+		!triage.ForeignProofNamesOnly || !triage.AdvisoryLockHeldDuringReview ||
+		!triage.ManualHoldRequired || triage.PolicyApproved ||
+		triage.PowerLossReplayVerified || triage.PhysicalCleanupAuthorized ||
+		triage.RestoreSupported || triage.RestoreReady ||
+		!triage.RequiresRevalidation {
+		t.Fatalf("approved Core manual-hold evidence triage refused: %+v %v", triage, err)
+	}
 	afterFootprint, err := f.store.Snapshot(context.Background())
 	if err != nil || !reflect.DeepEqual(beforeFootprint, afterFootprint) {
 		t.Fatalf("read-only proof census modified active SQLite: %v", err)
