@@ -410,6 +410,19 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if err != nil || fullMirrorAgain != fullMirror {
 		t.Fatalf("approved Core full proof mirror did not authenticate: %+v %v", fullMirrorAgain, err)
 	}
+	// ADR 0123 checks only the retained historical signatures and
+	// candidate/journal CAS. No source rule byte absence or metadata unlink
+	// is certified by this separately scoped read-only operation.
+	detached, err := freshLease.InspectDetachedReclaimMirror(context.Background(), key)
+	if err != nil || !detached.ArchiveJournalVerified || !detached.HistoryMACsVerified ||
+		detached.SourceScopeVerified || detached.RuleAbsenceVerified ||
+		detached.DeletionAuthorized || detached.RestoreReady || detached.RestoreSupported ||
+		detached.ArchiveSHA256 != receipt.ArchiveSHA256 ||
+		detached.MirrorSHA256 != fullMirror.MirrorSHA256 ||
+		detached.RuleCount != len(closure.Inventory.RuleSets) ||
+		detached.DocumentedUnlinkedBytes != sealed.UnlinkedBytes {
+		t.Fatalf("approved Core detached historic mirror audit refused: %+v %v", detached, err)
+	}
 	mirrorScope, err := os.ReadDir(filepath.Join(dormantParent, toReclaim[0].Name()))
 	if err != nil || len(mirrorScope) != len(sealedFiles) {
 		t.Fatalf("full proof mirror modified original private scope: %+v %v", mirrorScope, err)
