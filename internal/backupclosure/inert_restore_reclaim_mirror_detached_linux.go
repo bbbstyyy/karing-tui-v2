@@ -53,6 +53,14 @@ type DetachedReclaimMirrorAudit struct {
 func (l *InertRestoreResourceLease) InspectDetachedReclaimMirror(
 	ctx context.Context, key [32]byte,
 ) (DetachedReclaimMirrorAudit, error) {
+	return l.inspectDetachedReclaimMirror(ctx, key, nil)
+}
+
+// The package-private seam injects a late file replacement after the first
+// full verification; production never supplies a callback or retries.
+func (l *InertRestoreResourceLease) inspectDetachedReclaimMirror(
+	ctx context.Context, key [32]byte, betweenScans func() error,
+) (DetachedReclaimMirrorAudit, error) {
 	var zero DetachedReclaimMirrorAudit
 	if ctx == nil || l == nil || key == ([32]byte{}) {
 		return zero, ErrDetachedReclaimMirror
@@ -119,6 +127,9 @@ func (l *InertRestoreResourceLease) InspectDetachedReclaimMirror(
 		}
 		previousAnchor, previousMirror = anchorInfo, mirrorInfo
 		previousAudit = audit
+		if attempt == 0 && betweenScans != nil && betweenScans() != nil {
+			return zero, ErrDetachedReclaimMirror
+		}
 	}
 	if parent.verify() != nil || l.revalidateLocked(bounded, key) != nil ||
 		bounded.Err() != nil {
