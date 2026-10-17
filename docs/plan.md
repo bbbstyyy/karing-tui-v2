@@ -1481,3 +1481,11 @@ docs/
 - 独立跨重启读取必须重新取得原始 ciphertext lease 和用户显式提供的密钥，两次全量校验外部证明与全部原始审计记录的 SHA/HMAC/私有 inode，比较扫描前后的 inode 身份，不能把旧回执或同内容换 inode 当作持久权限。新增专门子进程在外部证明文件 fsync 完成、父目录 fsync 之前遭 SIGKILL 的回归，父进程重新获得 lease 审计仍可见证据；这**不是**真实断电持久性认证。
 - 新提交先修复上一轮 ADR 0121 `gofmt` 门禁失败，并增强 `Makefile` 格式错误输出；完整 Go 单测、Race 与 Managed Core CI 需以最新分支提交结果为准，不能把仅格式通过误称全面通过。
 - **保留全部发布阻塞项**：尚无元数据终态删除/保留期决策、旧 pending orphan 的安全处置、真实断电 T15/T23、完整 SQLite/凭据恢复与资源发布、Core Check/Activate/Verify 双重回滚、CN 规则离线许可闭环及 72h/7d/30d 稳定性结果。PR #1 继续 Draft，不发布 backup/restore/cleanup API、CLI、TUI，`RestoreSupported=false` 与 `RestoreReady=false`。
+
+### 2026-10-17 — M4 ADR 0122 完整签名回收证据的独立私有镜像
+
+- 上轮提交 `f056216` 的常规 CI（含完整 Go Race）与真实锁定 Core 集成全部成功；仍不能替代 T15/T23 的真实断电与长时间稳定验收，PR #1 继续 Draft。
+- ADR 0121 的外置证明只保存原始签名计划、完成标记等证据的摘要。为避免未来误删唯一完整审计记录，新增 **内部显式、非删除型** `MirrorSealedReclaimEvidence(ctx,key,expected)`：在完整复核原候选加密档案、v18 prepared journal、Applied/LKG/声明/选择/Core CAS 和全部每叶签名意图后，把完整 plan、completion、attestation 原始 JSON 及每条删除意图精确 MAC/名称，镜像到由现有 SQLite state parent 派生的 UID 0700 目录中的单一私有 0400 文件。归档原规则二进制、Core 可执行文件、数据库/凭据明文或活动 JSON **不复制**。
+- 镜像以独立域分隔的 HMAC-SHA256 绑定原 archive/inventory/plan/completion/attestation SHA、确切 prepared journal ID、回收目录 dev/inode、规则数量与原始已合法缺失字节总数。严格最多 128 条规则、256 KiB 镜像大小，O_EXCL/O_NOFOLLOW、文件与父目录 fsync、绝不覆盖或自动修补。两轮全量源证据及原外置 attestation inode 验证后方能发布；任何写入后但目录 fsync 前不确定的结果不得报成功。
+- 新增 `InspectMirroredReclaimEvidence(ctx,key)`：独立重启后重新取得原候选 ciphertext flock/key、完整重验原始签名证据、外置 attestation 与镜像并比对两轮源文件和外置证据 inode 身份，只有审计摘要计数返回，无删除/恢复权限。增加错误 key、伪造旧报告、原意图缺失、额外文件、权限/symlink、同字节 inode 替换、选择器 CAS 漂移、子进程 SIGKILL 后重新验证，以及真实已批准 Core 不触及活动规则文件和当前 SQLite 的回归。
+- **范围仍然受限**：镜像当前读取时仍依赖原始目录完整存在；未来必须另行设计独立于原目录的证明验证与运维保留策略，经过断电 T15/T23 试验后才可以审查最终元数据删除。没有可调用的 backup/restore/cleanup CLI/TUI/API、无自动 GC、无 SQLite/凭据导入或 Core 激活。CN 离线许可及 72h/7d/30d 浸泡未通过前不能发布稳定版。两个恢复标志继续为 false。以最新提交对应的 CI/Race/managed-core 结果为准。
