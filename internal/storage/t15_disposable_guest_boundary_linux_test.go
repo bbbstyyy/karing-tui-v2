@@ -89,6 +89,14 @@ func createGuestT15PreparedJournal(ctx context.Context, dbPath string) (int64, e
 	if err != nil || heldErr != nil || !os.SameFile(namedParent, heldParent) {
 		return 0, errors.New("isolated guest state parent changed before journal setup")
 	}
+	// A disposable test app root must contain ONLY its dedicated lab
+	// channel before creating SQLite. Refuse unrelated config/profile
+	// metadata even when state.db itself is absent.
+	entries, err := parent.ReadDir(-1)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "recovery-lab" ||
+		!entries[0].IsDir() {
+		return 0, errors.New("T15 guest directory contains non-lab state")
+	}
 	for _, name := range []string{dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + "-journal"} {
 		if _, err := os.Lstat(name); !errors.Is(err, os.ErrNotExist) {
 			return 0, errors.New("T15 lab refuses existing guest DB or journal files")
@@ -243,7 +251,13 @@ func TestT15DisposableGuestPreparedBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Old nonce witnesses or a manually fabricated marker must not be
+	// accepted as evidence of a new guest checkpoint.
+	existing, readErr := w.ReadDir(-1)
 	_ = w.Close()
+	if readErr != nil || len(existing) != 0 {
+		t.Fatal("nonempty T15 witness directory; a fresh nonce/VM is required")
+	}
 	pending, err := createGuestT15PreparedJournal(context.Background(),
 		filepath.Join(stateParent, "state.db"))
 	if err != nil {
@@ -276,6 +290,16 @@ func TestT15PreparedGuestStoreAndReadyMarkerAreTestOnly(t *testing.T) {
 	}
 	dbPath := filepath.Join(guest, "state.db")
 	ctx := context.Background()
+	unrelated := filepath.Join(guest, "unexpected-user-data.txt")
+	if err := os.WriteFile(unrelated, []byte("must survive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createGuestT15PreparedJournal(ctx, dbPath); err == nil {
+		t.Fatal("lab created test SQLite beside unrelated existing user state")
+	}
+	if err := os.Remove(unrelated); err != nil {
+		t.Fatal(err)
+	}
 	attemptID, err := createGuestT15PreparedJournal(ctx, dbPath)
 	if err != nil || attemptID <= 0 {
 		t.Fatalf("isolated real SQLite store did not reach prepared stage: %d %v", attemptID, err)
