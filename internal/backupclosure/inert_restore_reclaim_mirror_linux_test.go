@@ -96,16 +96,13 @@ func TestReclaimMirrorCopiesEveryProofButNeverOriginalRules(t *testing.T) {
 		bytes.Contains(mirrorData, f.ruleData) {
 		t.Fatal("mirror lost proofs or copied raw rule/config bytes")
 	}
-	if observed, err := lease.InspectMirroredReclaimEvidence(ctx, key);
-		err != nil || !reflect.DeepEqual(observed, mirror) {
+	if observed, err := lease.InspectMirroredReclaimEvidence(ctx, key); err != nil || !reflect.DeepEqual(observed, mirror) {
 		t.Fatalf("same-process signed mirror verification failed: %+v %v", observed, err)
 	}
-	if duplicate, err := lease.MirrorSealedReclaimEvidence(ctx, key, expected);
-		err == nil || !reflect.DeepEqual(duplicate, ReclaimEvidenceMirrorReceipt{}) {
+	if duplicate, err := lease.MirrorSealedReclaimEvidence(ctx, key, expected); err == nil || !reflect.DeepEqual(duplicate, ReclaimEvidenceMirrorReceipt{}) {
 		t.Fatalf("repeated mirror publication overwrote proof: %+v %v", duplicate, err)
 	}
-	if anchorAgain, err := lease.InspectRetainedReclaimAttestation(ctx, key);
-		err != nil || anchorAgain != expected {
+	if anchorAgain, err := lease.InspectRetainedReclaimAttestation(ctx, key); err != nil || anchorAgain != expected {
 		t.Fatalf("original independent attestation was invalidated: %+v %v", anchorAgain, err)
 	}
 	if _, err := os.Stat(filepath.Join(f.stateRoot, "core", "rule-sets", "sha256",
