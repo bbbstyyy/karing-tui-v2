@@ -1520,3 +1520,12 @@ docs/
 - 锁内针对所有已有证明双次运行 ADR 0125 只读扫描，校验文件为 UID 所有、0400 单链接普通文件、规范 64 位小写摘要名称与全部原先 inode/内容 SHA；准许**最多新增一个**文件，新增后父目录总条目 ≤4096、证明文件 ≤256、证明字节总量 ≤40MiB（且单文件仍 ≤2048B 或 ≤256KiB）。创建前再复核同一盘点与来源/精确 prepared journal/live CAS，使用原本 O_EXCL/O_NOFOLLOW/私有权限、文件与目录 fsync，创建后双扫描要求原有证明均原 inode+SHA、且仅出现一个期望内容的新文件。任一状态漂移/预算耗尽/外部不协作写入导致拒绝，不删除/替换/修复任何文件。
 - 回归覆盖两个不同目录 FD 的共享 flock 竞争与释放、两个现有 attestation/mirror 发布者受同一围栏阻挡后恢复、同名字重复创建、已占满 256 个现有私有证明拒绝、先检查后外部新增导致拒绝、规范文件名与合成字节/条目边界、原 HMAC 历史与当前 SQLite 不变；真实已批准 Core 集成仍必须验证无激活、无活动规则改变。
 - **重要限制**：Linux flock 是**建议性锁**，无法阻止不遵守协议的外部写入者；上述容量检查只防止本项目这两个协作写入者越界，不等同 OS 配额，更不授予元数据最终删除或旧 orphan 清理权。仍无自动 GC、TUI/CLI/API 清理、真实掉电 T15/T23、完整凭据 SQLite 恢复、Core Check/Activate/Verify+双回滚、CN 离线许可或 72h/7d/30d 浸泡。新切片完整 CI/Race/Core 需以最新 HEAD 为准，不能提前标绿。
+
+### 2026-10-17 — M4 ADR 0127 审计证据人工保留与容量风险只读分级
+
+- 上阶段 ADR 0126 的最终提交 `d202acc1` 已确认普通 Go CI（含格式、Vet、单测、集成编译、Build）、**4/4 Race 分片**及固定真实 sing-box Core 集成全部成功。内部 PR #3 已合并到开发分支（`00b45ed8`），PR #1 仍 Draft、`main` 不变。
+- 新增内部 `InspectRetainedEvidenceTriage(ctx,key)`：先经 ADR 0124 重证实当前 prepared v18 密文候选 + 显式 32 字节原密钥、完整 archive HMAC/SQLite/schema/profile、Applied/LKG/声明/选择/Core CAS、ADR 0121/0122/0123 签名历史及当前原始规则回收目录。随后对既有 SQLite owner-private 0700/O_NOFOLLOW state-parent 取得**非阻塞共享 flock**，在持锁期间读取 ADR 0125 的所有外置签名证明**仅名称和容量**盘点（4096 条父目录、256 个证明、40 MiB 证据总量），再完整重复签名/来源审计与容量盘点、验证两份结果完全一致，任何漂移/中断/权限错误直接零报告拒绝。共享锁只限制遵守 ADR 0126 的两个发布者，不能阻止任意外部进程。
+- 报告只含源 archive/mirror 摘要和有限计数、可用目录条目/证明文件数/字节数及**假设下一个最大单条 attestation + mirror（2048 + 262144 字节）同时存在**能否满足算术预算。该结果不是磁盘真实空闲块测量、不是资源预留、也不是可写入许可；其他未知档案的文件名即使成对仍**不验证其 HMAC**。
+- 按优先级提示原始来源不可独立验证、其他档案证明名称不成对、有限写入预算不足，或默认“尚无已批准的保留政策”。所有返回报告永远 `ManualHoldRequired=true`、`PolicyApproved=false`、`PowerLossReplayVerified=false`、`PhysicalCleanupAuthorized=false`、`RequiresRevalidation=true`、`RestoreSupported=false`、`RestoreReady=false`。原目录不可验证时即使历史镜像完整也不能认定物理删除安全。
+- 回归覆盖真实封存证明、复制其他名字的未验证证明、仅私有改名但不删除原规则目录、跨重启独立密文 lease、共享/独占 flock 冲突、同字节镜像 inode 替换、错 key/取消/live CAS 漂移，以及从目录条目、文件槽位、40MiB 字节预算精确边界推导的只读风险分级；已批准真实 Core 集成需确保活动 SQLite、规则和 Core 完全不变。最新分支的全部 CI/Race/Core 仍需独立绿色才可并回。
+- **仍阻塞**：真正的人工审核保留期限、外部不可变审计记录/法务保留与可证明最终清理协议、失踪 pending-orphan 的可证明处置、实际断电 T15/T23、完整凭据 SQLite/规则恢复、Core Check/Activate/Verify 与双回滚、CN 离线规则许可证及 72h/7d/30d 长时间浸泡；依然不提供 backup/restore/cleanup TUI/CLI/API。
