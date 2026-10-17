@@ -72,11 +72,6 @@ func createGuestT15PreparedJournal(ctx context.Context, dbPath string) (int64, e
 	if ctx == nil || filepath.Base(dbPath) != "state.db" || ctx.Err() != nil {
 		return 0, errors.New("invalid T15 guest state DB")
 	}
-	for _, name := range []string{dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + "-journal"} {
-		if _, err := os.Lstat(name); !errors.Is(err, os.ErrNotExist) {
-			return 0, errors.New("T15 lab refuses existing guest DB or journal files")
-		}
-	}
 	parent, err := guestPrivateDir(filepath.Dir(dbPath))
 	if err != nil {
 		return 0, err
@@ -86,6 +81,19 @@ func createGuestT15PreparedJournal(ctx context.Context, dbPath string) (int64, e
 		return 0, errors.New("private T15 state directory is already leased")
 	}
 	defer unix.Flock(int(parent.Fd()), unix.LOCK_UN)
+	// Check the complete SQLite filename set UNDER the held directory lease:
+	// checking before the flock admits a late second test runner that could
+	// otherwise open an existing lab database after the first runner finishes.
+	namedParent, err := os.Lstat(filepath.Dir(dbPath))
+	heldParent, heldErr := parent.Stat()
+	if err != nil || heldErr != nil || !os.SameFile(namedParent, heldParent) {
+		return 0, errors.New("isolated guest state parent changed before journal setup")
+	}
+	for _, name := range []string{dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + "-journal"} {
+		if _, err := os.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+			return 0, errors.New("T15 lab refuses existing guest DB or journal files")
+		}
+	}
 	store, err := Open(ctx, dbPath)
 	if err != nil {
 		return 0, err
