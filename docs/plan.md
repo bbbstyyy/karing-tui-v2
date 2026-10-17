@@ -1505,3 +1505,10 @@ docs/
 - 新增内部 `InertRestoreResourceLease.ReviewTerminalReclaimRetention(ctx,key)`：先鉴定 ADR 0123 的离源历史 HMAC 全链，再尝试 ADR 0122 的完整来源目录审计，最后重验历史证据、journal/live CAS，必须比较 archive/inventory/plan/completion/attestation/mirror SHA、原始缺失字节数、规则/镜像计数。将当前来源标记为 `SourceStatus="authenticated"` 或 `"unverifiable"`，缺失/异常时仍可保留明确的*历史有效但来源不可确认*诊断，但不能推断源文件已安全删除。
 - 只读保留复核在所有情况下均固定 `RetentionPolicyApproved=false`、`PowerLossReplayVerified=false`、`PhysicalCleanupAuthorized=false`、`RequiresManualReview=true`、`RestoreSupported=false`、`RestoreReady=false`，绝不返回清理令牌/源路径，不会执行 unlink/rmdir、自动 GC、凭据 SQLite 导入、目标规则安装、Core 动作或 TUI/CLI/API 功能发布。回归包含当前来源完整、只移走原 staging 根、密文 lease 重开、错误密钥、取消和 live 选择 CAS 变更，不改 SQLite 或 prepared journal。
 - **后续阻塞保持**：必须先制定运营保留期与人工授权的原子性回收协议并完成真实断电 T15/T23，再考虑任何最终元数据物理删除；pending orphan、正式恢复及 Core Check/Activate/Verify+双回滚、CN 离线规则许可和 72h/7d/30d 浸泡仍开放。PR #1 保持 Draft。此阶段的最新完整 CI、所有分片 Race 与真实 Core 的最终结果需单独核实，不能提前标绿。
+
+### 2026-10-17 — M4 ADR 0125 独立审计文件容量与孤立名称的有限只读盘点
+
+- 新增内部 `InspectReclaimEvidenceFootprint(ctx,key)`：要求原密文候选持锁、显式密钥、仍 prepared 的 v18 journal、完整 Applied/LKG/声明/选择/Core CAS；经 O_NOFOLLOW 固定的 SQLite 0700 私有父目录，对 ADR 0121 外置 attestation 与 ADR 0122 镜像的**所有名字**做一次 4,096 条父目录上限、最多 256 个自身前缀证明、总计最多 40 MiB 的双次全量扫描。每个文件仍受原 2,048B / 256KiB 私有 0400、单硬链接、owner、inode 与内容 SHA 限制；拒绝无效 64 位小写 digest 名、权限变更、符号/硬链接、同内容 inode 替换与扫描中状态漂移。
+- 返回不含路径/密钥/规则内容的 attestation 数、mirror 数、**按名字匹配**的成对数、不成对文件数与实际字节数。明确 `NamesOnly=true`、`CryptographicProofsVerified=false`、`QuotaEnforced=false`、`PhysicalCleanupAuthorized=false`、`RequiresManualReview=true`、`RestoreSupported=false`、`RestoreReady=false`。对无法持有其他候选原密钥及 journal 的历史记录**绝不声称签名已认证**，更不能仅因名称成对推断来源已删除。容量上限仅界定只读盘点的工作量，**不是写入并发配额**。
+- 回归包括一个独立锚点、成对外部证据、复制签名内容但伪造其他 archive digest 的不成对名字、符号/公共权限与同内容 inode 晚到替换、错误密钥、取消、恢复候选重开和 live 选择漂移；批准真实 Core 集成确认不改 SQLite、活动规则与 Core。上一轮 M4 ADR 0124 `1bdaec3` 的普通单测、构建和已批准 Core 集成成功，4 个完整 Race 分片已启动但需要全部完成后才算绿色。
+- **保留阻塞**：未实现跨候选共享写锁的真正空间限额、持久保留期/人工授权与最终元数据 unlink/rmdir、老 pending orphan 处置、实际掉电 T15/T23、完整凭据 SQLite 恢复和 Core Check/Activate/Verify+双重回滚、CN 离线资源与许可及 72h/7d/30d 长稳。无用户可用的 backup/restore/cleanup TUI/CLI/API，PR #1 继续 Draft。
