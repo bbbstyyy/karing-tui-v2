@@ -1489,3 +1489,11 @@ docs/
 - 镜像以独立域分隔的 HMAC-SHA256 绑定原 archive/inventory/plan/completion/attestation SHA、确切 prepared journal ID、回收目录 dev/inode、规则数量与原始已合法缺失字节总数。严格最多 128 条规则、256 KiB 镜像大小，O_EXCL/O_NOFOLLOW、文件与父目录 fsync、绝不覆盖或自动修补。两轮全量源证据及原外置 attestation inode 验证后方能发布；任何写入后但目录 fsync 前不确定的结果不得报成功。
 - 新增 `InspectMirroredReclaimEvidence(ctx,key)`：独立重启后重新取得原候选 ciphertext flock/key、完整重验原始签名证据、外置 attestation 与镜像并比对两轮源文件和外置证据 inode 身份，只有审计摘要计数返回，无删除/恢复权限。增加错误 key、伪造旧报告、原意图缺失、额外文件、权限/symlink、同字节 inode 替换、选择器 CAS 漂移、子进程 SIGKILL 后重新验证，以及真实已批准 Core 不触及活动规则文件和当前 SQLite 的回归。
 - **范围仍然受限**：镜像当前读取时仍依赖原始目录完整存在；未来必须另行设计独立于原目录的证明验证与运维保留策略，经过断电 T15/T23 试验后才可以审查最终元数据删除。没有可调用的 backup/restore/cleanup CLI/TUI/API、无自动 GC、无 SQLite/凭据导入或 Core 激活。CN 离线许可及 72h/7d/30d 浸泡未通过前不能发布稳定版。两个恢复标志继续为 false。以最新提交对应的 CI/Race/managed-core 结果为准。
+
+### 2026-10-17 — M4 ADR 0123 独立于原回收目录的历史签名证据只读审计
+
+- 在 ADR 0122 完整异地 HMAC 镜像基础上新增 `InertRestoreResourceLease.InspectDetachedReclaimMirror(ctx,key)`：**只验证历史签名证据**，不再打开、枚举或要求原 `inert-rule-bundles` 回收目录存在。仍强制用户显式原始 32 字节密钥、密文目录 flock、完整 archive HMAC/SHA/规则 inventory 与 in-memory SQLite/schema/profile、精确未完成的 v18 prepared journal、当前 Applied/LKG/声明/选择/Core CAS；镜像目录只可来自已存在、UID 私有的 SQLite 状态根。
+- 仅通过 O_NOFOLLOW/owner-private/单硬链接 FD 读取 ADR 0121 attestation 和 ADR 0122 full mirror，两轮对比文件 inode 身份及所有内容。不可只信最外层 HMAC：逐项重验原始 plan、completion、attestation 和 1–128 项原顺序 per-leaf intent 的**不同 HMAC 域**、精确规范 JSON、archive 名称/SHA/大小清单、prepared journal ID、原规则目录 dev/inode、总计原始字节数及各层 SHA 关联，任何缺失/伪造/不一致直接返回零报告。
+- **重要负面承诺**：原目录未被扫描，成功只说明镜像所记载的历史证据有完整签名链，不能说明原规则现在缺失或空间已经释放，也不证明特定 inode 安全删除。报告必须 `ArchiveJournalVerified=true`、`HistoryMACsVerified=true`，同时 `SourceScopeVerified=false`、`RuleAbsenceVerified=false`、`DeletionAuthorized=false`、`RestoreSupported=false`、`RestoreReady=false`。原来的 source-bound inspector 仍要求完整来源，不更改。
+- 测试覆盖原 staging 根原子重命名**但不删除**后，在全新密文 lease 下独立验历史签名链；以及 wrong key/已关闭 lease/取消/旧 journal、源状态 CAS 漂移、外置文件符号/硬链接/公共权限/篡改。额外以正确测试密钥重签**伪造的最外层镜像 HMAC**，验证内部规则数量、journal、目录 inode、原规则字节数、嵌套 plan/completion/attestation SHA、意图顺序及数量不被绕过。
+- 只读接口不导出路径/文件句柄/密钥或规则文本，不写目录、不删原签名文件、不启动 Core、不提供用户 backup/restore/cleanup CLI/TUI/API。下一门槛仍须审查跨断电保留策略、授权协议与实际安全清理，真实 T15/T23 断电、完整 SQLite/凭据恢复、Core Check/Activate/Verify+双回滚、CN 离线许可和 72h/7d/30d 长稳尚未解决；PR #1 Draft。前轮 ADR 0122 `0fcee03` 的真实 Core 集成成功，但 Race 在本次检查时仍运行，不能声称全部通过。
