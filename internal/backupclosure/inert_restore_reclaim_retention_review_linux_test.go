@@ -29,8 +29,7 @@ func TestTerminalReclaimRetentionReviewSeparatesSourceAndHistory(t *testing.T) {
 		clean.ArchiveSHA256 != record.ArchiveSHA256 ||
 		clean.MirrorSHA256 != mirror.MirrorSHA256 ||
 		clean.RuleCount != mirror.RuleCount ||
-		clean.DocumentedUnlinkedBytes != mirror.MirroredProofBytes-int64(0) &&
-			clean.DocumentedUnlinkedBytes <= 0 {
+		clean.DocumentedUnlinkedBytes != int64(len(f.ruleData)) {
 		t.Fatalf("source-present review invalid: %+v %v", clean, err)
 	}
 	assertNeverAuthorizesReclaimCleanup(t, clean)
