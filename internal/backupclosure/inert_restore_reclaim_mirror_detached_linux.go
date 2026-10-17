@@ -23,24 +23,24 @@ var ErrDetachedReclaimMirror = errors.New("source-independent signed reclaim pro
 // It deliberately does not inspect the inactive source scope or prove that
 // original rule bytes remain absent. It grants no cleanup or restore authority.
 type DetachedReclaimMirrorAudit struct {
-	ArchiveSHA256            string
-	InventorySHA256          string
-	PlanSHA256               string
-	CompletionSHA256         string
-	AttestationSHA256        string
-	MirrorSHA256             string
-	RuleCount                int
-	DocumentedUnlinkedBytes  int64
-	MirroredProofFiles       int
-	MirroredProofBytes       int64
-	ArchiveJournalVerified   bool
-	HistoryMACsVerified      bool
-	SourceScopeVerified      bool
-	RuleAbsenceVerified      bool
-	DeletionAuthorized       bool
-	RequiresRevalidation     bool
-	RestoreSupported         bool
-	RestoreReady             bool
+	ArchiveSHA256           string
+	InventorySHA256         string
+	PlanSHA256              string
+	CompletionSHA256        string
+	AttestationSHA256       string
+	MirrorSHA256            string
+	RuleCount               int
+	DocumentedUnlinkedBytes int64
+	MirroredProofFiles      int
+	MirroredProofBytes      int64
+	ArchiveJournalVerified  bool
+	HistoryMACsVerified     bool
+	SourceScopeVerified     bool
+	RuleAbsenceVerified     bool
+	DeletionAuthorized      bool
+	RequiresRevalidation    bool
+	RestoreSupported        bool
+	RestoreReady            bool
 }
 
 // InspectDetachedReclaimMirror authenticates the entire ADR 0122 proof copy
