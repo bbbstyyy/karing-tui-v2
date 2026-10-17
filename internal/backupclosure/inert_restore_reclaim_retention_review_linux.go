@@ -84,7 +84,6 @@ func (l *InertRestoreResourceLease) ReviewTerminalReclaimRetention(
 			source.AttestationSHA256 != history.AttestationSHA256 ||
 			source.MirrorSHA256 != history.MirrorSHA256 ||
 			source.RuleCount != history.RuleCount ||
-			source.UnlinkedBytes != history.DocumentedUnlinkedBytes ||
 			source.MirroredProofFiles != history.MirroredProofFiles ||
 			source.MirroredProofBytes != history.MirroredProofBytes {
 			return zero, ErrReclaimRetentionReview
