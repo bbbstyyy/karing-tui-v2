@@ -118,8 +118,11 @@ func (l *InertRestoreResourceLease) inspectRetainedEvidenceTriage(
 }
 
 func validTriageSourceReview(r ReclaimRetentionReview) bool {
-	return validLowerSHA(r.ArchiveSHA256) && validLowerSHA(r.MirrorSHA256) &&
-		r.HistoricalProofsVerified && r.RequiresManualReview &&
+	return validLowerSHA(r.ArchiveSHA256) && validLowerSHA(r.InventorySHA256) &&
+		validLowerSHA(r.PlanSHA256) && validLowerSHA(r.CompletionSHA256) &&
+		validLowerSHA(r.AttestationSHA256) && validLowerSHA(r.MirrorSHA256) &&
+		r.RuleCount > 0 && r.RuleCount <= MaxClosureRuleSets &&
+		r.DocumentedUnlinkedBytes > 0 && r.HistoricalProofsVerified && r.RequiresManualReview &&
 		r.RequiresRevalidation && !r.RetentionPolicyApproved &&
 		!r.PowerLossReplayVerified && !r.PhysicalCleanupAuthorized &&
 		!r.RestoreSupported && !r.RestoreReady &&
@@ -141,6 +144,7 @@ func validTriageFootprint(p ReclaimEvidenceFootprint) bool {
 		p.AttestationFiles >= 1 && p.MirrorFiles >= 1 &&
 		p.NamedPairs >= 1 && p.UnpairedFiles >= 0 &&
 		p.AttestationFiles+p.MirrorFiles <= maxReclaimEvidenceProofFiles &&
+		p.DirectoryEntriesSeen >= p.AttestationFiles+p.MirrorFiles &&
 		p.NamedPairs*2+p.UnpairedFiles == p.AttestationFiles+p.MirrorFiles &&
 		p.RetainedBytes > 0 && p.RetainedBytes <= maxReclaimEvidenceProofBytes
 }
