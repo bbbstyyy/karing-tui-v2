@@ -95,9 +95,18 @@ func (l *InertRestoreResourceLease) inspectRetainedEvidenceTriage(
 	if parent.verify() != nil || ctx.Err() != nil {
 		return zero, ErrRetainedEvidenceTriage
 	}
+	// The public footprint report contains only counts/bytes. Comparing
+	// two reports cannot detect a same-byte, same-size inode replacement.
+	// Pin the complete observed proof name->inode+SHA set across BOTH
+	// independent encrypted archive/footprint reviews under this SH lock.
+	beforeFiles, err := scanReclaimEvidenceFootprint(ctx, dir)
+	if err != nil || !triageFilesMatchSignedCurrentArchive(first, beforeFiles) {
+		return zero, ErrRetainedEvidenceTriage
+	}
 	footprintA, err := l.InspectReclaimEvidenceFootprint(ctx, key)
 	if err != nil || !validTriageFootprint(footprintA) ||
-		footprintA.ArchiveSHA256 != first.ArchiveSHA256 {
+		footprintA.ArchiveSHA256 != first.ArchiveSHA256 ||
+		!triageFootprintMatchesScan(footprintA, beforeFiles) {
 		return zero, ErrRetainedEvidenceTriage
 	}
 	if betweenScans != nil && betweenScans() != nil {
@@ -114,7 +123,43 @@ func (l *InertRestoreResourceLease) inspectRetainedEvidenceTriage(
 		parent.verify() != nil || ctx.Err() != nil {
 		return zero, ErrRetainedEvidenceTriage
 	}
+	afterFiles, err := scanReclaimEvidenceFootprint(ctx, dir)
+	if err != nil || !sameReclaimEvidenceFootprint(beforeFiles, afterFiles) ||
+		!triageFilesMatchSignedCurrentArchive(second, afterFiles) ||
+		!triageFootprintMatchesScan(footprintB, afterFiles) ||
+		parent.verify() != nil || ctx.Err() != nil {
+		return zero, ErrRetainedEvidenceTriage
+	}
 	return classifyRetainedEvidenceTriage(second, footprintB)
+}
+
+// The exact two current-archive private evidence file SHAs are authenticated
+// by ADR 0123's original key and prepared journal. Check those SAME files
+// appear in the global inode-fenced census; foreign names remain unauthenticated.
+func triageFilesMatchSignedCurrentArchive(
+	review ReclaimRetentionReview, files retainedEvidenceSnapshot,
+) bool {
+	if !validTriageSourceReview(review) {
+		return false
+	}
+	anchor, presentAnchor := files.proofs[reclaimAttestationPrefix+review.ArchiveSHA256]
+	mirror, presentMirror := files.proofs[reclaimMirrorPrefix+review.ArchiveSHA256]
+	return presentAnchor && presentMirror &&
+		anchor.sha == review.AttestationSHA256 && mirror.sha == review.MirrorSHA256
+}
+
+// In addition to count equality before/after, fence the earlier double-scan
+// report against this directory descriptor's observed contents.
+func triageFootprintMatchesScan(
+	report ReclaimEvidenceFootprint, files retainedEvidenceSnapshot,
+) bool {
+	return validTriageFootprint(report) &&
+		report.DirectoryEntriesSeen == files.directoryEntries &&
+		report.AttestationFiles == files.attestations &&
+		report.MirrorFiles == files.mirrors &&
+		report.NamedPairs == files.pairs &&
+		report.UnpairedFiles == files.unpaired &&
+		report.RetainedBytes == files.bytes
 }
 
 func validTriageSourceReview(r ReclaimRetentionReview) bool {
