@@ -439,6 +439,27 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 		!review.RequiresRevalidation {
 		t.Fatalf("approved Core non-authorizing retention review refused: %+v %v", review, err)
 	}
+	// ADR 0125: bounded cross-archive *filename/byte* census does not
+	// authenticate other journals and cannot authorize cleanup or Core
+	// mutations. The existing source and active rule tree are unchanged.
+	beforeFootprint, err := f.store.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	footprint, err := freshLease.InspectReclaimEvidenceFootprint(context.Background(), key)
+	if err != nil || footprint.AttestationFiles != 1 ||
+		footprint.MirrorFiles != 1 || footprint.NamedPairs != 1 ||
+		footprint.UnpairedFiles != 0 || footprint.RetainedBytes <= 0 ||
+		!footprint.NamesOnly || footprint.CryptographicProofsVerified ||
+		footprint.QuotaEnforced || footprint.PhysicalCleanupAuthorized ||
+		footprint.RestoreReady || footprint.RestoreSupported ||
+		!footprint.RequiresManualReview {
+		t.Fatalf("approved Core non-authorizing proof census refused: %+v %v", footprint, err)
+	}
+	afterFootprint, err := f.store.Snapshot(context.Background())
+	if err != nil || !reflect.DeepEqual(beforeFootprint, afterFootprint) {
+		t.Fatalf("read-only proof census modified active SQLite: %v", err)
+	}
 	mirrorScope, err := os.ReadDir(filepath.Join(dormantParent, toReclaim[0].Name()))
 	if err != nil || len(mirrorScope) != len(sealedFiles) {
 		t.Fatalf("full proof mirror modified original private scope: %+v %v", mirrorScope, err)
