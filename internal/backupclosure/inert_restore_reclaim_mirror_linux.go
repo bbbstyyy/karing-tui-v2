@@ -146,6 +146,13 @@ func (l *InertRestoreResourceLease) mirrorSealedReclaimEvidence(
 		unix.AT_SYMLINK_NOFOLLOW); !errors.Is(statErr, unix.ENOENT) {
 		return zero, ErrReclaimEvidenceMirror
 	}
+	// This must use the SAME live-parent flock as ADR 0121 attestation,
+	// otherwise independently leased archives could evade the budget.
+	admission, err := beginRetainedEvidenceAdmission(bounded, dir, name, mirror)
+	if err != nil {
+		return zero, ErrReclaimEvidenceMirror
+	}
+	defer admission.close()
 
 	first, err := scanSealedReclaimEvidence(bounded, p, plan, planBytes, completion, key)
 	if err != nil || verifyReclaimRoot(bounded, p) != nil ||
@@ -167,7 +174,8 @@ func (l *InertRestoreResourceLease) mirrorSealedReclaimEvidence(
 		!sameSealedReclaimEvidence(first, second) ||
 		!sameLeasedFile(anchorFirst, anchorSecond) ||
 		verifyReclaimRoot(bounded, p) != nil || parent.verify() != nil ||
-		l.revalidateLocked(bounded, key) != nil || bounded.Err() != nil {
+		l.revalidateLocked(bounded, key) != nil || bounded.Err() != nil ||
+		admission.checkBefore(bounded) != nil {
 		return zero, ErrReclaimEvidenceMirror
 	}
 	if publishPrivateReclaimMirror(bounded, dir, name, mirror) != nil {
@@ -176,7 +184,7 @@ func (l *InertRestoreResourceLease) mirrorSealedReclaimEvidence(
 	if afterPublish != nil && afterPublish() != nil {
 		return zero, ErrReclaimEvidenceMirror
 	}
-	if dir.Sync() != nil {
+	if dir.Sync() != nil || admission.checkAfter(bounded) != nil {
 		return zero, ErrReclaimEvidenceMirror
 	}
 	mirrorFirst, err := inspectPrivateReclaimMirror(bounded, dir, name, mirror)

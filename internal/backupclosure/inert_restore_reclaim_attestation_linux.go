@@ -133,13 +133,21 @@ func (l *InertRestoreResourceLease) attestSealedDurableReclaim(
 	if err != nil {
 		return zero, ErrRetainedReclaimAttestation
 	}
+	// A flock on the EXISTING live state directory serializes both proof
+	// publishers across separate encrypted candidates and processes.
+	admission, err := beginRetainedEvidenceAdmission(bounded, dir, name, payload)
+	if err != nil {
+		return zero, ErrRetainedReclaimAttestation
+	}
+	defer admission.close()
 	if beforePublish != nil && beforePublish() != nil {
 		return zero, ErrRetainedReclaimAttestation
 	}
 	second, err := scanSealedReclaimEvidence(bounded, p, plan, planBytes, completion, key)
 	if err != nil || !sameSealedReclaimEvidence(first, second) ||
 		verifyReclaimRoot(bounded, p) != nil || parent.verify() != nil ||
-		l.revalidateLocked(bounded, key) != nil || bounded.Err() != nil {
+		l.revalidateLocked(bounded, key) != nil || bounded.Err() != nil ||
+		admission.checkBefore(bounded) != nil {
 		return zero, ErrRetainedReclaimAttestation
 	}
 	if publishPrivateReclaimMarker(bounded, dir, name, payload) != nil {
@@ -148,7 +156,7 @@ func (l *InertRestoreResourceLease) attestSealedDurableReclaim(
 	if afterPublish != nil && afterPublish() != nil {
 		return zero, ErrRetainedReclaimAttestation
 	}
-	if dir.Sync() != nil {
+	if dir.Sync() != nil || admission.checkAfter(bounded) != nil {
 		return zero, ErrRetainedReclaimAttestation
 	}
 	if verifyPrivateReclaimAttestation(bounded, dir, name, payload) != nil ||

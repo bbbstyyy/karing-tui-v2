@@ -1512,3 +1512,11 @@ docs/
 - 返回不含路径/密钥/规则内容的 attestation 数、mirror 数、**按名字匹配**的成对数、不成对文件数与实际字节数。明确 `NamesOnly=true`、`CryptographicProofsVerified=false`、`QuotaEnforced=false`、`PhysicalCleanupAuthorized=false`、`RequiresManualReview=true`、`RestoreSupported=false`、`RestoreReady=false`。对无法持有其他候选原密钥及 journal 的历史记录**绝不声称签名已认证**，更不能仅因名称成对推断来源已删除。容量上限仅界定只读盘点的工作量，**不是写入并发配额**。
 - 回归包括一个独立锚点、成对外部证据、复制签名内容但伪造其他 archive digest 的不成对名字、符号/公共权限与同内容 inode 晚到替换、错误密钥、取消、恢复候选重开和 live 选择漂移；批准真实 Core 集成确认不改 SQLite、活动规则与 Core。上一轮 M4 ADR 0124 `1bdaec3` 的普通单测、构建和已批准 Core 集成成功，4 个完整 Race 分片已启动但需要全部完成后才算绿色。
 - **保留阻塞**：未实现跨候选共享写锁的真正空间限额、持久保留期/人工授权与最终元数据 unlink/rmdir、老 pending orphan 处置、实际掉电 T15/T23、完整凭据 SQLite 恢复和 Core Check/Activate/Verify+双重回滚、CN 离线资源与许可及 72h/7d/30d 长稳。无用户可用的 backup/restore/cleanup TUI/CLI/API，PR #1 继续 Draft。
+
+### 2026-10-17 — M4 ADR 0126 全局共享审计发布预算围栏（仅协作写入者）
+
+- 上轮 M4 ADR 0124 `1bdaec3` 与 ADR 0125 `a4a0c91` 的普通 CI、4/4 Race 分片与已批准真实 Core 集成均全部成功。内部短期 PR #2 已安全合并到开发分支（合并提交 `f877cc88`）；顶层 PR #1 仍 Draft，`main` 未修改。
+- 现有外置 HMAC 审计签名发布与完整签名镜像原先只锁定自己的密文候选，两个不同 archive 可以同时判定状态目录有预算而并发写入。新增内部 `beginRetainedEvidenceAdmission`：**不创建锁文件**，对已通过 UID 私有 0700/O_NOFOLLOW 校验的现有 SQLite state parent 执行非阻塞 `flock(LOCK_EX|LOCK_NB)`，跨独立 archive lease/进程串行两个已知合法证明发布路径。锁竞争直接拒绝，不无限等待。
+- 锁内针对所有已有证明双次运行 ADR 0125 只读扫描，校验文件为 UID 所有、0400 单链接普通文件、规范 64 位小写摘要名称与全部原先 inode/内容 SHA；准许**最多新增一个**文件，新增后父目录总条目 ≤4096、证明文件 ≤256、证明字节总量 ≤40MiB（且单文件仍 ≤2048B 或 ≤256KiB）。创建前再复核同一盘点与来源/精确 prepared journal/live CAS，使用原本 O_EXCL/O_NOFOLLOW/私有权限、文件与目录 fsync，创建后双扫描要求原有证明均原 inode+SHA、且仅出现一个期望内容的新文件。任一状态漂移/预算耗尽/外部不协作写入导致拒绝，不删除/替换/修复任何文件。
+- 回归覆盖两个不同目录 FD 的共享 flock 竞争与释放、两个现有 attestation/mirror 发布者受同一围栏阻挡后恢复、同名字重复创建、已占满 256 个现有私有证明拒绝、先检查后外部新增导致拒绝、规范文件名与合成字节/条目边界、原 HMAC 历史与当前 SQLite 不变；真实已批准 Core 集成仍必须验证无激活、无活动规则改变。
+- **重要限制**：Linux flock 是**建议性锁**，无法阻止不遵守协议的外部写入者；上述容量检查只防止本项目这两个协作写入者越界，不等同 OS 配额，更不授予元数据最终删除或旧 orphan 清理权。仍无自动 GC、TUI/CLI/API 清理、真实掉电 T15/T23、完整凭据 SQLite 恢复、Core Check/Activate/Verify+双回滚、CN 离线许可或 72h/7d/30d 浸泡。新切片完整 CI/Race/Core 需以最新 HEAD 为准，不能提前标绿。
