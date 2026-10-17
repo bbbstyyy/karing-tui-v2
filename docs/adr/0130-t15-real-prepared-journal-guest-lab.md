@@ -21,3 +21,7 @@ The host-side ADR 0128 script can accept an exact `ready-<nonce>.txt` label, but
 ## Explicit non-goals
 
 No real T15/T23 pass flag, online credential import, ruleset activation, Core Check/Activate/Verify, rollback-of-rollback, deletion, orphan GC or production restore switch. There is no proof this guest-side fsync matches host electrical power failure semantics, no durable trust in noncooperating same-UID actors and no safe path to run this fixture on user data. CN offline license closure and 72h/7d/30d soak remain open. Outer PR #1 remains Draft, stable `main` untouched.
+
+### Tighter disposable-state admission
+
+The test also requires the private guest application parent to contain **only** the explicitly provisioned `recovery-lab` directory before any SQLite file is created. An unrelated app/user file causes immediate refusal; the input witness subdirectory must be **empty** before the journal fixture starts, preventing reuse of stale intent/observation/ready markers for a supposedly new nonce. The negative unit test verifies that unrelated preexisting user bytes are not deleted or overwritten. These are additional preconditions, not powers granted to clean up old state.
