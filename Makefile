@@ -1,4 +1,4 @@
-.PHONY: build test test-race vet fmt-check
+.PHONY: build test test-race test-race-shard vet fmt-check
 
 build:
 	go build -trimpath ./cmd/karing-tui
@@ -6,10 +6,21 @@ build:
 test:
 	go test ./...
 
-# Encrypted archive/SQLite recovery fixtures are deliberately expensive under
-# the race detector; never reduce test coverage to fit Go's default 10m budget.
+# Race regression must keep every encrypted archive/SQLite failure fixture.
+# Four complete, disjoint dynamic test slices prevent a single package's
+# cumulative duration from exceeding Go's 30-minute per-process timeout.
+# Locally, make test-race runs all shards serially; CI runs them in parallel.
+RACE_SHARDS ?= 4
+RACE_SHARD ?= 0
+
 test-race:
-	go test -race -timeout 30m ./...
+	@shard=0; while test "$shard" -lt "$(RACE_SHARDS)"; do \
+	  sh scripts/test-race-shard.sh "$shard" "$(RACE_SHARDS)" || exit $?; \
+	  shard=$((shard + 1)); \
+	done
+
+test-race-shard:
+	sh scripts/test-race-shard.sh "$(RACE_SHARD)" "$(RACE_SHARDS)"
 
 vet:
 	go vet ./...
