@@ -7,7 +7,7 @@ on:
 # Both push and PR events may target the same head. Cancel stale duplicate
 # suites and superseded commits instead of running costly race suites twice.
 concurrency:
-  group: ci-${ github.repository }}-${ github.head_ref || github.ref_name }}
+  group: ci-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
@@ -66,5 +66,5 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - name: Race test (shard ${ matrix.shard }} of 4)
-        run: make test-race-shard RACE_SHARD=${ matrix.shard }} RACE_SHARDS=4
+      - name: Race test (shard ${{ matrix.shard }} of 4)
+        run: make test-race-shard RACE_SHARD=${{ matrix.shard }} RACE_SHARDS=4
