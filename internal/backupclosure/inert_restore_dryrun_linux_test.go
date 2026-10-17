@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -31,10 +32,20 @@ func createInertDryRunFixture(
 	if err := closure.Close(); err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := StageInertRestoreCandidate(context.Background(),
-		source, newInertCandidateParent(t, f.stateRoot), key)
+	parent := newInertCandidateParent(t, f.stateRoot)
+	candidate, err := StageInertRestoreCandidate(context.Background(), source, parent, key)
 	if err != nil {
-		t.Fatal(err)
+		// Race shard regressions occasionally fail in the staging fixture,
+		// before any write-boundary assertion runs. Preserve the refusal but
+		// distinguish storage pressure from cryptographic/SQLite rejection.
+		// Diagnostic preflight is read-only and cannot retry or adopt a candidate.
+		var fs syscall.Statfs_t
+		fsErr := syscall.Statfs(parent, &fs)
+		rechecked, preflightErr := PreflightInertArchive(context.Background(), source, key, nil)
+		spaceErr := requireSealedArchiveSpace(parent, rechecked.ArchiveBytes)
+		t.Fatalf("encrypted candidate staging refused: %v; fs_error=%v block_size=%d available_blocks=%d; independent_preflight_error=%v archive_bytes=%d schema_verified=%t sqlite_verified=%t reserve_check=%v",
+			err, fsErr, fs.Bsize, fs.Bavail, preflightErr, rechecked.ArchiveBytes,
+			rechecked.SchemaCatalogVerified, rechecked.SQLiteLogicalVerified, spaceErr)
 	}
 	t.Cleanup(func() {
 		// Tests changing the ciphertext still clean up explicitly and never
