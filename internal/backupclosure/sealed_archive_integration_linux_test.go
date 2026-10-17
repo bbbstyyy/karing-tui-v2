@@ -391,6 +391,39 @@ func TestApprovedCoreSealedArchiveWithRealBinary(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(beforeAnchor, afterAnchor) {
 		t.Fatalf("off-scope anchor modified live SQLite generation: %v", err)
 	}
+	// ADR 0122: a complete, bounded signed copy of the original audit
+	// metadata can be retained outside the inactive scope. It never
+	// copies or activates the approved Core or alters active rule paths.
+	beforeMirror, err := f.store.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullMirror, err := freshLease.MirrorSealedReclaimEvidence(context.Background(), key, anchor)
+	if err != nil || !fullMirror.MirrorRetained || !fullMirror.OriginalProofsRetained ||
+		fullMirror.RuleCount != len(closure.Inventory.RuleSets) ||
+		fullMirror.MirroredProofFiles != len(closure.Inventory.RuleSets)+3 ||
+		fullMirror.AttestationSHA256 != anchor.AttestationSHA256 ||
+		fullMirror.RestoreReady || fullMirror.RestoreSupported {
+		t.Fatalf("approved Core full proof mirror refused: %+v %v", fullMirror, err)
+	}
+	fullMirrorAgain, err := freshLease.InspectMirroredReclaimEvidence(context.Background(), key)
+	if err != nil || fullMirrorAgain != fullMirror {
+		t.Fatalf("approved Core full proof mirror did not authenticate: %+v %v", fullMirrorAgain, err)
+	}
+	mirrorScope, err := os.ReadDir(filepath.Join(dormantParent, toReclaim[0].Name()))
+	if err != nil || len(mirrorScope) != len(sealedFiles) {
+		t.Fatalf("full proof mirror modified original private scope: %+v %v", mirrorScope, err)
+	}
+	for _, rule := range closure.Inventory.RuleSets {
+		if _, err := os.Stat(filepath.Join(f.stateRoot, "core", "rule-sets", "sha256",
+			filepath.Base(rule.RelativePath))); err != nil {
+			t.Fatalf("full proof mirror removed an active rule: %v", err)
+		}
+	}
+	afterMirror, err := f.store.Snapshot(context.Background())
+	if err != nil || !reflect.DeepEqual(beforeMirror, afterMirror) {
+		t.Fatalf("full proof mirror modified live SQLite generation: %v", err)
+	}
 	if err := freshLease.Close(); err != nil {
 		t.Fatal(err)
 	}
