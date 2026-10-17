@@ -86,8 +86,7 @@ func TestRetainedReclaimEvidenceFootprintBoundsAndNeverCertifiesOtherArchives(t 
 	if err := os.Chmod(foreign, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if denied, err := lease.InspectReclaimEvidenceFootprint(ctx, key);
-		err == nil || denied != (ReclaimEvidenceFootprint{}) {
+	if denied, err := lease.InspectReclaimEvidenceFootprint(ctx, key); err == nil || denied != (ReclaimEvidenceFootprint{}) {
 		t.Fatalf("public evidence was counted as safe: %+v %v", denied, err)
 	}
 	if err := os.Remove(foreign); err != nil {
@@ -96,21 +95,18 @@ func TestRetainedReclaimEvidenceFootprintBoundsAndNeverCertifiesOtherArchives(t 
 	if err := os.Symlink("/etc/passwd", foreign); err != nil {
 		t.Fatal(err)
 	}
-	if denied, err := lease.InspectReclaimEvidenceFootprint(ctx, key);
-		err == nil || denied != (ReclaimEvidenceFootprint{}) {
+	if denied, err := lease.InspectReclaimEvidenceFootprint(ctx, key); err == nil || denied != (ReclaimEvidenceFootprint{}) {
 		t.Fatalf("symlink evidence was followed: %+v %v", denied, err)
 	}
 	if err := os.Remove(foreign); err != nil {
 		t.Fatal(err)
 	}
-	if denied, err := lease.InspectReclaimEvidenceFootprint(ctx, [32]byte{1});
-		err == nil || denied != (ReclaimEvidenceFootprint{}) {
+	if denied, err := lease.InspectReclaimEvidenceFootprint(ctx, [32]byte{1}); err == nil || denied != (ReclaimEvidenceFootprint{}) {
 		t.Fatalf("wrong key accepted census: %+v %v", denied, err)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if denied, err := lease.InspectReclaimEvidenceFootprint(cancelled, key);
-		err == nil || denied != (ReclaimEvidenceFootprint{}) {
+	if denied, err := lease.InspectReclaimEvidenceFootprint(cancelled, key); err == nil || denied != (ReclaimEvidenceFootprint{}) {
 		t.Fatalf("cancelled census returned results: %+v %v", denied, err)
 	}
 	parent := lease.candidate.parent
@@ -131,8 +127,7 @@ func TestRetainedReclaimEvidenceFootprintBoundsAndNeverCertifiesOtherArchives(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if denied, err := fresh.InspectReclaimEvidenceFootprint(ctx, key);
-		err == nil || denied != (ReclaimEvidenceFootprint{}) {
+	if denied, err := fresh.InspectReclaimEvidenceFootprint(ctx, key); err == nil || denied != (ReclaimEvidenceFootprint{}) {
 		t.Fatalf("stale selection CAS accepted footprint: %+v %v", denied, err)
 	}
 }
