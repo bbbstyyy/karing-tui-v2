@@ -204,11 +204,11 @@ func TestRetainedTriagePureHeadroomAndHoldPriority(t *testing.T) {
 	archiveSHA := strings.Repeat("a", 64)
 	review := ReclaimRetentionReview{
 		ArchiveSHA256: archiveSHA, InventorySHA256: strings.Repeat("b", 64),
-		PlanSHA256: strings.Repeat("c", 64),
-		CompletionSHA256: strings.Repeat("d", 64),
+		PlanSHA256:        strings.Repeat("c", 64),
+		CompletionSHA256:  strings.Repeat("d", 64),
 		AttestationSHA256: strings.Repeat("e", 64),
-		MirrorSHA256: strings.Repeat("f", 64),
-		RuleCount: 1, DocumentedUnlinkedBytes: 1,
+		MirrorSHA256:      strings.Repeat("f", 64),
+		RuleCount:         1, DocumentedUnlinkedBytes: 1,
 		HistoricalProofsVerified: true, SourceProofsVerified: true,
 		SourceStatus: reclaimSourceVerified, RequiresManualReview: true,
 		RequiresRevalidation: true,
@@ -219,19 +219,19 @@ func TestRetainedTriagePureHeadroomAndHoldPriority(t *testing.T) {
 		RetainedBytes: 1024, NamesOnly: true,
 		RequiresManualReview: true, RequiresRevalidation: true,
 		ReviewEntryLimit: maxReclaimEvidenceDirectoryEntries,
-		ReviewFileLimit: maxReclaimEvidenceProofFiles,
-		ReviewByteLimit: maxReclaimEvidenceProofBytes,
+		ReviewFileLimit:  maxReclaimEvidenceProofFiles,
+		ReviewByteLimit:  maxReclaimEvidenceProofBytes,
 	}
 	for _, tc := range []struct {
-		name string
-		mutate func(*ReclaimRetentionReview, *ReclaimEvidenceFootprint)
+		name       string
+		mutate     func(*ReclaimRetentionReview, *ReclaimEvidenceFootprint)
 		wantReason string
-		fit bool
+		fit        bool
 	}{
 		{"normal", func(*ReclaimRetentionReview, *ReclaimEvidenceFootprint) {},
 			retainedTriageManualPolicy, true},
 		{"entry", func(_ *ReclaimRetentionReview, p *ReclaimEvidenceFootprint) {
-			p.DirectoryEntriesSeen = maxReclaimEvidenceDirectoryEntries-1
+			p.DirectoryEntriesSeen = maxReclaimEvidenceDirectoryEntries - 1
 		}, retainedTriageHeadroom, false},
 		{"bytes_exact", func(_ *ReclaimRetentionReview, p *ReclaimEvidenceFootprint) {
 			p.RetainedBytes = maxReclaimEvidenceProofBytes -
