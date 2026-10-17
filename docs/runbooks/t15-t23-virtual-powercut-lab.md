@@ -22,7 +22,7 @@ A `virsh destroy` is similar to removing *virtual guest* power, not a certified 
 ## Operator checklist and isolation requirements
 
 1. Use a dedicated non-root host account, and confirm `virsh --connect qemu:///session` points to user-session libvirt only. Create a VM with a name beginning `ktui-t15t23-disposable-` from a *throwaway* disk image, with a recorded full 36-character lowercase UUID. Do not attach host production block devices, writable personal directories, live Karing/Karing TUI state, or network credentials. Keep an independently verified clean base image and the guest's version, filesystem, kernel and disk cache mode. The VM should have networking disconnected or isolated.
-2. Before every test, clone the base image to a **new disposable VM**, choose a cryptographically random 16-byte nonce, create a host-owned `0700` scratch/witness directory, and mount only a dedicated synthetic guest-to-host phase channel to it with compatible UID mapping. Never share the host production SQLite state root.
+2. Before every test, clone the base image to a **new disposable VM**, choose a cryptographically random 16-byte nonce, create a host-owned `0700` scratch/witness directory under the **fixed** `$XDG_STATE_HOME/karing-tui-v2/recovery-lab/ktui-powercut-disposable-<nonce>` tree, and mount only a dedicated synthetic guest-to-host phase channel to it with compatible UID mapping. Never share the host production SQLite state root.
 3. Within the guest, use an independently instrumented fault fixture that writes exactly `KTUI_T15T23_LAB_READY_V1\ncase=<case>\nnonce=<nonce>\n` to `ready-<nonce>.txt` only after reaching the chosen journal/file-fsync checkpoint. The marker must be `0400` or `0600`, same owner as host operator, regular, single-linked and no symlink. Keep the separate phase trace, fixture commit, before-image and expected invariants outside the guest (owner-private; no secrets).
 4. Run the host command **without** `--execute` first. It validates exact domain-name allowlist, full UUID, nonce, marker bytes, UID/mode/path and running VM state, and only reports `preview_only_no_vm_change`. It does not write files, destroy a guest or grant acceptance.
 5. To force a virtual stop, deliberately set the exact `KTUI_LAB_VM_STOP_ACK` binding `EXECUTE:<domain>:<uuid>:<case>:<nonce>` and re-run with `--execute`. Root is refused. The tool fsyncs an owner-private exclusive `intent-<nonce>.json` before the VM stop, then uses `virsh --connect qemu:///session destroy --domain <domain>` with no shell, sudo, graceful shutdown or host reboot. It records `observation-<nonce>.json` only after independently seeing `shut off`. Both witness files are owner-only `0600`, non-overwriting and file+parent-directory fsynced.
@@ -37,7 +37,7 @@ domain=ktui-t15t23-disposable-lab1
 uuid="$(virsh --connect qemu:///session domuuid "$domain")"
 case=T23-signed-reclaim-proof
 nonce="$(openssl rand -hex 16)"
-sandbox="$HOME/.local/state/karing-tui-v2/recovery-lab/run-$nonce"
+sandbox="${XDG_STATE_HOME:-$HOME/.local/state}/karing-tui-v2/recovery-lab/ktui-powercut-disposable-$nonce"
 install -d -m 0700 "$sandbox"
 
 # The actual isolated guest fault fixture (not this script) must write
