@@ -14,7 +14,7 @@ import (
 )
 
 func TestRetainedEvidenceAdmissionSerializesTwoIndependentDirectoryHandles(t *testing.T) {
-	root := t.TempDir()
+	root := newPrivateAdmissionTestDir(t)
 	firstFD, err := os.Open(root)
 	if err != nil {
 		t.Fatal(err)
@@ -30,10 +30,7 @@ func TestRetainedEvidenceAdmissionSerializesTwoIndependentDirectoryHandles(t *te
 	payload := []byte("private signed audit fixture")
 	first, err := beginRetainedEvidenceAdmission(ctx, firstFD, name, payload)
 	if err != nil {
-		info, statErr := os.Stat(root)
-		snapshot, scanErr := scanReclaimEvidenceFootprint(ctx, firstFD)
-		t.Fatalf("first writer refused: %v; root stat=%v info=%v; direct scan=%v snapshot=%+v; canonical=%v",
-			err, statErr, info, scanErr, snapshot, validRetainedEvidenceName(name))
+		t.Fatalf("first writer cannot lock private state directory: %v", err)
 	}
 	if second, err := beginRetainedEvidenceAdmission(ctx, secondFD, name, payload); err == nil || second != nil || !errors.Is(err, ErrRetainedEvidenceAdmission) {
 		t.Fatalf("second independent writer bypassed flock: %+v %v", second, err)
@@ -76,7 +73,7 @@ func TestRetainedEvidenceAdmissionSerializesTwoIndependentDirectoryHandles(t *te
 }
 
 func TestRetainedEvidenceAdmissionRefusesLateForeignProofBeforePublishing(t *testing.T) {
-	root := t.TempDir()
+	root := newPrivateAdmissionTestDir(t)
 	dir, err := os.Open(root)
 	if err != nil {
 		t.Fatal(err)
@@ -237,4 +234,17 @@ func fmtReclaimBudgetDigest(i int) string {
 	b[62] = hex[(i>>4)&15]
 	b[63] = hex[i&15]
 	return string(b[:])
+}
+
+
+func newPrivateAdmissionTestDir(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	// GitHub runner temp-directory permissions are environment-dependent.
+	// The production evidence boundary requires exactly owner-private 0700;
+	// fix ONLY the test fixture rather than weakening the filesystem check.
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
