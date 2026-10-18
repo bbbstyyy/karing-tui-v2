@@ -89,6 +89,11 @@ func (g guestBridge) run(t *testing.T, mode, pinnedSHA string, wantSuccess bool)
 		if err == nil {
 			t.Fatalf("Python guest auditor accepted intentionally invalid phase: %s", stdout)
 		}
+		failure, ok := err.(*exec.ExitError)
+		if !ok || !strings.Contains(string(failure.Stderr),
+			"REFUSED: disposable guest SQLite post-boot audit is not trustworthy") {
+			t.Fatalf("guest refusal test passed only because Python crashed or the tool could not execute: %v", err)
+		}
 		return nil
 	}
 	if err != nil {
@@ -156,16 +161,16 @@ func (g guestBridge) syntheticStopObservation(t *testing.T) {
 	// Deliberately synthetic! An observation alone never proves a reboot,
 	// actual VM shutdown or power loss, even when it has the same schema.
 	fake := map[string]any{
-		"schema_version": 1,
-		"status": "virtual_guest_forced_off_observed",
-		"case": guestBridgeCase,
-		"nonce": guestBridgeNonce,
-		"domain": guestBridgeDomain,
-		"domain_uuid": guestBridgeUUID,
-		"physical_power_loss_verified": false,
+		"schema_version":                   1,
+		"status":                           "virtual_guest_forced_off_observed",
+		"case":                             guestBridgeCase,
+		"nonce":                            guestBridgeNonce,
+		"domain":                           guestBridgeDomain,
+		"domain_uuid":                      guestBridgeUUID,
+		"physical_power_loss_verified":     false,
 		"post_reboot_consistency_verified": false,
-		"restore_authorized": false,
-		"metadata_deletion_authorized": false,
+		"restore_authorized":               false,
+		"metadata_deletion_authorized":     false,
 	}
 	raw, err := json.Marshal(fake)
 	if err != nil {
