@@ -1551,3 +1551,10 @@ docs/
 - 详见 [ADR 0130](adr/0130-t15-real-prepared-journal-guest-lab.md) 和 [guest 操作手册](runbooks/t15-real-prepared-journal-guest.md)，保持 Linux 普通用户、无 TUN、CN 28 组原始预置、Custom → GeoSite → GeoIP → ACL → FINAL 五层以及**去除订阅/ISP 分流**的原约束。
 
 - **ADR 0130 新增隔离边界**：生产 `state.db` 不存在仍不足以证明无现有用户状态，因此 guest-only fixture 进一步要求应用 state parent 初始**仅**包含 `recovery-lab` 子目录、单次 nonce witness 目录在启动前完全为空。任意旧 marker/observation 或其他配置文件均拒绝；回归断言绝不删除或覆盖异源文件。
+
+### 2026-10-18 — M4 ADR 0131 Go v18 真正数据库与 Python guest 审计器端到端契约回归
+
+- ADR 0129 的 Python 安全单测使用 synthetic v18-like 表，ADR 0130 的真实 Go `storage.Store` 测试则没有调用 Python guest 审计器；两边各自 CI 全绿仍无法证明真正的版本 v18 SQLite/WAL/Apply Journal 契约互通。因此新增独立跨语言实际 Schema 回归，在 Go `internal/storage` 的 0700 临时隔离数据目录中经真实 migrations + `PrepareApply/CommitApplied` 生成 Applied/LKG，随后使用与产品一致的 `scripts/recovery_lab/guest_reboot_audit.py` 进行 `capture`、外部 SHA 对照以及 `verify`。
+- 无活动 journal 的基准临时数据库必须严格接受为**只读 SQLite 子集一致且仍须人工复核**；Go 端比较审计前后的真实 SQLite 文件字节不变，检查全部 `guest_reboot_verified/physical_power_loss_verified/core_health_verified/archive_hmac_verified/restore_authorized/metadata_deletion_authorized=false`。随后经真正 Go `SetCurrentSelectionIntent` 产生选择漂移，Python 验证必须拒绝。
+- 第二组真正 v18 `PrepareApply` 构造**未激活 prepared journal**；允许中断前生成只读基线，但其后即使 host-stop JSON 伪夹具匹配，Python `verify` 仍须拒绝 pending active apply。仅在该临时测试库调用真实 `RecoverInterrupted` 并再次验证旧基线失效；独立伪造 VM UUID 的见证一律拒绝。host-stop JSON 是测试夹具，**未发生**真实虚拟机关停、电源中断或认证重启。
+- 本 ADR 只补齐实际 Go/Python 存储结构互通与拒绝分支；没有启用真正用户备份/恢复、规则正式发布、Core 激活、删除/自动 GC、双重回滚或 T15/T23/T25 放行，必须通过本分支最新普通 CI、4/4 Race 才能考虑合并；与 ADR 0130 以堆叠 PR 隔离验收。
