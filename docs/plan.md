@@ -1533,3 +1533,11 @@ docs/
 - **仍阻塞**：真正的人工审核保留期限、外部不可变审计记录/法务保留与可证明最终清理协议、失踪 pending-orphan 的可证明处置、实际断电 T15/T23、完整凭据 SQLite/规则恢复、Core Check/Activate/Verify 与双回滚、CN 离线规则许可证及 72h/7d/30d 长时间浸泡；依然不提供 backup/restore/cleanup TUI/CLI/API。
 
 - **ADR 0127 CI 纠错与停止条件（2026-10-17）**：首轮 `debc6d27` 的 Vet/格式与真实 Core 集成成功，但普通单测 `TestRetainedTriageSharedFlockRejectsCooperatingWriterAndLateReplacement` 发现同内容但不同 inode 的证明替换未被察觉，Race 因依赖单测失败被跳过。修复为在两轮完整 cryptographic review + 全局名字/容量盘点**整个时间窗前后**对所有证明重新扫描并比较每一个文件的 inode 身份、内容 SHA 与大小，且当前档案自己的 attestation/mirror 名称及内容摘要必须与单独重验 HMAC 的报告一致。新增国外档案形状的成对名称仅统计、不授予 HMAC 认证，且该外部证明即使仅同内容 inode 替换也必须被拒绝；另覆盖共享审计锁与独占发布锁的真实冲突。发生替换一律零报告、无修补、无清理许可，完整 CI/Race/真实 Core 重验之前不得合并 PR #4。
+
+### 2026-10-17 — M4 ADR 0129：T15/T23 disposable guest 重启前后 SQLite 子集对照（只读；未完成实际断电验收）
+
+- 上轮 ADR 0128 受显式人工授权的 **虚拟机强制关停实验入口**，PR #5 `66a7b2dd` 完成依赖、格式、Vet、Go 普通测试、4/4 Race 与 mock libvirt 安全单测，合并至开发分支 `96e63f1f`。它没有执行真实 VM 关机、真实电源中断、自动恢复或元数据删除。PR #1 保持 Draft、`main` 未改。
+- 单独追加 **guest 内部** `scripts/recovery_lab/guest_reboot_audit.py`，仅在 disposable VM 的固定私有 XDG guest `state.db` + 同 nonce/UUID/case 的 `recovery-lab` host witness 挂载下运行。要求普通用户、显式实验 ACK、私有 0600/0700 路径和未被符号/硬链接替换的 SQLite inode。只读 SQLite URI `mode=ro`（不使用会忽略 WAL 的 `immutable=1`），打开事务执行 `integrity_check(1)`、外键检查、18 条 schema migrations、daemon/selection 单例、Applied/LKG 配置/manifest/source-map BLOB 的真实 SHA 对比，以及 active apply/独立 prepared journal 基数约束。
+- **中断前** `capture` 专用 0600 O_EXCL+fsync/目录 fsync 基线，只返回基线 SHA 给人工在客体外另存；**手工重启后** `verify` 要求该外部保存的 SHA、先前 ADR 0128 的 `virtual_guest_forced_off_observed` 见证文件与 domain/UUID/case/nonce 精确一致、当前 guest SQLite 直接重新读取、完整子集相同且没有恢复未决/活动 apply。任何 SQLite/生成代际 SHA/选择漂移、非法权限、缺失见证或仍需 recovery，零有效报告拒绝；不尝试维修/解包、重试、清理或激活 Core。
+- 即使子集检查成功，永久明确 `guest_reboot_verified=false`、`physical_power_loss_verified=false`、`core_health_verified=false`、`archive_hmac_verified=false`、`restore_authorized=false`、`metadata_deletion_authorized=false`：此工具**无法证明 VM 实际重启、硬盘掉电语义、所有未引用领域表/外部规则文件或历史签名、实际 Core 端口及双回滚**。仍必须在独立 VM 真的完成故障点触发、关机和重启后由人工核查并建立独立证据，T15/T23/T25 均开放。
+- 新增纯标准库 synthetic SQLite 与模拟 host 停机见证的单测（无需 libvirt、sudo、TUN 或真实用户状态），沿用 `.github/workflows/ci.yml` 的恢复实验 Python 安全回归步。参见 [ADR 0129](adr/0129-disposable-guest-sqlite-replay-subset.md) 与 [实验操作手册](runbooks/t15-t23-guest-sqlite-replay.md)。开发切片完整普通 CI、4/4 Race 验证完成前不得合并。仍未开放公开备份恢复、物理源证据清理及 Core Activate/Verify。
