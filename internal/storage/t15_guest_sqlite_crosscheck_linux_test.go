@@ -291,60 +291,59 @@ func TestGuestAuditRejectsForgedVirtualStopWitnessOnRealV18(t *testing.T) {
 	g.run(t, "verify", sha, false)
 }
 
-
 // TestGuestAuditRealV18PreparedReconciliation is only a disposable
 // SQLite/Python contract.  A fabricated host witness is NOT reboot proof.
 func TestGuestAuditRealV18PreparedReconciliation(t *testing.T) {
-    g := newGuestBridge(t)
-    pendingID := g.seedRealV18(t, true)
-    sha := g.capture(t)
-    g.syntheticStopObservation(t)
-    g.run(t, "verify", sha, false)
+	g := newGuestBridge(t)
+	pendingID := g.seedRealV18(t, true)
+	sha := g.capture(t)
+	g.syntheticStopObservation(t)
+	g.run(t, "verify", sha, false)
 
-    ctx := context.Background()
-    db, err := Open(ctx, g.dbPath)
-    if err != nil {
-        t.Fatal(err)
-    }
-    recovery, err := db.RecoverInterrupted(ctx)
-    if err != nil || recovery.NeedsReconcile ||
-        len(recovery.InterruptedAttemptIDs) != 1 ||
-        recovery.InterruptedAttemptIDs[0] != pendingID {
-        t.Fatalf("real prepared journal recovery is not bounded: %+v %v", recovery, err)
-    }
-    if err := db.Close(); err != nil {
-        t.Fatal(err)
-    }
-    before, err := os.ReadFile(g.dbPath)
-    if err != nil {
-        t.Fatal(err)
-    }
-    report := g.run(t, "reconcile-verify", sha, true)
-    if report["status"] != "prepared_journal_sqlite_subset_manual_review_only" ||
-        report["prepared_journal_transition_checked"] != true ||
-        report["guest_reboot_verified"] != false ||
-        report["core_health_verified"] != false ||
-        report["archive_hmac_verified"] != false {
-        t.Fatalf("cross-language recovery audit overstated evidence: %+v", report)
-    }
-    after, err := os.ReadFile(g.dbPath)
-    if err != nil || !bytes.Equal(before, after) {
-        t.Fatalf("read-only reconciliation modified the actual Go DB: %v", err)
-    }
-    // The legacy strict equality contract remains deliberately invalid.
-    g.run(t, "verify", sha, false)
+	ctx := context.Background()
+	db, err := Open(ctx, g.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := db.RecoverInterrupted(ctx)
+	if err != nil || recovery.NeedsReconcile ||
+		len(recovery.InterruptedAttemptIDs) != 1 ||
+		recovery.InterruptedAttemptIDs[0] != pendingID {
+		t.Fatalf("real prepared journal recovery is not bounded: %+v %v", recovery, err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(g.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := g.run(t, "reconcile-verify", sha, true)
+	if report["status"] != "prepared_journal_sqlite_subset_manual_review_only" ||
+		report["prepared_journal_transition_checked"] != true ||
+		report["guest_reboot_verified"] != false ||
+		report["core_health_verified"] != false ||
+		report["archive_hmac_verified"] != false {
+		t.Fatalf("cross-language recovery audit overstated evidence: %+v", report)
+	}
+	after, err := os.ReadFile(g.dbPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("read-only reconciliation modified the actual Go DB: %v", err)
+	}
+	// The legacy strict equality contract remains deliberately invalid.
+	g.run(t, "verify", sha, false)
 
-    db, err = Open(ctx, g.dbPath)
-    if err != nil {
-        t.Fatal(err)
-    }
-    _, err = db.SetCurrentSelectionIntent(ctx,
-        []byte("{\"kind\":\"specific_node\",\"profile_id\":\"p\",\"node_id\":\"drift\"}"))
-    if err != nil {
-        t.Fatal(err)
-    }
-    if err := db.Close(); err != nil {
-        t.Fatal(err)
-    }
-    g.run(t, "reconcile-verify", sha, false)
+	db, err = Open(ctx, g.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.SetCurrentSelectionIntent(ctx,
+		[]byte("{\"kind\":\"specific_node\",\"profile_id\":\"p\",\"node_id\":\"drift\"}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	g.run(t, "reconcile-verify", sha, false)
 }
