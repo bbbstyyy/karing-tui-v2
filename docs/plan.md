@@ -1558,3 +1558,9 @@ docs/
 - 无活动 journal 的基准临时数据库必须严格接受为**只读 SQLite 子集一致且仍须人工复核**；Go 端比较审计前后的真实 SQLite 文件字节不变，检查全部 `guest_reboot_verified/physical_power_loss_verified/core_health_verified/archive_hmac_verified/restore_authorized/metadata_deletion_authorized=false`。随后经真正 Go `SetCurrentSelectionIntent` 产生选择漂移，Python 验证必须拒绝。
 - 第二组真正 v18 `PrepareApply` 构造**未激活 prepared journal**；允许中断前生成只读基线，但其后即使 host-stop JSON 伪夹具匹配，Python `verify` 仍须拒绝 pending active apply。仅在该临时测试库调用真实 `RecoverInterrupted` 并再次验证旧基线失效；独立伪造 VM UUID 的见证一律拒绝。host-stop JSON 是测试夹具，**未发生**真实虚拟机关停、电源中断或认证重启。
 - 本 ADR 只补齐实际 Go/Python 存储结构互通与拒绝分支；没有启用真正用户备份/恢复、规则正式发布、Core 激活、删除/自动 GC、双重回滚或 T15/T23/T25 放行，必须通过本分支最新普通 CI、4/4 Race 才能考虑合并；与 ADR 0130 以堆叠 PR 隔离验收。
+
+### 2026-10-19 — M4 ADR 0132 T15 prepared→interrupted 受限只读差分审计
+
+- 在 ADR 0130 的真实 v18 Store prepared-journal 夹具和 ADR 0131 的 Go/Python 跨语言契约之上，增加**非授权**的 `reconcile-verify` 只读核查模式，仅用于一次性非 root disposable guest 的 `T15-prepared-journal`。它不触发 `RecoverInterrupted`，而是对照操作员在此前独立保存 SHA-256 的 v2 baseline 与**单独执行**显式恢复后的 SQLite 状态。
+- 审计确认 journal 最新候选（包含 config/manifest/source-map SHA、源/目标 revision、前一代际及记录数）只允许从 prepared+active+空错误变成 interrupted+inactive+固定安全原因；当前 Applied/LKG、选择状态、DNS/路由模式及 Core 停止意图等已抽取字段一律保持一致。即使篡改候选后同时更新其 SHA、改变 selection、伪造 journal 相位或增加其他行，也必须拒绝。原 `verify` 仍保持全字段相等的更严格契约，版本 1 的旧 baseline 不会静默通过。
+- CI 用 Python synthetic SQLite 和实际 Go v18 SQLite/生产 `RecoverInterrupted` **仅在一次性临时目录**演练正反用例，并检查只读审计不修改 SQLite 主文件。CI 不关停虚拟机、不开代理 Core、不会处理生产用户 DB；合成宿主见证不具有真实断电/重启证明效力。T15/T23/T25、真实电源故障、跨资源一致性、完整恢复、Core 回滚与 release gate **全部继续未通过**。

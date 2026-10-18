@@ -383,3 +383,7 @@ Unlike the host-side marker-only ADR 0128 lab, the Linux Go-test-only `TestT15Di
 ## ADR 0131 cross-language real schema regression
 
 M4's guest read-only SQLite check is now exercised against databases made by the actual Go v18 migrations and application journal APIs, rather than trusting synthetic Python schemas alone. The real Go/Python pair must agree on applied/LKG and selection digests and *fail closed* for unresolved prepared apply, changed live selection or forged virtual-stop identity. A fabricated, no-authority stop JSON in ordinary CI is strictly **test input** and never certifies a guest reboot, physical power loss, active Core, encrypted archive authentication, rollback, restore or metadata deletion.
+
+## ADR 0132 narrow post-RecoverInterrupted guest SQLite subset
+
+The disposable-only Python `guest_reboot_audit.py` now pins **format 2** baselines with a digest-bound latest pending generation and redacted apply-journal identity. In `T15-prepared-journal` only, `reconcile-verify` can affirm the limited, separately executed real Go Store `prepared → interrupted` journal change while refusing drift in confirmed Applied/LKG, selection, Core intent, routing mode or candidate payload (including matching rehash attempts). Normal `verify` still requires an exact before/after snapshot and refuses the recovered version. Older pinned v1 baselines cannot silently upgrade. The result grants **no** VM-stop, reboot, physical power-loss, restore, HMAC, Core, metadata-deletion or release authority; full P0 compatibility and recovery remain pending.
