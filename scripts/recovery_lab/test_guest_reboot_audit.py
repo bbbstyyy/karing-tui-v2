@@ -62,6 +62,10 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     id INTEGER PRIMARY KEY, generation_id INTEGER REFERENCES generations(id),
                     previous_generation_id INTEGER, base_revision INTEGER,
                     target_revision INTEGER, phase TEXT, active_slot INTEGER, error TEXT);
+                CREATE TABLE apply_history(
+                    id INTEGER PRIMARY KEY, generation_id INTEGER, target_revision INTEGER,
+                    phase TEXT, config_sha256 TEXT, manifest_sha256 TEXT,
+                    source_map_sha256 TEXT);
                 CREATE TABLE inert_restore_preparations(id INTEGER PRIMARY KEY, phase TEXT);
                 CREATE TABLE selection_state (
                     singleton INTEGER PRIMARY KEY, revision INTEGER, current_target_json BLOB);
@@ -73,7 +77,8 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                        (config, hashlib.sha256(config).hexdigest()))
             db.execute("INSERT INTO daemon_state VALUES(1, 1, 1, 1, 0, 'running', 'rule', 0)")
             db.execute("INSERT INTO selection_state VALUES(1, 1, ?)", (b'{"kind":"auto"}',))
-            db.execute("INSERT INTO apply_journal VALUES(1, 1, NULL, 0, 1, 'committed', NULL, '')")
+            db.execute("INSERT INTO apply_history VALUES(1, 1, 1, 'committed', ?, NULL, NULL)",
+                       (hashlib.sha256(config).hexdigest(),))
         self.dbpath.chmod(0o600)
 
 
@@ -209,6 +214,33 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         self.assertEqual(settled, self.dbpath.read_bytes())
         self.assertNotEqual(original, settled)
         self.args.mode = "verify"
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_archived_baseline_digest_mismatch_refused_even_if_other_records_match(self):
+        self.add_prepared()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_journal SET phase='interrupted', active_slot=NULL, "
+                       "error='daemon restarted before apply completed' WHERE id=2")
+        self.args.mode = "reconcile-verify"
+        self.assertTrue(lab.inspect(self.args)["prepared_journal_transition_checked"])
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_history SET config_sha256=? WHERE id=1", ("0" * 64,))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_archived_baseline_missing_or_extra_history_refused(self):
+        self.add_prepared()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_journal SET phase='interrupted', active_slot=NULL, "
+                       "error='daemon restarted before apply completed' WHERE id=2")
+        self.args.mode = "reconcile-verify"
+        self.assertTrue(lab.inspect(self.args)["prepared_journal_transition_checked"])
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("INSERT INTO apply_history VALUES(3, 1, 1, 'committed', ?, NULL, NULL)",
+                       (hashlib.sha256(b'{"inbounds":[]}').hexdigest(),))
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 

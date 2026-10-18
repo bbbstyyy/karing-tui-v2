@@ -155,6 +155,36 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "SELECT COUNT(*) FROM inert_restore_preparations WHERE phase='prepared'").fetchone()[0]
         if type(pending) is not int or pending < 0 or pending > 1:
             refuse("invalid independent restore journal")
+        # Go's bounded generation retention moves completed attempts to
+        # apply_history BEFORE it admits the next prepared apply. The original
+        # committed row is not expected to remain in apply_journal.
+        history_count = db.execute("SELECT COUNT(*) FROM apply_history").fetchone()[0]
+        if type(history_count) is not int or history_count < 0:
+            refuse("invalid archived apply journal count")
+        latest_history = None
+        history_rows = db.execute(
+            "SELECT id, generation_id, target_revision, phase, "
+            "config_sha256, manifest_sha256, source_map_sha256 "
+            "FROM apply_history ORDER BY id DESC LIMIT 1").fetchall()
+        if history_rows:
+            hid, hgen, hrev, hphase, hcfg, hmanifest, hmap = history_rows[0]
+            if (type(hid) is not int or hid <= 0 or
+                    type(hgen) is not int or hgen <= 0 or
+                    type(hrev) is not int or hrev <= 0 or
+                    hphase not in ("committed", "rolled_back", "failed", "interrupted") or
+                    not isinstance(hcfg, str) or not SHA.fullmatch(hcfg) or
+                    (hmanifest is not None and
+                     (not isinstance(hmanifest, str) or not SHA.fullmatch(hmanifest))) or
+                    (hmap is not None and
+                     (not isinstance(hmap, str) or not SHA.fullmatch(hmap)))):
+                refuse("invalid archived apply identity")
+            latest_history = {
+                "id": hid,
+                "generation_id": hgen,
+                "target_revision": hrev,
+                "phase": hphase,
+                "digests": [hcfg, hmanifest, hmap],
+            }
         # Inspect the newest journal candidate as well as the confirmed
         # generation.  A prepared T15 fixture is NOT verified merely because
         # the applied generation remained sound: its unactivated candidate
@@ -243,6 +273,8 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "prepared_inert_restore_count": pending,
             "apply_journal_count": journal_count,
             "latest_apply": latest,
+            "apply_history_count": history_count,
+            "last_archived_apply": latest_history,
         }
         db.execute("COMMIT")
         return result
@@ -379,11 +411,24 @@ def check_prepared_reconciliation(before: dict, after: dict) -> None:
     final = after.get("latest_apply")
     active = before.get("active_apply_attempt")
     applied = before.get("applied_generation_id")
+    archived = before.get("last_archived_apply")
+    digests = before.get("applied_and_lkg_sha256")
     if (before.get("schema_version") != 18 or
-            before.get("apply_journal_count") != 2 or
+            before.get("apply_journal_count") != 1 or
+            before.get("apply_history_count") != 1 or
+            not isinstance(archived, dict) or
+            type(archived.get("id")) is not int or archived["id"] <= 0 or
+            archived.get("phase") != "committed" or
+            archived.get("generation_id") != applied or
+            archived.get("target_revision") != before.get("config_revision") or
+            not isinstance(digests, list) or len(digests) != 2 or
+            digests[0] != digests[1] or
+            archived.get("digests") != digests[0] or
             not isinstance(initial, dict) or not isinstance(final, dict) or
             not isinstance(active, list) or len(active) != 2 or
             active != [initial.get("id"), "prepared"] or
+            type(initial.get("id")) is not int or
+            archived["id"] >= initial["id"] or
             initial.get("phase") != "prepared" or initial.get("active") is not True or
             initial.get("error_empty") is not True or
             initial.get("interrupted_marker") is not False or
