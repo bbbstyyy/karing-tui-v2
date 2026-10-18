@@ -1541,3 +1541,13 @@ docs/
 - **中断前** `capture` 专用 0600 O_EXCL+fsync/目录 fsync 基线，只返回基线 SHA 给人工在客体外另存；**手工重启后** `verify` 要求该外部保存的 SHA、先前 ADR 0128 的 `virtual_guest_forced_off_observed` 见证文件与 domain/UUID/case/nonce 精确一致、当前 guest SQLite 直接重新读取、完整子集相同且没有恢复未决/活动 apply。任何 SQLite/生成代际 SHA/选择漂移、非法权限、缺失见证或仍需 recovery，零有效报告拒绝；不尝试维修/解包、重试、清理或激活 Core。
 - 即使子集检查成功，永久明确 `guest_reboot_verified=false`、`physical_power_loss_verified=false`、`core_health_verified=false`、`archive_hmac_verified=false`、`restore_authorized=false`、`metadata_deletion_authorized=false`：此工具**无法证明 VM 实际重启、硬盘掉电语义、所有未引用领域表/外部规则文件或历史签名、实际 Core 端口及双回滚**。仍必须在独立 VM 真的完成故障点触发、关机和重启后由人工核查并建立独立证据，T15/T23/T25 均开放。
 - 新增纯标准库 synthetic SQLite 与模拟 host 停机见证的单测（无需 libvirt、sudo、TUN 或真实用户状态），沿用 `.github/workflows/ci.yml` 的恢复实验 Python 安全回归步。参见 [ADR 0129](adr/0129-disposable-guest-sqlite-replay-subset.md) 与 [实验操作手册](runbooks/t15-t23-guest-sqlite-replay.md)。开发切片完整普通 CI、4/4 Race 验证完成前不得合并。仍未开放公开备份恢复、物理源证据清理及 Core Activate/Verify。
+
+### 2026-10-17 — M4 ADR 0130：真实 v18 SQLite prepared-journal 的 disposable guest T15 故障注入挂起点
+
+- PR #4 的最终 `b3c59a75` 已通过格式、Vet、普通 Go、4/4 Race 和已批准真实 Core 集成；已并入开发分支 `6a8b86e6`，PR #1 继续 Draft，`main` 未修改。PR #6 ADR 0129 的独立 guest 只读 SQLite 前后子集对照，在 PR #4 合并后重新合并文档且在新 HEAD `5b119ab1` 运行完整 CI/Race；没通过这一组合门槛前不合并。
+- 本切片新增 **仅 Go Linux 测试** `TestT15DisposableGuestPreparedBoundary`，将 ADR 0128 的 `ready-<nonce>.txt` 与项目实际 `storage.Open`/v18、`PrepareApply→BeginActivation→BeginVerification→CommitApplied` 基准 Applied/LKG，以及第二次 `PrepareApply` 已持久提交但**尚未 Core 激活**的真实 prepared journal 绑定。仅对普通非 root、非 CI、显式 `PREPARE:domain:uuid:T15-prepared-journal:nonce` 严格 ACK、**预先空白** guest `state.db`、原有 XDG 0700 guest app/witness 文件夹的 disposable VM 测试运行；任何已有 SQLite/WAL/SHM、symlink、锁竞争或错误标记一律拒绝。
+- 真正的 Go storage 事务完成、SQLite 关闭和状态目录 fsync 后，才使用目录描述符 + O_EXCL/O_NOFOLLOW 发布 0600 精确 phase/case/nonce 文件，并对文件+父目录 fsync 与 inode/内容复查。随后 guest 进程挂起以供**独立经人工明确批准的宿主 ADR 0128** 定点关机；该测试本身绝不 kill 进程/VM/宿主、不自动修改 Core，也不能标志物理掉电通过。
+- 普通 CI/Race 独立创建一次性 0700 临时数据库，真实跑一轮应用 journal 事务，拒绝复用 DB/覆盖 marker，读取全同的 marker，重新打开 SQLite 并使用仅对该测试临时数据库的 `RecoverInterrupted` 验证：第二次 prepared 仅被中断而未激活，原 Applied/LKG 与 revision 均保持。真正 guest 断电/启动回放**本轮没有运行**。仍需收集外部 VM 事件、实际 WAL/fdatasync/资源 inode、独立 SQLite 日志审计和实测 Core 流量；ADR 0129 在 active prepared journal 尚未独立恢复前的拒绝是正确的人工保留而非失败误报。T15/T23、双回滚、正式备份恢复、物理元数据删除和 72h/7d/30d 长稳仍未达成。
+- 详见 [ADR 0130](adr/0130-t15-real-prepared-journal-guest-lab.md) 和 [guest 操作手册](runbooks/t15-real-prepared-journal-guest.md)，保持 Linux 普通用户、无 TUN、CN 28 组原始预置、Custom → GeoSite → GeoIP → ACL → FINAL 五层以及**去除订阅/ISP 分流**的原约束。
+
+- **ADR 0130 新增隔离边界**：生产 `state.db` 不存在仍不足以证明无现有用户状态，因此 guest-only fixture 进一步要求应用 state parent 初始**仅**包含 `recovery-lab` 子目录、单次 nonce witness 目录在启动前完全为空。任意旧 marker/observation 或其他配置文件均拒绝；回归断言绝不删除或覆盖异源文件。
