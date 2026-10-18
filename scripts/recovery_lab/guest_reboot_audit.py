@@ -390,6 +390,8 @@ def check_prepared_reconciliation(before: dict, after: dict) -> None:
             before.get("recovery_required") is not False or
             type(applied) is not int or applied <= 0 or
             before.get("lkg_generation_id") != applied or
+            type(before.get("config_revision")) is not int or
+            before.get("config_revision") < 0 or
             initial.get("previous_generation_id") != applied or
             initial.get("generation_id") == applied or
             initial.get("base_revision") != before.get("config_revision") or

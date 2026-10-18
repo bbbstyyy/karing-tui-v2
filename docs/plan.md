@@ -1562,5 +1562,5 @@ docs/
 ### 2026-10-19 — M4 ADR 0132 T15 prepared→interrupted 受限只读差分审计
 
 - 在 ADR 0130 的真实 v18 Store prepared-journal 夹具和 ADR 0131 的 Go/Python 跨语言契约之上，增加**非授权**的 `reconcile-verify` 只读核查模式，仅用于一次性非 root disposable guest 的 `T15-prepared-journal`。它不触发 `RecoverInterrupted`，而是对照操作员在此前独立保存 SHA-256 的 v2 baseline 与**单独执行**显式恢复后的 SQLite 状态。
-- 审计确认 journal 最新候选（包含 config/manifest/source-map SHA、源/目标 revision、前一代际及记录数）只允许从 prepared+active+空错误变成 interrupted+inactive+固定安全原因；当前 Applied/LKG、选择状态、DNS/路由模式及 Core 停止意图等已抽取字段一律保持一致。即使篡改候选后同时更新其 SHA、改变 selection、伪造 journal 相位或增加其他行，也必须拒绝。原 `verify` 仍保持全字段相等的更严格契约，版本 1 的旧 baseline 不会静默通过。
+- 审计确认 journal 最新候选（包含 config/manifest/source-map SHA、源/目标 revision、前一代际及记录数）只允许从 prepared+active+空错误变成 interrupted+inactive+固定安全原因；当前 Applied/LKG、选择状态、路由模式及 Core 停止意图等已抽取字段一律保持一致。即使篡改候选后同时更新其 SHA、改变 selection、伪造 journal 相位或增加其他行，也必须拒绝。原 `verify` 仍保持全字段相等的更严格契约，版本 1 的旧 baseline 不会静默通过。
 - CI 用 Python synthetic SQLite 和实际 Go v18 SQLite/生产 `RecoverInterrupted` **仅在一次性临时目录**演练正反用例，并检查只读审计不修改 SQLite 主文件。CI 不关停虚拟机、不开代理 Core、不会处理生产用户 DB；合成宿主见证不具有真实断电/重启证明效力。T15/T23/T25、真实电源故障、跨资源一致性、完整恢复、Core 回滚与 release gate **全部继续未通过**。

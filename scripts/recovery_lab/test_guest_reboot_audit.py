@@ -227,6 +227,22 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
+    def test_forged_v2_baseline_with_noninteger_revision_refuses_cleanly(self):
+        self.add_prepared()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_journal SET phase='interrupted', active_slot=NULL, "
+                       "error='daemon restarted before apply completed' WHERE id=2")
+        baseline = self.witness / ("baseline-" + self.nonce + ".json")
+        forged = json.loads(baseline.read_text())
+        forged["state"]["config_revision"] = None
+        forged["state"]["latest_apply"]["base_revision"] = None
+        baseline.write_text(json.dumps(forged), encoding="utf-8")
+        self.args.baseline_sha256 = hashlib.sha256(baseline.read_bytes()).hexdigest()
+        self.args.mode = "reconcile-verify"
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
     def test_reconciled_subset_refuses_other_phase_and_false_recovery_marker(self):
         self.add_prepared()
         self.capture()
