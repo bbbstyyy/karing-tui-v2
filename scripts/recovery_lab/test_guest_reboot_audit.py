@@ -58,7 +58,10 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     last_known_good_generation_id INTEGER REFERENCES generations(id),
                     recovery_required INTEGER,
                     core_desired_state TEXT, routing_mode TEXT, private_direct INTEGER);
-                CREATE TABLE apply_journal(id INTEGER PRIMARY KEY, phase TEXT, active_slot INTEGER);
+                CREATE TABLE apply_journal(
+                    id INTEGER PRIMARY KEY, generation_id INTEGER REFERENCES generations(id),
+                    previous_generation_id INTEGER, base_revision INTEGER,
+                    target_revision INTEGER, phase TEXT, active_slot INTEGER, error TEXT);
                 CREATE TABLE inert_restore_preparations(id INTEGER PRIMARY KEY, phase TEXT);
                 CREATE TABLE selection_state (
                     singleton INTEGER PRIMARY KEY, revision INTEGER, current_target_json BLOB);
@@ -70,7 +73,16 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                        (config, hashlib.sha256(config).hexdigest()))
             db.execute("INSERT INTO daemon_state VALUES(1, 1, 1, 1, 0, 'running', 'rule', 0)")
             db.execute("INSERT INTO selection_state VALUES(1, 1, ?)", (b'{"kind":"auto"}',))
+            db.execute("INSERT INTO apply_journal VALUES(1, 1, NULL, 0, 1, 'committed', NULL, '')")
         self.dbpath.chmod(0o600)
+
+
+    def add_prepared(self):
+        config = b'{"inbounds":[],"pending":true}'
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("INSERT INTO generations VALUES(2, ?, ?, NULL, NULL, NULL, NULL)",
+                       (config, hashlib.sha256(config).hexdigest()))
+            db.execute("INSERT INTO apply_journal VALUES(2, 2, 1, 1, 2, 'prepared', 1, '')")
 
     def ack(self):
         return "GUEST_AUDIT:" + ":".join((
@@ -142,9 +154,9 @@ class GuestBootReadOnlyTests(unittest.TestCase):
 
     def test_unreconciled_apply_requires_manual_hold(self):
         self.capture()
+        self.add_prepared()
         with sqlite3.connect(self.dbpath) as db:
             db.execute("UPDATE daemon_state SET recovery_required = 1")
-            db.execute("INSERT INTO apply_journal VALUES(1,'prepared',1)")
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
@@ -173,6 +185,59 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         outside.chmod(0o600)
         baseline.unlink()
         baseline.symlink_to(outside)
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+
+    def test_only_expected_prepared_to_interrupted_transition_is_read_only(self):
+        self.add_prepared()
+        self.capture()
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)  # ordinary verify cannot accept prepared
+        original = self.dbpath.read_bytes()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_journal SET phase='interrupted', active_slot=NULL, "
+                       "error='daemon restarted before apply completed' WHERE id=2")
+        self.args.mode = "reconcile-verify"
+        settled = self.dbpath.read_bytes()
+        report = lab.inspect(self.args)
+        self.assertEqual(report["status"], "prepared_journal_sqlite_subset_manual_review_only")
+        self.assertTrue(report["prepared_journal_transition_checked"])
+        self.assertFalse(report["guest_reboot_verified"])
+        self.assertFalse(report["restore_authorized"])
+        self.assertFalse(report["metadata_deletion_authorized"])
+        self.assertEqual(settled, self.dbpath.read_bytes())
+        self.assertNotEqual(original, settled)
+        self.args.mode = "verify"
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_reconciled_subset_refuses_candidate_drift_even_with_new_matching_digest(self):
+        self.add_prepared()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_journal SET phase='interrupted', active_slot=NULL, "
+                       "error='daemon restarted before apply completed' WHERE id=2")
+        self.args.mode = "reconcile-verify"
+        self.assertTrue(lab.inspect(self.args)["prepared_journal_transition_checked"])
+        payload = b'{"inbounds":[],"replaced_candidate":true}'
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE generations SET config_json=?, config_sha256=? WHERE id=2",
+                       (payload, hashlib.sha256(payload).hexdigest()))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_reconciled_subset_refuses_other_phase_and_false_recovery_marker(self):
+        self.add_prepared()
+        self.capture()
+        self.args.mode = "reconcile-verify"
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_journal SET phase='failed', active_slot=NULL WHERE id=2")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_journal SET phase='interrupted', "
+                       "error='incorrect reason' WHERE id=2")
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 

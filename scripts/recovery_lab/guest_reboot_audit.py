@@ -24,7 +24,7 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 1
+VERSION = 2
 
 
 class AuditRefusal(Exception):
@@ -155,6 +155,60 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "SELECT COUNT(*) FROM inert_restore_preparations WHERE phase='prepared'").fetchone()[0]
         if type(pending) is not int or pending < 0 or pending > 1:
             refuse("invalid independent restore journal")
+        # Inspect the newest journal candidate as well as the confirmed
+        # generation.  A prepared T15 fixture is NOT verified merely because
+        # the applied generation remained sound: its unactivated candidate
+        # and journal identity must also survive the recovery boundary.
+        journal_count = db.execute("SELECT COUNT(*) FROM apply_journal").fetchone()[0]
+        if type(journal_count) is not int or journal_count < 0:
+            refuse("invalid apply journal count")
+        latest = None
+        tail = db.execute(
+            "SELECT id, generation_id, previous_generation_id, "
+            "base_revision, target_revision, phase, active_slot, error "
+            "FROM apply_journal ORDER BY id DESC LIMIT 1").fetchall()
+        if tail:
+            (jid, candidate_id, previous_id, base_rev, target_rev,
+             phase, active_slot, reason) = tail[0]
+            valid_phases = ("prepared", "activating", "verifying", "rolling_back",
+                            "committed", "rolled_back", "failed", "interrupted")
+            if (type(jid) is not int or jid <= 0 or
+                    type(candidate_id) is not int or candidate_id <= 0 or
+                    (previous_id is not None and
+                     (type(previous_id) is not int or previous_id <= 0)) or
+                    type(base_rev) is not int or base_rev < 0 or
+                    type(target_rev) is not int or target_rev != base_rev + 1 or
+                    active_slot not in (None, 1) or
+                    phase not in valid_phases or not isinstance(reason, str)):
+                refuse("invalid most recent apply journal")
+            candidate = db.execute(
+                "SELECT config_json, config_sha256, manifest_json, manifest_sha256, "
+                "source_map_json, source_map_sha256 FROM generations WHERE id=?",
+                (candidate_id,)).fetchone()
+            if candidate is None:
+                refuse("latest apply candidate generation missing")
+            latest = {
+                "id": jid,
+                "generation_id": candidate_id,
+                "previous_generation_id": previous_id,
+                "base_revision": base_rev,
+                "target_revision": target_rev,
+                "phase": phase,
+                "active": active_slot == 1,
+                "candidate_sha256": [
+                    sha_blob(candidate[0], candidate[1]),
+                    None if candidate[2] is None and candidate[3] is None
+                    else sha_blob(candidate[2], candidate[3]),
+                    None if candidate[4] is None and candidate[5] is None
+                    else sha_blob(candidate[4], candidate[5]),
+                ],
+                # Never serialize the potentially sensitive free-form SQL error.
+                "error_empty": reason == "",
+                "interrupted_marker": reason == "daemon restarted before apply completed",
+            }
+        if active and (latest is None or latest["id"] != active[0][0] or
+                       latest["phase"] != active[0][1] or not latest["active"]):
+            refuse("active apply journal is not the latest candidate")
         digests = []
         for gid in (applied, lkg):
             if gid is None:
@@ -187,6 +241,8 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "recovery_required": bool(required),
             "active_apply_attempt": None if not active else list(active[0]),
             "prepared_inert_restore_count": pending,
+            "apply_journal_count": journal_count,
+            "latest_apply": latest,
         }
         db.execute("COMMIT")
         return result
@@ -285,6 +341,20 @@ def inspect(args: argparse.Namespace) -> dict:
             refuse("host witness is not a non-authorizing observed virtual stop")
         if not file_identity(dfd, witness):
             refuse("private lab witness directory replaced")
+        if args.mode == "reconcile-verify":
+            if args.case != "T15-prepared-journal":
+                refuse("only the test-only T15 prepared phase may be reconciled")
+            check_prepared_reconciliation(baseline.get("state"), state)
+            return {"status": "prepared_journal_sqlite_subset_manual_review_only",
+                    "sqlite_subset_checked": True,
+                    "prepared_journal_transition_checked": True,
+                    "virtual_stop_witness_seen": True,
+                    "guest_reboot_verified": False,
+                    "physical_power_loss_verified": False,
+                    "core_health_verified": False,
+                    "archive_hmac_verified": False,
+                    "restore_authorized": False,
+                    "metadata_deletion_authorized": False}
         if baseline.get("state") != state:
             refuse("guest post-boot SQLite snapshot differs from trusted baseline")
         if state["recovery_required"] or state["active_apply_attempt"] is not None:
@@ -300,9 +370,48 @@ def inspect(args: argparse.Namespace) -> dict:
                 "metadata_deletion_authorized": False}
 
 
+
+def check_prepared_reconciliation(before: dict, after: dict) -> None:
+    """A narrow read-only comparison; not a crash/reboot or restore verdict."""
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        refuse("missing before/after SQLite state")
+    initial = before.get("latest_apply")
+    final = after.get("latest_apply")
+    active = before.get("active_apply_attempt")
+    applied = before.get("applied_generation_id")
+    if (before.get("schema_version") != 18 or
+            before.get("apply_journal_count") != 2 or
+            not isinstance(initial, dict) or not isinstance(final, dict) or
+            not isinstance(active, list) or len(active) != 2 or
+            active != [initial.get("id"), "prepared"] or
+            initial.get("phase") != "prepared" or initial.get("active") is not True or
+            initial.get("error_empty") is not True or
+            initial.get("interrupted_marker") is not False or
+            before.get("recovery_required") is not False or
+            type(applied) is not int or applied <= 0 or
+            before.get("lkg_generation_id") != applied or
+            initial.get("previous_generation_id") != applied or
+            initial.get("generation_id") == applied or
+            initial.get("base_revision") != before.get("config_revision") or
+            initial.get("target_revision") != before.get("config_revision") + 1):
+        refuse("baseline is not the single disposable T15 prepared checkpoint")
+    expected = dict(initial)
+    expected.update(phase="interrupted", active=False,
+                    error_empty=False, interrupted_marker=True)
+    if (final != expected or after.get("active_apply_attempt") is not None or
+            after.get("recovery_required") is not False):
+        refuse("prepared journal did not become only the expected interrupted record")
+    immutable_before = dict(before)
+    immutable_after = dict(after)
+    for entry in (immutable_before, immutable_after):
+        entry.pop("active_apply_attempt", None)
+        entry.pop("latest_apply", None)
+    if immutable_before != immutable_after:
+        refuse("confirmed SQLite state changed beyond allowed prepared recovery")
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", required=True, choices=("capture", "verify"))
+    parser.add_argument("--mode", required=True, choices=("capture", "verify", "reconcile-verify"))
     parser.add_argument("--case", required=True, choices=vm.CASES)
     parser.add_argument("--domain", required=True)
     parser.add_argument("--uuid", required=True)
