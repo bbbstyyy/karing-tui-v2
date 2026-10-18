@@ -387,3 +387,7 @@ M4's guest read-only SQLite check is now exercised against databases made by the
 ## ADR 0132 narrow post-RecoverInterrupted guest SQLite subset
 
 The disposable-only Python `guest_reboot_audit.py` now pins **format 2** baselines with a digest-bound latest pending generation and redacted apply-journal identity. In `T15-prepared-journal` only, `reconcile-verify` can affirm the limited, separately executed real Go Store `prepared → interrupted` journal change while refusing drift in confirmed Applied/LKG, selection, Core intent, routing mode or candidate payload (including matching rehash attempts). Normal `verify` still requires an exact before/after snapshot and refuses the recovered version. Older pinned v1 baselines cannot silently upgrade. The result grants **no** VM-stop, reboot, physical power-loss, restore, HMAC, Core, metadata-deletion or release authority; full P0 compatibility and recovery remain pending.
+
+## ADR 0133 T15 postactivation uncertainty remains a manual hold
+
+Bounded Go v18 test-only recovery now covers `activating`, `verifying`, `rolling_back` and terminal failed-rollback state; it requires that `RecoveryRequired` remains set through repeated `RecoverInterrupted` and database reopen. Original confirmed generation and pending config digest remain immutable. Both Python guest replay modes must refuse the postactivation cases: a synthetic virtual-stop witness never proves actual Core restoration. No Core/route/power-failure/backup semantics are promoted from this SQLite-only evidence. T15/T23 and long soak are still open.
