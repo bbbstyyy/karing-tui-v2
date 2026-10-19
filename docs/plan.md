@@ -1581,3 +1581,9 @@ docs/
 - 已发现原 Python guest 审计仅对 `inert_restore_preparations` 统计 `phase='prepared'` 的条数，不能发现条数不变但候选 archive/inventory SHA、受限 scope、baseline fence 或 abandoned 记录被替换的情况。新增只读审计，在**同一个 SQLite WAL-aware 读事务**中读取至多 32 个真实 v18 inert journal 行，并对完整身份、候选摘要、字节数、baseline JSON 自身 SHA、phase/active_slot、时间戳执行受限校验及 SHA-256 ledger 汇总，超限或畸形数据全部拒绝。
 - guest witness 版本从 v3 提升至 **v4**，要求全程原始外部固定 SHA；不得覆盖/重新解释旧 v3 witness。原有严格 `verify` 与限缩 `reconcile-verify` 的状态比较均纳入新 ledger 摘要。Linux Go 集成测试使用真实 `PrepareInertRestoreRecord`、`AbandonInertRestoreRecord` 和 Go v18 迁移，仅在一次性临时 DB 中验证恢复审计拒绝“同数量但库存 SHA 漂移”的伪造数据；Python synthetic 用例覆盖重算 fence SHA、状态与时间戳畸形、超 32 条等。
 - 此审计**不能**证明备份 HMAC、真实密文存在性、实际 VM/硬件断电、重启后 Core 路由健康或归档签名。不得开放恢复/清理/凭据导入；T15/T23/T25 与稳定主分支合并门槛维持 OPEN。
+
+### 2026-10-19 — M4 ADR 0136 Go canonical inert-restore fence 与 guest 审计器一致性
+
+- ADR 0135 虽然对 inert journal `baseline_json` 计算 SHA-256 并检查 JSON 非空，但 Go 生产 `scanInertRestorePreparation` 还严格要求 `InertRestoreFence` 的完整 16 个字段、合法数值/摘要/分流/Core 意图以及 `json.Marshal` 的原始规范字节。新增**只读** Python 校验，与真实 Go v18 Store 的拒绝语义一致；即使故意添加字段、调整 JSON 顺序/空白或填入 Go 不接受的数值并**同步重算 SHA**，也应在捕获基线之前直接拒绝。
+- guest 私有基线版本 v4 → **v5**，不隐式升级/覆盖旧 witness；Python synthetic fixtures 用合法的完整 Go-shaped fence 验证正反分支，Linux Go 端仅使用一次性真实 v18 SQLite 和生产 `PrepareInertRestoreRecord` 创建的合法准备记录，在测试临时库中注入三种无效 JSON+匹配 SHA，并让 Python 与 Go 原生 scanner 同时拒绝。原始已确认 Applied/LKG、路由和 Core 不改变。
+- 一致性审计不构成历史 fence 的重新认证或恢复许可：没有 Core 启停、客体虚拟机断电或真实重启、归档 HMAC、规则 inode 验证、SQLite 凭据恢复、自动 GC 与元数据删除。T15/T23/T25 和 72h/7d/30d 仍未通过。
