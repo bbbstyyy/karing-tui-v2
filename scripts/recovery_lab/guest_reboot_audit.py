@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import closing, ExitStack
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -24,7 +25,11 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 3
+VERSION = 4
+MAX_INERT_RESTORE_ROWS = 32
+MAX_INERT_BASELINE_BYTES = 4096
+MAX_INERT_ARCHIVE_BYTES = 2 << 30
+INERT_SCOPE_RE = re.compile(r"\.ktui-restore-v1-[A-Za-z0-9]{6,32}\Z")
 MAX_HISTORY_ROWS = 512  # guest-only bounded archival audit, not a production GC budget
 MAX_HISTORY_ERROR_BYTES = 4096
 
@@ -169,6 +174,74 @@ def archived_history_ledger(db: sqlite3.Connection) -> tuple[int, dict | None, s
     return len(rows), last, digest.hexdigest()
 
 
+
+def inert_restore_journal_ledger(db: sqlite3.Connection) -> tuple[int, int, str]:
+    """Inspect only inert v18 metadata; never authorize candidate restoration."""
+    rows = db.execute(
+        "SELECT id, candidate_scope, archive_sha256, inventory_sha256, "
+        "archive_bytes, baseline_json, baseline_sha256, phase, active_slot, "
+        "created_at, updated_at FROM inert_restore_preparations "
+        "ORDER BY id LIMIT ?",
+        (MAX_INERT_RESTORE_ROWS + 1,)).fetchall()
+    if len(rows) > MAX_INERT_RESTORE_ROWS:
+        refuse("disposable inert restore journal exceeds private audit budget")
+    checksum = hashlib.sha256()
+    last_id = 0
+    pending = 0
+    for row in rows:
+        (rid, scope, archive_sha, inventory_sha, archive_bytes, fence_json,
+         fence_sha, phase, active_slot, created, updated) = row
+        if (type(rid) is not int or rid <= last_id or
+                not isinstance(scope, str) or not INERT_SCOPE_RE.fullmatch(scope) or
+                not isinstance(archive_sha, str) or not SHA.fullmatch(archive_sha) or
+                not isinstance(inventory_sha, str) or not SHA.fullmatch(inventory_sha) or
+                type(archive_bytes) is not int or
+                not 0 < archive_bytes <= MAX_INERT_ARCHIVE_BYTES or
+                not isinstance(fence_json, bytes) or
+                not 0 < len(fence_json) <= MAX_INERT_BASELINE_BYTES or
+                not isinstance(fence_sha, str) or not SHA.fullmatch(fence_sha) or
+                phase not in ("prepared", "abandoned")):
+            refuse("malformed inert restore journal identity")
+        sha_blob(fence_json, fence_sha)
+        try:
+            fence = json.loads(fence_json)
+        except (UnicodeError, ValueError) as exc:
+            raise AuditRefusal("invalid inert restore fence document") from exc
+        if not isinstance(fence, dict) or len(fence) == 0:
+            refuse("inert restore fence must be a nonempty JSON object")
+        if phase == "prepared":
+            if type(active_slot) is not int or active_slot != 1:
+                refuse("pending inert restore journal missing active slot")
+            pending += 1
+        elif active_slot is not None:
+            refuse("abandoned inert restore journal still occupies active slot")
+        if pending > 1:
+            refuse("more than one inert restore candidate is pending")
+        times = []
+        for stamp in (created, updated):
+            if (not isinstance(stamp, str) or not stamp.isascii() or
+                    not 0 < len(stamp) <= 96):
+                refuse("invalid inert restore timestamps")
+            try:
+                parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise AuditRefusal("invalid inert restore timestamp") from exc
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                refuse("inert restore timestamp lacks timezone")
+            times.append(parsed)
+        if times[1] < times[0]:
+            refuse("inert restore journal was updated before creation")
+        # These are ALL durable row fields. The report/witness contains only
+        # the SHA: no restore candidate scope, fence JSON or archive contents.
+        packed = [rid, scope, archive_sha, inventory_sha, archive_bytes,
+                  fence_sha, phase, active_slot, created, updated]
+        checksum.update(json.dumps(
+            packed, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        checksum.update(b"\n")
+        last_id = rid
+    return len(rows), pending, checksum.hexdigest()
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -210,10 +283,7 @@ def logical_state(db: sqlite3.Connection) -> dict:
         if active and active[0][1] not in (
                 "prepared", "activating", "verifying", "rolling_back"):
             refuse("invalid active journal phase")
-        pending = db.execute(
-            "SELECT COUNT(*) FROM inert_restore_preparations WHERE phase='prepared'").fetchone()[0]
-        if type(pending) is not int or pending < 0 or pending > 1:
-            refuse("invalid independent restore journal")
+        inert_count, pending, inert_ledger_sha = inert_restore_journal_ledger(db)
         # Go's bounded generation retention moves completed attempts to
         # apply_history BEFORE it admits the next prepared apply. The original
         # committed row is not expected to remain in apply_journal.
@@ -304,6 +374,8 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "recovery_required": bool(required),
             "active_apply_attempt": None if not active else list(active[0]),
             "prepared_inert_restore_count": pending,
+            "inert_restore_record_count": inert_count,
+            "inert_restore_ledger_sha256": inert_ledger_sha,
             "apply_journal_count": journal_count,
             "latest_apply": latest,
             "apply_history_count": history_count,

@@ -73,7 +73,13 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     updated_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:01Z',
                     generation_created_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z',
                     archived_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:02Z');
-                CREATE TABLE inert_restore_preparations(id INTEGER PRIMARY KEY, phase TEXT);
+                CREATE TABLE inert_restore_preparations(
+                    id INTEGER PRIMARY KEY, candidate_scope TEXT NOT NULL,
+                    archive_sha256 TEXT NOT NULL, inventory_sha256 TEXT NOT NULL,
+                    archive_bytes INTEGER NOT NULL, baseline_json BLOB NOT NULL,
+                    baseline_sha256 TEXT NOT NULL, phase TEXT NOT NULL,
+                    active_slot INTEGER, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL);
                 CREATE TABLE selection_state (
                     singleton INTEGER PRIMARY KEY, revision INTEGER, current_target_json BLOB);
             """)
@@ -98,6 +104,17 @@ class GuestBootReadOnlyTests(unittest.TestCase):
             db.execute("INSERT INTO generations VALUES(2, ?, ?, NULL, NULL, NULL, NULL)",
                        (config, hashlib.sha256(config).hexdigest()))
             db.execute("INSERT INTO apply_journal VALUES(2, 2, 1, 1, 2, 'prepared', 1, '')")
+
+
+    def add_inert_preparation(self, rid=1, phase="prepared"):
+        fence = b'{"ConfigRevision":1,"synthetic_guest_only":true}'
+        active = 1 if phase == "prepared" else None
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "INSERT INTO inert_restore_preparations VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (rid, ".ktui-restore-v1-ABC12345", "a" * 64, "b" * 64,
+                 42000, fence, hashlib.sha256(fence).hexdigest(), phase,
+                 active, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"))
 
     def ack(self):
         return "GUEST_AUDIT:" + ":".join((
@@ -254,6 +271,66 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                 "config_sha256,manifest_sha256,source_map_sha256)"
                 " VALUES(3,1,1,'committed',?,NULL,NULL)",
                 (hashlib.sha256(b'{"inbounds":[]}').hexdigest(),))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+
+    def test_pending_inert_restore_metadata_is_pinned_but_never_authorized(self):
+        self.add_inert_preparation()
+        old = self.dbpath.read_bytes()
+        self.capture()
+        result = lab.inspect(self.args)
+        self.assertEqual(result["status"], "sqlite_subset_consistent_manual_review_only")
+        for key in ("restore_authorized", "metadata_deletion_authorized",
+                    "archive_hmac_verified", "guest_reboot_verified",
+                    "physical_power_loss_verified"):
+            self.assertFalse(result[key])
+        self.assertEqual(old, self.dbpath.read_bytes())
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE inert_restore_preparations SET inventory_sha256=? WHERE id=1",
+                       ("c" * 64,))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_rehashed_inert_fence_and_abandoned_phase_drift_are_refused(self):
+        self.add_inert_preparation()
+        self.capture()
+        payload = b'{"ConfigRevision":1,"replaced_synthetic_guest_fence":true}'
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE inert_restore_preparations SET baseline_json=?, baseline_sha256=? WHERE id=1",
+                (payload, hashlib.sha256(payload).hexdigest()))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        with sqlite3.connect(self.dbpath) as db:
+            original = b'{"ConfigRevision":1,"synthetic_guest_only":true}'
+            db.execute(
+                "UPDATE inert_restore_preparations SET baseline_json=?, baseline_sha256=?, "
+                "phase='abandoned', active_slot=NULL WHERE id=1",
+                (original, hashlib.sha256(original).hexdigest()))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_inert_journal_rejects_wrong_digest_unsafe_scope_and_timestamp(self):
+        for field, invalid in (
+            ("baseline_sha256", "e" * 64),
+            ("candidate_scope", "../production-user-state"),
+            ("updated_at", "not-a-timestamp"),
+        ):
+            with self.subTest(field=field):
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute("DELETE FROM inert_restore_preparations")
+                self.add_inert_preparation()
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute(
+                        "UPDATE inert_restore_preparations SET " + field + "=? WHERE id=1",
+                        (invalid,))
+                with self.assertRaises(lab.AuditRefusal):
+                    lab.inspect(self.args)
+
+    def test_inert_journal_refuses_more_than_32_records_even_when_abandoned(self):
+        for rid in range(1, lab.MAX_INERT_RESTORE_ROWS + 2):
+            self.add_inert_preparation(rid=rid, phase="abandoned")
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
