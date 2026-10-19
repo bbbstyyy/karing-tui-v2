@@ -62,3 +62,11 @@ No output closes T15/T23. The official release gate additionally requires operat
 ## CI safety boundary
 
 CI invokes only `python3 -m unittest discover -s scripts/recovery_lab -p 'test_*.py' -v`, with synthetic ephemeral SQLite records and fake host-stop JSON. It **never** runs a VM stop, changes the developer's personal database or generates a real power-loss success receipt.
+
+## ADR 0132: compare an independently reconciled prepared fixture (optional, read-only)
+
+The version-2 baseline format **is not compatible** with prior v1 witness files; never overwrite an existing baseline or re-pin its SHA from the guest after the event. Use a fresh nonce/fixture instead. For an original `T15-prepared-journal` snapshot, ordinary `--mode verify` **must still refuse** both the unreconciled pending journal and any post-reconciliation state different from its pre-cut baseline.
+
+The additional `--mode reconcile-verify` is a *separate*, narrower diagnostic. Only after an independently reviewed, explicit test-only `storage.RecoverInterrupted` against the disposable VM's own **isolated experimental** v18 Store (never a user's actual DB), run the same Python auditor with the original externally pinned baseline, `--mode reconcile-verify`, the original nonce/domain/UUID/case/witness values and matching `KTUI_LAB_GUEST_AUDIT_ACK`. It reads only; it does **not** perform recovery, and no production command to conduct guest recovery is provided.
+
+The mode checks that a single original prepared candidate became an inactive interrupted attempt with exactly the standard recovery marker, while Applied/LKG and other audited SQLite fields remain identical. Changed candidate data *even with a recalculated matching digest*, any changed selector/revision, unexpected phase, forged stop witness or extra journal row refuses. Success is only `prepared_journal_sqlite_subset_manual_review_only`, not proof that any VM stopped or booted, Core was healthy, archival signatures were checked, or restoration and deletion are authorized. Preserve before/after disk and independent traces for manual review.
