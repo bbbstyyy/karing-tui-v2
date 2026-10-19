@@ -24,7 +24,9 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 2
+VERSION = 3
+MAX_HISTORY_ROWS = 512  # guest-only bounded archival audit, not a production GC budget
+MAX_HISTORY_ERROR_BYTES = 4096
 
 
 class AuditRefusal(Exception):
@@ -110,6 +112,63 @@ def sha_blob(raw, expected) -> str:
     return value
 
 
+
+def archived_history_ledger(db: sqlite3.Connection) -> tuple[int, dict | None, str]:
+    """Hash all bounded archived attempts; do not expose error text or secrets."""
+    # LIMIT makes the total history read bounded even when a guest contains
+    # unexpected old rows. Truncate SQL error text before Python sees it.
+    rows = db.execute(
+        "SELECT id, generation_id, previous_generation_id, base_revision, "
+        "target_revision, phase, config_sha256, manifest_sha256, "
+        "source_map_sha256, substr(error,1,4097), length(error), "
+        "started_at, updated_at, generation_created_at, archived_at "
+        "FROM apply_history ORDER BY id LIMIT ?",
+        (MAX_HISTORY_ROWS + 1,)).fetchall()
+    if len(rows) > MAX_HISTORY_ROWS:
+        refuse("disposable guest archived history exceeds bounded audit limit")
+    digest = hashlib.sha256()
+    last = None
+    previous_id = 0
+    for row in rows:
+        (rid, generation, previous, base, target, phase, cfg, manifest, source,
+         error_text, error_length, started, updated, created, archived) = row
+        if (type(rid) is not int or rid <= previous_id or
+                type(generation) is not int or generation <= 0 or
+                (previous is not None and (type(previous) is not int or previous <= 0)) or
+                type(base) is not int or base < 0 or
+                type(target) is not int or target != base + 1 or
+                phase not in ("committed", "rolled_back", "failed", "interrupted") or
+                not isinstance(cfg, str) or not SHA.fullmatch(cfg) or
+                (manifest is not None and
+                 (not isinstance(manifest, str) or not SHA.fullmatch(manifest))) or
+                (source is not None and
+                 (not isinstance(source, str) or not SHA.fullmatch(source))) or
+                type(error_length) is not int or error_length < 0 or
+                error_length > MAX_HISTORY_ERROR_BYTES or
+                not isinstance(error_text, str) or
+                len(error_text.encode("utf-8")) > MAX_HISTORY_ERROR_BYTES):
+            refuse("invalid archived apply row")
+        for stamp in (started, updated, created, archived):
+            if (not isinstance(stamp, str) or not stamp.isascii() or
+                    not 0 < len(stamp) <= 96):
+                refuse("invalid archived apply timestamp")
+        # No original free-text SQL error, config BLOB or timestamps are
+        # disclosed; the entire canonical record is covered by this digest.
+        packed = [rid, generation, previous, base, target, phase, cfg,
+                  manifest, source, error_text, started, updated, created, archived]
+        digest.update(json.dumps(packed, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        digest.update(b"\n")
+        previous_id = rid
+        last = {
+            "id": rid,
+            "generation_id": generation,
+            "target_revision": target,
+            "phase": phase,
+            "digests": [cfg, manifest, source],
+        }
+    return len(rows), last, digest.hexdigest()
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -158,33 +217,7 @@ def logical_state(db: sqlite3.Connection) -> dict:
         # Go's bounded generation retention moves completed attempts to
         # apply_history BEFORE it admits the next prepared apply. The original
         # committed row is not expected to remain in apply_journal.
-        history_count = db.execute("SELECT COUNT(*) FROM apply_history").fetchone()[0]
-        if type(history_count) is not int or history_count < 0:
-            refuse("invalid archived apply journal count")
-        latest_history = None
-        history_rows = db.execute(
-            "SELECT id, generation_id, target_revision, phase, "
-            "config_sha256, manifest_sha256, source_map_sha256 "
-            "FROM apply_history ORDER BY id DESC LIMIT 1").fetchall()
-        if history_rows:
-            hid, hgen, hrev, hphase, hcfg, hmanifest, hmap = history_rows[0]
-            if (type(hid) is not int or hid <= 0 or
-                    type(hgen) is not int or hgen <= 0 or
-                    type(hrev) is not int or hrev <= 0 or
-                    hphase not in ("committed", "rolled_back", "failed", "interrupted") or
-                    not isinstance(hcfg, str) or not SHA.fullmatch(hcfg) or
-                    (hmanifest is not None and
-                     (not isinstance(hmanifest, str) or not SHA.fullmatch(hmanifest))) or
-                    (hmap is not None and
-                     (not isinstance(hmap, str) or not SHA.fullmatch(hmap)))):
-                refuse("invalid archived apply identity")
-            latest_history = {
-                "id": hid,
-                "generation_id": hgen,
-                "target_revision": hrev,
-                "phase": hphase,
-                "digests": [hcfg, hmanifest, hmap],
-            }
+        history_count, latest_history, history_sha = archived_history_ledger(db)
         # Inspect the newest journal candidate as well as the confirmed
         # generation.  A prepared T15 fixture is NOT verified merely because
         # the applied generation remained sound: its unactivated candidate
@@ -275,6 +308,7 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "latest_apply": latest,
             "apply_history_count": history_count,
             "last_archived_apply": latest_history,
+            "apply_history_ledger_sha256": history_sha,
         }
         db.execute("COMMIT")
         return result

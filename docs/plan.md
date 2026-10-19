@@ -1569,3 +1569,9 @@ docs/
 
 - 建立真实 Go v18 测试数据库的 `activating`、`verifying`、`rolling_back`、`FailRollback` 故障边界回归。前 3 种 active phase 通过生产 `RecoverInterrupted` 写入 `interrupted` 时，必须保持 Applied/LKG 与候选 config SHA 不变、`recovery_required=true`；二次重放和关闭重开不能清除这个人工复核标记。已经 failed rollback 的非活动 Journal 同样必须保留该标记。
 - ADR 0129/0132 的 Python guest 只读模式在上述边界一律拒绝 `verify` / `reconcile-verify`；只有 test-only 合成停机见证，**没有真实 Core 变更、VM 停止、重启/断电认证或正式恢复 API**。发布 T15/T23/T25 继续保持 OPEN，`main` 不更新。
+
+### 2026-10-19 — M4 ADR 0134 guest 已归档 apply_history 完整有界摘要
+
+- ADR 0132 原本只核对归档历史最新一条、计数与 Applied/LKG，无法发现较早已归档 terminal apply 条目的字段更改。新的 **只读** Python guest v3 baseline 在固定 v18 SQLite 只读事务中，完整迭代至多 **512** 条归档记录（超过即拒绝），检查 ID、版本、phase、配置 SHA、错误文本限额与时间戳格式，并对全字段计算顺序稳定的 SHA-256 ledger。只将历史条数及 ledger 摘要纳入私有 witness，不泄露原始错误字符串、配置 BLOB 或凭据。
+- 原严格 `verify` 与限缩 `reconcile-verify` 均要求原有 ledger 摘要不变。Python synthetic fixtures 验证旧记录漂移、伪造 phase、超长记录或超额记录拒绝；独立实际 Go v18 `PruneRetention` 归档测试检查两代以上旧归档记录（最新及 Applied/LKG 不变时）被篡改也必拒绝。
+- guest baseline 从 v2 升级到 v3，旧记录不能静默升级；必须新建 disposable 测试环境/nonce，不能覆盖已有凭据或 witness。结果只证明**已观察到的 SQLite 元数据前后未变**，不构成历史 HMAC、Core 健康、真实 VM 断电、凭据恢复、T15/T23/T25 达标或发布许可。

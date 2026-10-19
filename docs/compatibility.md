@@ -391,3 +391,7 @@ The disposable-only Python `guest_reboot_audit.py` now pins **format 2** baselin
 ## ADR 0133 T15 postactivation uncertainty remains a manual hold
 
 Bounded Go v18 test-only recovery now covers `activating`, `verifying`, `rolling_back` and terminal failed-rollback state; it requires that `RecoveryRequired` remains set through repeated `RecoverInterrupted` and database reopen. Original confirmed generation and pending config digest remain immutable. Both Python guest replay modes must refuse the postactivation cases: a synthetic virtual-stop witness never proves actual Core restoration. No Core/route/power-failure/backup semantics are promoted from this SQLite-only evidence. T15/T23 and long soak are still open.
+
+## ADR 0134 complete bounded archived journal metadata (guest audit v3)
+
+An independent guest-only read-only audit now computes a deterministic digest of the complete `apply_history` metadata sequence, with a hard cap of 512 entries, validating IDs, phase/revision relation, SHA-256 fields, private error length and timestamps. It refuses malformed or oversized data. This detects changes to earlier archived rows that simple latest-record/count checks missed. Exact and `prepared→interrupted` comparisons pin the ledger, and real Go v18 `PruneRetention` fixtures test it cross-language. Prior guest v2 baseline documents must not be silently accepted. This hash is not an archived-generation BLOB audit or cryptographic HMAC, and cannot establish reboot/power loss, Core traffic, backup integrity or restoration rights.

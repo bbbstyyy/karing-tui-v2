@@ -63,9 +63,16 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     previous_generation_id INTEGER, base_revision INTEGER,
                     target_revision INTEGER, phase TEXT, active_slot INTEGER, error TEXT);
                 CREATE TABLE apply_history(
-                    id INTEGER PRIMARY KEY, generation_id INTEGER, target_revision INTEGER,
-                    phase TEXT, config_sha256 TEXT, manifest_sha256 TEXT,
-                    source_map_sha256 TEXT);
+                    id INTEGER PRIMARY KEY, generation_id INTEGER,
+                    previous_generation_id INTEGER,
+                    base_revision INTEGER NOT NULL DEFAULT 0,
+                    target_revision INTEGER NOT NULL, phase TEXT NOT NULL,
+                    config_sha256 TEXT NOT NULL, manifest_sha256 TEXT,
+                    source_map_sha256 TEXT, error TEXT NOT NULL DEFAULT '',
+                    started_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z',
+                    updated_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:01Z',
+                    generation_created_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z',
+                    archived_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:02Z');
                 CREATE TABLE inert_restore_preparations(id INTEGER PRIMARY KEY, phase TEXT);
                 CREATE TABLE selection_state (
                     singleton INTEGER PRIMARY KEY, revision INTEGER, current_target_json BLOB);
@@ -77,8 +84,11 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                        (config, hashlib.sha256(config).hexdigest()))
             db.execute("INSERT INTO daemon_state VALUES(1, 1, 1, 1, 0, 'running', 'rule', 0)")
             db.execute("INSERT INTO selection_state VALUES(1, 1, ?)", (b'{"kind":"auto"}',))
-            db.execute("INSERT INTO apply_history VALUES(1, 1, 1, 'committed', ?, NULL, NULL)",
-                       (hashlib.sha256(config).hexdigest(),))
+            db.execute(
+                "INSERT INTO apply_history(id,generation_id,target_revision,phase,"
+                "config_sha256,manifest_sha256,source_map_sha256)"
+                " VALUES(1,1,1,'committed',?,NULL,NULL)",
+                (hashlib.sha256(config).hexdigest(),))
         self.dbpath.chmod(0o600)
 
 
@@ -239,8 +249,54 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         self.args.mode = "reconcile-verify"
         self.assertTrue(lab.inspect(self.args)["prepared_journal_transition_checked"])
         with sqlite3.connect(self.dbpath) as db:
-            db.execute("INSERT INTO apply_history VALUES(3, 1, 1, 'committed', ?, NULL, NULL)",
-                       (hashlib.sha256(b'{"inbounds":[]}').hexdigest(),))
+            db.execute(
+                "INSERT INTO apply_history(id,generation_id,target_revision,phase,"
+                "config_sha256,manifest_sha256,source_map_sha256)"
+                " VALUES(3,1,1,'committed',?,NULL,NULL)",
+                (hashlib.sha256(b'{"inbounds":[]}').hexdigest(),))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_full_bounded_history_ledger_refuses_old_row_drift(self):
+        with sqlite3.connect(self.dbpath) as db:
+            digest = hashlib.sha256(b'{"inbounds":[]}').hexdigest()
+            db.execute(
+                "INSERT INTO apply_history(id,generation_id,target_revision,phase,"
+                "config_sha256,manifest_sha256,source_map_sha256)"
+                " VALUES(3,1,1,'committed',?,NULL,NULL)", (digest,))
+        self.capture()
+        original = self.dbpath.read_bytes()
+        report = lab.inspect(self.args)
+        self.assertEqual(report["status"], "sqlite_subset_consistent_manual_review_only")
+        self.assertEqual(original, self.dbpath.read_bytes())
+        # Latest (id=3), row count and Applied/LKG remain unchanged.
+        # Changing an older archived row must invalidate the pinned digest.
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_history SET error=? WHERE id=1",
+                       ("modified historical error: never printed",))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_archive_ledger_refuses_unbounded_rows_and_long_error(self):
+        digest = hashlib.sha256(b'{"inbounds":[]}').hexdigest()
+        with sqlite3.connect(self.dbpath) as db:
+            db.executemany(
+                "INSERT INTO apply_history(id,generation_id,target_revision,phase,"
+                "config_sha256,manifest_sha256,source_map_sha256)"
+                " VALUES(?,1,1,'committed',?,NULL,NULL)",
+                ((i, digest) for i in range(2, lab.MAX_HISTORY_ROWS + 2)))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("DELETE FROM apply_history WHERE id>1")
+            db.execute("UPDATE apply_history SET error=? WHERE id=1",
+                       ("s" * (lab.MAX_HISTORY_ERROR_BYTES + 1),))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_archived_ledger_malformed_old_record_refused(self):
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE apply_history SET target_revision=3 WHERE id=1")
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
