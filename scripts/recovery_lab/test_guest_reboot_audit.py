@@ -106,8 +106,33 @@ class GuestBootReadOnlyTests(unittest.TestCase):
             db.execute("INSERT INTO apply_journal VALUES(2, 2, 1, 1, 2, 'prepared', 1, '')")
 
 
+    @staticmethod
+    def synthetic_inert_fence():
+        config_sha = hashlib.sha256(b'{"inbounds":[]}').hexdigest()
+        selected_sha = hashlib.sha256(b'{"kind":"auto"}').hexdigest()
+        # Mirrors Go InertRestoreFence exported field declaration order.
+        fence = {
+            "ConfigRevision": 1,
+            "AppliedGenerationID": 1,
+            "LastKnownGoodGenerationID": 1,
+            "DeclarationRevision": 1,
+            "DeclarationSHA256": "a" * 64,
+            "SelectionRevision": 1,
+            "SelectionSHA256": selected_sha,
+            "RoutingMode": "rule",
+            "PrivateDirect": False,
+            "CoreDesiredState": "running",
+            "AppliedConfigSHA256": config_sha,
+            "AppliedManifestSHA256": "b" * 64,
+            "AppliedSourceMapSHA256": "c" * 64,
+            "LastKnownGoodConfigSHA256": config_sha,
+            "LastKnownGoodManifestSHA256": "b" * 64,
+            "LastKnownGoodSourceMapSHA256": "c" * 64,
+        }
+        return json.dumps(fence, separators=(",", ":")).encode("utf-8")
+
     def add_inert_preparation(self, rid=1, phase="prepared"):
-        fence = b'{"ConfigRevision":1,"synthetic_guest_only":true}'
+        fence = self.synthetic_inert_fence()
         active = 1 if phase == "prepared" else None
         with sqlite3.connect(self.dbpath) as db:
             db.execute(
@@ -275,6 +300,64 @@ class GuestBootReadOnlyTests(unittest.TestCase):
             lab.inspect(self.args)
 
 
+    def test_inert_fence_preflight_rejects_noncanonical_even_if_rehashed(self):
+        original = self.synthetic_inert_fence()
+        data = json.loads(original)
+        modified = [
+            b" " + original,
+            json.dumps(dict(reversed(list(data.items()))),
+                       separators=(",", ":")).encode("utf-8"),
+            original[:-1] + b',"UnreviewedField":1}',
+        ]
+        for index, encoded in enumerate(modified):
+            with self.subTest(index=index):
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute("DELETE FROM inert_restore_preparations")
+                self.add_inert_preparation()
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute(
+                        "UPDATE inert_restore_preparations "
+                        "SET baseline_json=?, baseline_sha256=? WHERE id=1",
+                        (encoded, hashlib.sha256(encoded).hexdigest()))
+                self.args.mode = "capture"
+                with self.assertRaises(lab.AuditRefusal):
+                    lab.inspect(self.args)
+
+    def test_inert_fence_preflight_refuses_go_invalid_values_with_matching_sha(self):
+        original = json.loads(self.synthetic_inert_fence())
+        for key, invalid in (
+            ("ConfigRevision", 0),
+            ("SelectionRevision", True),
+            ("AppliedGenerationID", -1),
+            ("CoreDesiredState", "activated"),
+            ("PrivateDirect", 1),
+            ("AppliedConfigSHA256", "not-a-hash"),
+        ):
+            with self.subTest(key=key):
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute("DELETE FROM inert_restore_preparations")
+                self.add_inert_preparation()
+                forged = dict(original)
+                forged[key] = invalid
+                encoded = json.dumps(forged, separators=(",", ":")).encode("utf-8")
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute(
+                        "UPDATE inert_restore_preparations "
+                        "SET baseline_json=?, baseline_sha256=? WHERE id=1",
+                        (encoded, hashlib.sha256(encoded).hexdigest()))
+                self.args.mode = "capture"
+                with self.assertRaises(lab.AuditRefusal):
+                    lab.inspect(self.args)
+
+    def test_canonical_inert_fence_abandoned_record_remains_readonly(self):
+        self.add_inert_preparation(phase="abandoned")
+        before = self.dbpath.read_bytes()
+        self.capture()
+        report = lab.inspect(self.args)
+        self.assertFalse(report["restore_authorized"])
+        self.assertFalse(report["metadata_deletion_authorized"])
+        self.assertEqual(before, self.dbpath.read_bytes())
+
     def test_pending_inert_restore_metadata_is_pinned_but_never_authorized(self):
         self.add_inert_preparation()
         old = self.dbpath.read_bytes()
@@ -295,7 +378,9 @@ class GuestBootReadOnlyTests(unittest.TestCase):
     def test_rehashed_inert_fence_and_abandoned_phase_drift_are_refused(self):
         self.add_inert_preparation()
         self.capture()
-        payload = b'{"ConfigRevision":1,"replaced_synthetic_guest_fence":true}'
+        forged = json.loads(self.synthetic_inert_fence())
+        forged["SelectionRevision"] = 2
+        payload = json.dumps(forged, separators=(",", ":")).encode("utf-8")
         with sqlite3.connect(self.dbpath) as db:
             db.execute(
                 "UPDATE inert_restore_preparations SET baseline_json=?, baseline_sha256=? WHERE id=1",
@@ -303,7 +388,7 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
         with sqlite3.connect(self.dbpath) as db:
-            original = b'{"ConfigRevision":1,"synthetic_guest_only":true}'
+            original = self.synthetic_inert_fence()
             db.execute(
                 "UPDATE inert_restore_preparations SET baseline_json=?, baseline_sha256=?, "
                 "phase='abandoned', active_slot=NULL WHERE id=1",

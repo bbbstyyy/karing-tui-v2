@@ -25,7 +25,7 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 4
+VERSION = 5
 MAX_INERT_RESTORE_ROWS = 32
 MAX_INERT_BASELINE_BYTES = 4096
 MAX_INERT_ARCHIVE_BYTES = 2 << 30
@@ -175,6 +175,67 @@ def archived_history_ledger(db: sqlite3.Connection) -> tuple[int, dict | None, s
 
 
 
+
+# Exact exported Go storage.InertRestoreFence field order. json.Marshal on this
+# struct emits the keys in this order with no whitespace. Never accept an
+# arbitrary newly SHA-rehashed JSON object as a persisted Go CAS baseline.
+GO_FENCE_FIELDS = (
+    "ConfigRevision", "AppliedGenerationID", "LastKnownGoodGenerationID",
+    "DeclarationRevision", "DeclarationSHA256",
+    "SelectionRevision", "SelectionSHA256",
+    "RoutingMode", "PrivateDirect", "CoreDesiredState",
+    "AppliedConfigSHA256", "AppliedManifestSHA256", "AppliedSourceMapSHA256",
+    "LastKnownGoodConfigSHA256", "LastKnownGoodManifestSHA256",
+    "LastKnownGoodSourceMapSHA256",
+)
+GO_FENCE_SHA_FIELDS = (
+    "DeclarationSHA256", "SelectionSHA256",
+    "AppliedConfigSHA256", "AppliedManifestSHA256", "AppliedSourceMapSHA256",
+    "LastKnownGoodConfigSHA256", "LastKnownGoodManifestSHA256",
+    "LastKnownGoodSourceMapSHA256",
+)
+
+
+def canonical_go_inert_fence(raw: bytes) -> None:
+    """Refuse forged fields/encoding; this is still NOT a restore permit."""
+    try:
+        data = json.loads(raw)
+    except (UnicodeError, ValueError) as exc:
+        raise AuditRefusal("invalid inert restore fence JSON") from exc
+    if not isinstance(data, dict) or tuple(data) != GO_FENCE_FIELDS:
+        refuse("inert restore fence fields differ from the Go v18 record")
+    # Python bool is an int subclass. Type-exact checks are essential here.
+    maximum = (1 << 63) - 1
+    for key, minimum, inclusive_maximum in (
+        ("ConfigRevision", 1, maximum - 1),
+        ("AppliedGenerationID", 1, maximum),
+        ("LastKnownGoodGenerationID", 1, maximum),
+        ("DeclarationRevision", 1, maximum),
+        ("SelectionRevision", 0, maximum),
+    ):
+        value = data[key]
+        if type(value) is not int or not minimum <= value <= inclusive_maximum:
+            refuse("inert restore fence integer outside Go-compatible bounds")
+    for key in GO_FENCE_SHA_FIELDS:
+        value = data[key]
+        if not isinstance(value, str) or not SHA.fullmatch(value):
+            refuse("inert restore fence contains noncanonical digest")
+    if (data["RoutingMode"] not in ("rule", "global", "direct") or
+            data["CoreDesiredState"] not in ("stopped", "running") or
+            type(data["PrivateDirect"]) is not bool):
+        refuse("inert restore fence has invalid routing or Core intent")
+    # Every permitted value is ASCII, and the bytes must match Go's compact,
+    # ordered json.Marshal encoding. This rejects duplicate/unknown keys,
+    # whitespace, alternate key ordering, floats and escape aliases even
+    # when the attacker also recalculates baseline_sha256.
+    try:
+        encoded = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (UnicodeError, ValueError, TypeError) as exc:
+        raise AuditRefusal("unable to canonicalize inert restore fence") from exc
+    if encoded != raw:
+        refuse("inert restore fence is not the canonical Go JSON encoding")
+
+
 def inert_restore_journal_ledger(db: sqlite3.Connection) -> tuple[int, int, str]:
     """Inspect only inert v18 metadata; never authorize candidate restoration."""
     rows = db.execute(
@@ -203,12 +264,7 @@ def inert_restore_journal_ledger(db: sqlite3.Connection) -> tuple[int, int, str]
                 phase not in ("prepared", "abandoned")):
             refuse("malformed inert restore journal identity")
         sha_blob(fence_json, fence_sha)
-        try:
-            fence = json.loads(fence_json)
-        except (UnicodeError, ValueError) as exc:
-            raise AuditRefusal("invalid inert restore fence document") from exc
-        if not isinstance(fence, dict) or len(fence) == 0:
-            refuse("inert restore fence must be a nonempty JSON object")
+        canonical_go_inert_fence(fence_json)
         if phase == "prepared":
             if type(active_slot) is not int or active_slot != 1:
                 refuse("pending inert restore journal missing active slot")
