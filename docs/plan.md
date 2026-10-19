@@ -1575,3 +1575,9 @@ docs/
 - ADR 0132 原本只核对归档历史最新一条、计数与 Applied/LKG，无法发现较早已归档 terminal apply 条目的字段更改。新的 **只读** Python guest v3 baseline 在固定 v18 SQLite 只读事务中，完整迭代至多 **512** 条归档记录（超过即拒绝），检查 ID、版本、phase、配置 SHA、错误文本限额与时间戳格式，并对全字段计算顺序稳定的 SHA-256 ledger。只将历史条数及 ledger 摘要纳入私有 witness，不泄露原始错误字符串、配置 BLOB 或凭据。
 - 原严格 `verify` 与限缩 `reconcile-verify` 均要求原有 ledger 摘要不变。Python synthetic fixtures 验证旧记录漂移、伪造 phase、超长记录或超额记录拒绝；独立实际 Go v18 `PruneRetention` 归档测试检查两代以上旧归档记录（最新及 Applied/LKG 不变时）被篡改也必拒绝。
 - guest baseline 从 v2 升级到 v3，旧记录不能静默升级；必须新建 disposable 测试环境/nonce，不能覆盖已有凭据或 witness。结果只证明**已观察到的 SQLite 元数据前后未变**，不构成历史 HMAC、Core 健康、真实 VM 断电、凭据恢复、T15/T23/T25 达标或发布许可。
+
+### 2026-10-19 — M4 ADR 0135 T23 inert restore journal 独立只读摘要核验
+
+- 已发现原 Python guest 审计仅对 `inert_restore_preparations` 统计 `phase='prepared'` 的条数，不能发现条数不变但候选 archive/inventory SHA、受限 scope、baseline fence 或 abandoned 记录被替换的情况。新增只读审计，在**同一个 SQLite WAL-aware 读事务**中读取至多 32 个真实 v18 inert journal 行，并对完整身份、候选摘要、字节数、baseline JSON 自身 SHA、phase/active_slot、时间戳执行受限校验及 SHA-256 ledger 汇总，超限或畸形数据全部拒绝。
+- guest witness 版本从 v3 提升至 **v4**，要求全程原始外部固定 SHA；不得覆盖/重新解释旧 v3 witness。原有严格 `verify` 与限缩 `reconcile-verify` 的状态比较均纳入新 ledger 摘要。Linux Go 集成测试使用真实 `PrepareInertRestoreRecord`、`AbandonInertRestoreRecord` 和 Go v18 迁移，仅在一次性临时 DB 中验证恢复审计拒绝“同数量但库存 SHA 漂移”的伪造数据；Python synthetic 用例覆盖重算 fence SHA、状态与时间戳畸形、超 32 条等。
+- 此审计**不能**证明备份 HMAC、真实密文存在性、实际 VM/硬件断电、重启后 Core 路由健康或归档签名。不得开放恢复/清理/凭据导入；T15/T23/T25 与稳定主分支合并门槛维持 OPEN。
