@@ -85,9 +85,16 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     baseline_sha256 TEXT NOT NULL, phase TEXT NOT NULL,
                     active_slot INTEGER, created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL);
+                CREATE TABLE declaration_revisions (
+                    revision INTEGER PRIMARY KEY, parent_revision INTEGER,
+                    document_json BLOB NOT NULL, document_sha256 TEXT NOT NULL,
+                    source TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE declaration_state (
+                    singleton INTEGER PRIMARY KEY, current_revision INTEGER);
                 CREATE TABLE selection_state (
                     singleton INTEGER PRIMARY KEY, revision INTEGER, current_target_json BLOB);
             """)
+            db.execute("INSERT INTO declaration_state VALUES(1, NULL)")
             db.executemany("INSERT INTO schema_migrations VALUES(?)",
                            [(i,) for i in range(1, 19)])
             config = b'{"inbounds":[]}'
@@ -423,6 +430,83 @@ class GuestBootReadOnlyTests(unittest.TestCase):
     def test_inert_journal_refuses_more_than_32_records_even_when_abandoned(self):
         for rid in range(1, lab.MAX_INERT_RESTORE_ROWS + 2):
             self.add_inert_preparation(rid=rid, phase="abandoned")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def add_declaration_revisions(self):
+        documents = (
+            b'{"routing":{"mode":"rule"},"dns":{"enabled":true}}',
+            b'{"routing":{"mode":"rule"},"dns":{"enabled":false}}',
+        )
+        with sqlite3.connect(self.dbpath) as db:
+            for rev, document in enumerate(documents, start=1):
+                db.execute(
+                    "INSERT INTO declaration_revisions VALUES(?,?,?,?,?,?)",
+                    (rev, None if rev == 1 else rev - 1, document,
+                     hashlib.sha256(document).hexdigest(),
+                     "test:t15-declaration", "2026-01-01T00:00:00Z"))
+            db.execute("UPDATE declaration_state SET current_revision=2 WHERE singleton=1")
+
+    def test_declaration_old_revision_rehashed_tamper_refuses(self):
+        self.add_declaration_revisions()
+        self.capture()
+        old_bytes = self.dbpath.read_bytes()
+        self.assertEqual(
+            lab.inspect(self.args)["status"],
+            "sqlite_subset_consistent_manual_review_only")
+        self.assertEqual(old_bytes, self.dbpath.read_bytes())
+        modified = b'{"routing":{"mode":"direct"},"dns":{"enabled":true}}'
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE declaration_revisions SET document_json=?,"
+                "document_sha256=? WHERE revision=1",
+                (modified, hashlib.sha256(modified).hexdigest()))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_declaration_chain_and_current_pointer_refuse_bad_shapes(self):
+        self.add_declaration_revisions()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE declaration_revisions SET parent_revision=NULL WHERE revision=2")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE declaration_revisions SET parent_revision=1 WHERE revision=2")
+            db.execute("UPDATE declaration_state SET current_revision=1 WHERE singleton=1")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_declaration_invalid_source_and_rehashed_nonjson_refused(self):
+        self.add_declaration_revisions()
+        bad = b'{"routing":NaN}'
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE declaration_revisions SET document_json=?, document_sha256=? "
+                "WHERE revision=1", (bad, hashlib.sha256(bad).hexdigest()))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        with sqlite3.connect(self.dbpath) as db:
+            first = b'{"routing":{"mode":"rule"},"dns":{"enabled":true}}'
+            db.execute(
+                "UPDATE declaration_revisions SET document_json=?, document_sha256=?, "
+                "source=? WHERE revision=1",
+                (first, hashlib.sha256(first).hexdigest(), "invalid source with spaces"))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_declaration_history_more_than_128_rows_refused(self):
+        document = b'{}'
+        with sqlite3.connect(self.dbpath) as db:
+            db.executemany(
+                "INSERT INTO declaration_revisions VALUES(?,?,?,?,?,?)",
+                ((rev, None if rev == 1 else rev - 1, document,
+                  hashlib.sha256(document).hexdigest(), "test:t15",
+                  "2026-01-01T00:00:00Z")
+                 for rev in range(1, lab.MAX_DECLARATION_ROWS + 2)))
+            db.execute("UPDATE declaration_state SET current_revision=?",
+                       (lab.MAX_DECLARATION_ROWS + 1,))
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
