@@ -25,7 +25,10 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 6
+VERSION = 7
+MAX_DECLARATION_ROWS = 128
+MAX_DECLARATION_BYTES = 16 << 20
+DECLARATION_SOURCE = re.compile(r"[A-Za-z0-9_./:-]{1,128}\Z")
 MAX_GENERATION_ROWS = 128
 MAX_GENERATION_CONFIG_BYTES = 64 << 20
 MAX_GENERATION_METADATA_BYTES = 16 << 20
@@ -370,6 +373,58 @@ def complete_generation_ledger(db: sqlite3.Connection) -> tuple[int, str]:
     return len(rows), digest.hexdigest()
 
 
+
+def complete_declaration_ledger(db: sqlite3.Connection) -> tuple[int, int | None, str]:
+    """Read-only audit of the entire v18 declaration revision chain."""
+    state = db.execute(
+        "SELECT current_revision FROM declaration_state WHERE singleton=1").fetchall()
+    if len(state) != 1:
+        refuse("invalid declaration singleton")
+    current = state[0][0]
+    if current is not None and (type(current) is not int or current <= 0):
+        refuse("invalid current declaration revision")
+    rows = db.execute(
+        "SELECT revision, parent_revision, document_json, document_sha256, "
+        "source, created_at FROM declaration_revisions ORDER BY revision LIMIT ?",
+        (MAX_DECLARATION_ROWS + 1,)).fetchall()
+    if len(rows) > MAX_DECLARATION_ROWS:
+        refuse("disposable declaration history exceeds bounded audit limit")
+    checksum = hashlib.sha256()
+    for n, row in enumerate(rows, start=1):
+        rev, parent, raw, stored_sha, source, created = row
+        if (type(rev) is not int or rev != n or
+                parent != (None if n == 1 else n - 1) or
+                (parent is not None and type(parent) is not int) or
+                not isinstance(raw, bytes) or not 0 < len(raw) <= MAX_DECLARATION_BYTES or
+                not isinstance(source, str) or not DECLARATION_SOURCE.fullmatch(source)):
+            refuse("invalid declaration revision chain or source")
+        digest = sha_blob(raw, stored_sha)
+        try:
+            json.loads(raw, parse_constant=lambda _: refuse(
+                "non-JSON declaration literal"))
+        except (UnicodeError, ValueError) as exc:
+            raise AuditRefusal("invalid retained declaration JSON") from exc
+        if (not isinstance(created, str) or not created.isascii() or
+                not 0 < len(created) <= 96):
+            refuse("invalid declaration timestamp")
+        try:
+            when = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise AuditRefusal("invalid declaration timestamp") from exc
+        if when.tzinfo is None or when.utcoffset() is None:
+            refuse("declaration timestamp missing timezone")
+        # Only canonical private digests are retained, never native
+        # policy/DNS documents, profile credentials or source names.
+        record = [rev, parent, digest, len(raw), source, created]
+        checksum.update(json.dumps(
+            record, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        checksum.update(b"\n")
+    expected_current = len(rows) if rows else None
+    if current != expected_current:
+        refuse("current declaration pointer does not match retained revision chain")
+    return len(rows), current, checksum.hexdigest()
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -471,6 +526,7 @@ def logical_state(db: sqlite3.Connection) -> dict:
                        latest["phase"] != active[0][1] or not latest["active"]):
             refuse("active apply journal is not the latest candidate")
         generation_count, generation_ledger_sha = complete_generation_ledger(db)
+        declaration_count, declaration_current, declaration_sha = complete_declaration_ledger(db)
         digests = []
         for gid in (applied, lkg):
             if gid is None:
@@ -497,6 +553,9 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "applied_and_lkg_sha256": digests,
             "generation_record_count": generation_count,
             "generation_ledger_sha256": generation_ledger_sha,
+            "declaration_record_count": declaration_count,
+            "declaration_current_revision": declaration_current,
+            "declaration_ledger_sha256": declaration_sha,
             "core_desired_state": core,
             "routing_mode": mode,
             "private_direct": bool(private_direct),
