@@ -1593,3 +1593,9 @@ docs/
 - 上一轮 ADR 0134/0136 只确认 Applied/LKG、最新候选与 `apply_history` 已归档元数据，未验证**仍保留但已经不再被当前状态引用的旧 generation JSON 内容**。真实 Go v18 的默认保留策略允许最近五个已确认代际继续存在。新增 guest 只读 `generations` ledger：在单个 WAL-aware 事务中完整扫描最多 128 条，核验代际 ID/版本、config+SHA、可选 manifest/source-map BLOB+SHA、创建时间戳及 v17+ 的 nullable `restore_origin_generation_id`，并对顺序化元数据（包括所有内容摘要与字节数）计算 SHA-256。超过上限或 JSON/摘要/版本异常直接拒绝。
 - guest 私有 witness 版本 **v5→v6**，不可对旧基线静默升级或复写。Python mock 案例覆盖旧代际的 config 被替换并**同步重算 SHA**、时间戳更改、异常可选元数据及超配额；Go/Python 跨语言用例用真正生产 Store 连续提交三代到一次性 SQLite，在最旧代际不属于 Applied/LKG/最新候选且历史 journal 未改变的情况下，要求独立只读 audit 必须识别其篡改。不能将哈希摘要误当成历史签名或真实掉电证明。
 - 本改动不迁移生产 SQLite、不开用户备份恢复接口、不开 Core/TUN、不执行 VM 掉电/重启、不清理元数据；T15/T23/T25、完整资源/凭据恢复、CN 离线规则许可证、Core 双重回滚和 72h/7d/30d 稳定运行验收全部保持未通过。
+
+### 2026-10-20 — M4 ADR 0138 所有声明修订链的有界只读审计（T15/T23 实验子集）
+
+- SQLite v18 的 `declaration_revisions` 持有路由/DNS 原始声明修订链，独立于已 Applied 的 generation / selection。之前的 guest 审计即使把代际全量纳入 SHA，仍没有覆盖**已不再是当前头版本**的旧声明：其 `document_json` 被替换并同步重算 `document_sha256` 时会漏检。新增 owner-private guest v7 只读 ledger：在原 WAL-aware SQLite 单事务中完整核验最多 128 条声明的连续 revision/parent 链、current 指针、声明 JSON+SHA、Go 合法来源标识与创建时间，并生成全修订 SHA-256 ledger；异常或超限立即拒绝。
+- Python synthetic 测试覆盖旧声明 rehash、断裂 parent、失效 current 及畸形来源/JSON、超 128 条；Linux Go v18 跨语言测试使用真实 `CommitDeclaration` 两次原子写入、独立 Python capture/verify，然后仅对一次性测试库的**旧**声明做内容+SHA 同步替换，必须拒绝。该操作不触碰实际 Core、TUI、Daemon 或真实用户配置。
+- guest witness v6→**v7** 只更新实验文档结构，不迁移生产 SQLite；不可覆盖/复用老证据。该摘要既非完整路由编译器，也非签名或恢复授权，T15/T23/T25、真实 VM/电源故障、Core 恢复、规则文件闭包、CN 离线许可证、HMAC、72h/7d/30d soak 仍未通过。
