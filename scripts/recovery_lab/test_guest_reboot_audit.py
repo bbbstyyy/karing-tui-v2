@@ -91,6 +91,21 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     source TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE declaration_state (
                     singleton INTEGER PRIMARY KEY, current_revision INTEGER);
+                CREATE TABLE profile_snapshots (
+                    id INTEGER PRIMARY KEY, profile_id TEXT NOT NULL,
+                    source_kind TEXT NOT NULL, source_revision TEXT NOT NULL,
+                    source_sha256 TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE profile_state (
+                    profile_id TEXT PRIMARY KEY,
+                    current_snapshot_id INTEGER NOT NULL REFERENCES profile_snapshots(id),
+                    previous_snapshot_id INTEGER REFERENCES profile_snapshots(id),
+                    updated_at TEXT NOT NULL);
+                CREATE TABLE profile_snapshot_nodes (
+                    snapshot_id INTEGER NOT NULL REFERENCES profile_snapshots(id),
+                    ordinal INTEGER NOT NULL, node_id TEXT NOT NULL,
+                    source_key TEXT NOT NULL, source_name TEXT NOT NULL,
+                    payload_json BLOB NOT NULL, payload_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(snapshot_id, ordinal));
                 CREATE TABLE selection_state (
                     singleton INTEGER PRIMARY KEY, revision INTEGER, current_target_json BLOB);
             """)
@@ -110,6 +125,26 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                 (hashlib.sha256(config).hexdigest(),))
         self.dbpath.chmod(0o600)
 
+
+    def add_profile_history(self):
+        """Synthetic v18-shaped previous/current retained snapshot fixtures."""
+        old = b'{"type":"http","server":"127.0.0.1","server_port":8080}'
+        new = b'{"type":"http","server":"127.0.0.1","server_port":8081}'
+        with sqlite3.connect(self.dbpath) as db:
+            db.executemany(
+                "INSERT INTO profile_snapshots VALUES(?, ?, ?, ?, ?, ?)",
+                [(1, "profile-a", "sing-box", "rev-1", "a" * 64,
+                  "2026-01-01T00:00:00Z"),
+                 (2, "profile-a", "sing-box", "rev-2", "b" * 64,
+                  "2026-01-01T00:00:03Z")])
+            db.execute("INSERT INTO profile_state VALUES(?, ?, ?, ?)",
+                       ("profile-a", 2, 1, "2026-01-01T00:00:04Z"))
+            db.executemany(
+                "INSERT INTO profile_snapshot_nodes VALUES(?, ?, ?, ?, ?, ?, ?)",
+                [(1, 0, "node-a", "tag-a", "Alpha", old,
+                  hashlib.sha256(old).hexdigest()),
+                 (2, 0, "node-a", "tag-a", "Alpha renamed", new,
+                  hashlib.sha256(new).hexdigest())])
 
     def add_prepared(self):
         config = b'{"inbounds":[],"pending":true}'
@@ -685,6 +720,90 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         with sqlite3.connect(self.dbpath) as db:
             db.execute("UPDATE apply_journal SET phase='interrupted', "
                        "error='incorrect reason' WHERE id=2")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v8_pins_old_profile_node_even_if_rehashed(self):
+        self.add_profile_history()
+        before = self.dbpath.read_bytes()
+        self.capture()
+        result = lab.inspect(self.args)
+        self.assertEqual(result["status"], "sqlite_subset_consistent_manual_review_only")
+        self.assertFalse(result["restore_authorized"])
+        self.assertEqual(before, self.dbpath.read_bytes())
+        # Current profile pointer and its node remain identical. Recompute the
+        # stored SHA on ONLY the previous retained snapshot node.
+        replacement = b'{"type":"http","server":"127.0.0.1","server_port":9090}'
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE profile_snapshot_nodes SET payload_json=?, payload_sha256=? "
+                "WHERE snapshot_id=1 AND ordinal=0",
+                (replacement, hashlib.sha256(replacement).hexdigest()))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v8_profile_pointer_and_name_drift_fail_closed(self):
+        self.add_profile_history()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE profile_state SET previous_snapshot_id=NULL "
+                       "WHERE profile_id='profile-a'")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        # Restore original pointer so only the historical source name changes.
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE profile_state SET previous_snapshot_id=1 "
+                       "WHERE profile_id='profile-a'")
+            db.execute("UPDATE profile_snapshot_nodes SET source_name='forged' "
+                       "WHERE snapshot_id=1 AND ordinal=0")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v8_profile_invalid_hash_json_and_ordinal_refused(self):
+        self.add_profile_history()
+        cases = [
+            ("UPDATE profile_snapshot_nodes SET payload_json=? WHERE snapshot_id=1",
+             (b'{"type":"http","server_port":9000}',)),
+            ("UPDATE profile_snapshot_nodes SET payload_json=?, payload_sha256=? "
+             "WHERE snapshot_id=1",
+             (b'{"number":NaN}', hashlib.sha256(b'{"number":NaN}').hexdigest())),
+            ("UPDATE profile_snapshot_nodes SET ordinal=7 WHERE snapshot_id=1",
+             ()),
+            ("UPDATE profile_snapshots SET source_sha256='NOT-A-DIGEST' WHERE id=1",
+             ()),
+        ]
+        for statement, params in cases:
+            # Every case starts from the original fixture, not from a prior
+            # invalid mutation.
+            self.build_state_reset_profile_for_test()
+            with sqlite3.connect(self.dbpath) as db:
+                db.execute(statement, params)
+            with self.assertRaises(lab.AuditRefusal):
+                lab.inspect(self.args)
+
+    def build_state_reset_profile_for_test(self):
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("DELETE FROM profile_snapshot_nodes")
+            db.execute("DELETE FROM profile_state")
+            db.execute("DELETE FROM profile_snapshots")
+        self.add_profile_history()
+
+    def test_guest_v8_profile_rows_and_payload_budget_refused(self):
+        self.add_profile_history()
+        with sqlite3.connect(self.dbpath) as db:
+            db.executemany(
+                "INSERT INTO profile_snapshots VALUES(?, ?, ?, ?, ?, ?)",
+                ((i, "profile-a", "sing-box", "", "a" * 64,
+                  "2026-01-01T00:00:05Z")
+                 for i in range(3, lab.MAX_PROFILE_SNAPSHOTS + 2)))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        self.build_state_reset_profile_for_test()
+        huge = b" " * (lab.MAX_PROFILE_NODE_BYTES + 1)
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE profile_snapshot_nodes SET payload_json=?, "
+                       "payload_sha256=? WHERE snapshot_id=1",
+                       (huge, hashlib.sha256(huge).hexdigest()))
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
