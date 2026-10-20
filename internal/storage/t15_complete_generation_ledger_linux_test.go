@@ -105,3 +105,28 @@ func TestGuestAuditRealV18OlderRetainedGenerationLedger(t *testing.T) {
 	}
 	g.run(t, "verify", pinned, false)
 }
+
+// The v17+ restore lineage ID is a retained generation field, not a config
+// BLOB, so it must also be pinned even when the currently Applied/LKG
+// generation's config and the archived journal SHA remain identical.
+func TestGuestAuditRealV18RestoreOriginGenerationDrift(t *testing.T) {
+	g := newGuestBridge(t)
+	g.seedRealV18(t, false)
+	pinned := g.capture(t)
+	g.syntheticStopObservation(t)
+	g.run(t, "verify", pinned, true)
+
+	db, err := sql.Open("sqlite", g.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(context.Background(),
+		"UPDATE generations SET restore_origin_generation_id=? WHERE id=1", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	g.run(t, "verify", pinned, false)
+}

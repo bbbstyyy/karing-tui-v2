@@ -54,7 +54,8 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     config_sha256 TEXT NOT NULL,
                     manifest_json BLOB, manifest_sha256 TEXT,
                     source_map_json BLOB, source_map_sha256 TEXT,
-                    created_at TEXT NOT NULL);
+                    created_at TEXT NOT NULL,
+                    restore_origin_generation_id INTEGER);
                 CREATE TABLE daemon_state (
                     singleton INTEGER PRIMARY KEY,
                     config_revision INTEGER,
@@ -91,7 +92,7 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                            [(i,) for i in range(1, 19)])
             config = b'{"inbounds":[]}'
             db.execute(
-                "INSERT INTO generations VALUES(1, 0, 1, ?, ?, NULL, NULL, NULL, NULL, ?)",
+                "INSERT INTO generations VALUES(1, 0, 1, ?, ?, NULL, NULL, NULL, NULL, ?, NULL)",
                 (config, hashlib.sha256(config).hexdigest(), "2026-01-01T00:00:00Z"))
             db.execute("INSERT INTO daemon_state VALUES(1, 1, 1, 1, 0, 'running', 'rule', 0)")
             db.execute("INSERT INTO selection_state VALUES(1, 1, ?)", (b'{"kind":"auto"}',))
@@ -107,7 +108,7 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         config = b'{"inbounds":[],"pending":true}'
         with sqlite3.connect(self.dbpath) as db:
             db.execute(
-                "INSERT INTO generations VALUES(2, 1, 2, ?, ?, NULL, NULL, NULL, NULL, ?)",
+                "INSERT INTO generations VALUES(2, 1, 2, ?, ?, NULL, NULL, NULL, NULL, ?, NULL)",
                 (config, hashlib.sha256(config).hexdigest(), "2026-01-01T00:00:03Z"))
             db.execute("INSERT INTO apply_journal VALUES(2, 2, 1, 1, 2, 'prepared', 1, '')")
 
@@ -431,9 +432,30 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         payload = b'{"inbounds":[],"retained":"older"}'
         with sqlite3.connect(self.dbpath) as db:
             db.execute(
-                "INSERT INTO generations VALUES(8, 0, 1, ?, ?, NULL, NULL, NULL, NULL, ?)",
+                "INSERT INTO generations VALUES(8, 0, 1, ?, ?, NULL, NULL, NULL, NULL, ?, NULL)",
                 (payload, hashlib.sha256(payload).hexdigest(),
                  "2026-01-01T00:00:04Z"))
+
+    def test_retained_restore_origin_reference_change_fails_closed(self):
+        self.add_unreferenced_generation()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE generations SET restore_origin_generation_id=? WHERE id=8",
+                (1,))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_invalid_retained_restore_origin_refuses_even_at_capture(self):
+        self.add_unreferenced_generation()
+        for bad in (-1, 0, "not-an-integer"):
+            with self.subTest(bad=bad):
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute(
+                        "UPDATE generations SET restore_origin_generation_id=? WHERE id=8",
+                        (bad,))
+                with self.assertRaises(lab.AuditRefusal):
+                    lab.inspect(self.args)
 
     def test_retained_unreferenced_generation_content_change_fails_closed(self):
         self.add_unreferenced_generation()
@@ -487,7 +509,7 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         payload = b'{"inbounds":[]}'
         with sqlite3.connect(self.dbpath) as db:
             db.executemany(
-                "INSERT INTO generations VALUES(?, 0, 1, ?, ?, NULL, NULL, NULL, NULL, ?)",
+                "INSERT INTO generations VALUES(?, 0, 1, ?, ?, NULL, NULL, NULL, NULL, ?, NULL)",
                 ((gid, payload, hashlib.sha256(payload).hexdigest(),
                   "2026-01-01T00:00:04Z")
                  for gid in range(2, lab.MAX_GENERATION_ROWS + 2)))

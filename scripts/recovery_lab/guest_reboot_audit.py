@@ -309,7 +309,7 @@ def complete_generation_ledger(db: sqlite3.Connection) -> tuple[int, str]:
     rows = db.execute(
         "SELECT id, base_revision, target_revision, config_json, config_sha256, "
         "manifest_json, manifest_sha256, source_map_json, source_map_sha256, "
-        "created_at FROM generations ORDER BY id LIMIT ?",
+        "created_at, restore_origin_generation_id FROM generations ORDER BY id LIMIT ?",
         (MAX_GENERATION_ROWS + 1,)).fetchall()
     if len(rows) > MAX_GENERATION_ROWS:
         refuse("guest retained generation count exceeds bounded audit limit")
@@ -329,10 +329,12 @@ def complete_generation_ledger(db: sqlite3.Connection) -> tuple[int, str]:
 
     for row in rows:
         (gid, base, target, config, config_sha,
-         manifest, manifest_sha, source_map, source_sha, created) = row
+         manifest, manifest_sha, source_map, source_sha, created, restore_origin) = row
         if (type(gid) is not int or gid <= previous_id or
                 type(base) is not int or base < 0 or
-                type(target) is not int or target != base + 1):
+                type(target) is not int or target != base + 1 or
+                (restore_origin is not None and
+                 (type(restore_origin) is not int or restore_origin <= 0))):
             refuse("invalid retained generation ID or revision")
         cfg_digest = hashed_json(
             config, config_sha, MAX_GENERATION_CONFIG_BYTES)
@@ -360,7 +362,7 @@ def complete_generation_ledger(db: sqlite3.Connection) -> tuple[int, str]:
         # Ordered canonical metadata covers full BLOB digests and lengths.
         # No secret-containing config, scope, paths or timestamps are printed.
         packed = [gid, base, target, cfg_digest, other_digests[0],
-                  other_digests[1], lengths, created]
+                  other_digests[1], lengths, created, restore_origin]
         digest.update(json.dumps(
             packed, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
         digest.update(b"\n")
