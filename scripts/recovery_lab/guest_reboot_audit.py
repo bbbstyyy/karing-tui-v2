@@ -25,7 +25,10 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 5
+VERSION = 6
+MAX_GENERATION_ROWS = 128
+MAX_GENERATION_CONFIG_BYTES = 64 << 20
+MAX_GENERATION_METADATA_BYTES = 16 << 20
 MAX_INERT_RESTORE_ROWS = 32
 MAX_INERT_BASELINE_BYTES = 4096
 MAX_INERT_ARCHIVE_BYTES = 2 << 30
@@ -298,6 +301,75 @@ def inert_restore_journal_ledger(db: sqlite3.Connection) -> tuple[int, int, str]
     return len(rows), pending, checksum.hexdigest()
 
 
+
+def complete_generation_ledger(db: sqlite3.Connection) -> tuple[int, str]:
+    """Read-only v18 audit of EVERY retained generation, including orphans."""
+    # Full config/source JSON is never exported. The caller already pinned a
+    # <=64 MiB private main database and reads one WAL-aware SQLite snapshot.
+    rows = db.execute(
+        "SELECT id, base_revision, target_revision, config_json, config_sha256, "
+        "manifest_json, manifest_sha256, source_map_json, source_map_sha256, "
+        "created_at, restore_origin_generation_id FROM generations ORDER BY id LIMIT ?",
+        (MAX_GENERATION_ROWS + 1,)).fetchall()
+    if len(rows) > MAX_GENERATION_ROWS:
+        refuse("guest retained generation count exceeds bounded audit limit")
+    digest = hashlib.sha256()
+    previous_id = 0
+
+    def hashed_json(raw, expected, maximum):
+        if not isinstance(raw, bytes) or not 0 < len(raw) <= maximum:
+            refuse("missing or oversized retained generation JSON")
+        digest_value = sha_blob(raw, expected)
+        try:
+            json.loads(raw, parse_constant=lambda _: refuse(
+                "non-JSON constant in retained generation"))
+        except (ValueError, UnicodeError) as exc:
+            raise AuditRefusal("invalid retained generation JSON") from exc
+        return digest_value
+
+    for row in rows:
+        (gid, base, target, config, config_sha,
+         manifest, manifest_sha, source_map, source_sha, created, restore_origin) = row
+        if (type(gid) is not int or gid <= previous_id or
+                type(base) is not int or base < 0 or
+                type(target) is not int or target != base + 1 or
+                (restore_origin is not None and
+                 (type(restore_origin) is not int or restore_origin <= 0))):
+            refuse("invalid retained generation ID or revision")
+        cfg_digest = hashed_json(
+            config, config_sha, MAX_GENERATION_CONFIG_BYTES)
+        other_digests = []
+        lengths = [len(config)]
+        for raw, sha in ((manifest, manifest_sha), (source_map, source_sha)):
+            if raw is None and sha is None:
+                other_digests.append(None)
+                lengths.append(0)
+            elif raw is None or sha is None:
+                refuse("retained generation metadata BLOB/hash mismatch")
+            else:
+                other_digests.append(
+                    hashed_json(raw, sha, MAX_GENERATION_METADATA_BYTES))
+                lengths.append(len(raw))
+        if (not isinstance(created, str) or not created.isascii() or
+                not 0 < len(created) <= 96):
+            refuse("invalid retained generation creation timestamp")
+        try:
+            instant = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise AuditRefusal("invalid retained generation creation time") from exc
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            refuse("retained generation timestamp lacks timezone")
+        # Ordered canonical metadata covers full BLOB digests and lengths.
+        # No secret-containing config, scope, paths or timestamps are printed.
+        packed = [gid, base, target, cfg_digest, other_digests[0],
+                  other_digests[1], lengths, created, restore_origin]
+        digest.update(json.dumps(
+            packed, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        digest.update(b"\n")
+        previous_id = gid
+    return len(rows), digest.hexdigest()
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -398,6 +470,7 @@ def logical_state(db: sqlite3.Connection) -> dict:
         if active and (latest is None or latest["id"] != active[0][0] or
                        latest["phase"] != active[0][1] or not latest["active"]):
             refuse("active apply journal is not the latest candidate")
+        generation_count, generation_ledger_sha = complete_generation_ledger(db)
         digests = []
         for gid in (applied, lkg):
             if gid is None:
@@ -422,6 +495,8 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "applied_generation_id": applied,
             "lkg_generation_id": lkg,
             "applied_and_lkg_sha256": digests,
+            "generation_record_count": generation_count,
+            "generation_ledger_sha256": generation_ledger_sha,
             "core_desired_state": core,
             "routing_mode": mode,
             "private_direct": bool(private_direct),

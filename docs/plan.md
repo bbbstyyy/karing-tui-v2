@@ -1587,3 +1587,9 @@ docs/
 - ADR 0135 虽然对 inert journal `baseline_json` 计算 SHA-256 并检查 JSON 非空，但 Go 生产 `scanInertRestorePreparation` 还严格要求 `InertRestoreFence` 的完整 16 个字段、合法数值/摘要/分流/Core 意图以及 `json.Marshal` 的原始规范字节。新增**只读** Python 校验，与真实 Go v18 Store 的拒绝语义一致；即使故意添加字段、调整 JSON 顺序/空白或填入 Go 不接受的数值并**同步重算 SHA**，也应在捕获基线之前直接拒绝。
 - guest 私有基线版本 v4 → **v5**，不隐式升级/覆盖旧 witness；Python synthetic fixtures 用合法的完整 Go-shaped fence 验证正反分支，Linux Go 端仅使用一次性真实 v18 SQLite 和生产 `PrepareInertRestoreRecord` 创建的合法准备记录，在测试临时库中注入三种无效 JSON+匹配 SHA，并让 Python 与 Go 原生 scanner 同时拒绝。原始已确认 Applied/LKG、路由和 Core 不改变。
 - 一致性审计不构成历史 fence 的重新认证或恢复许可：没有 Core 启停、客体虚拟机断电或真实重启、归档 HMAC、规则 inode 验证、SQLite 凭据恢复、自动 GC 与元数据删除。T15/T23/T25 和 72h/7d/30d 仍未通过。
+
+### 2026-10-20 — M4 ADR 0137 全部保留 generation 的有界只读摘要（T15/T23 实验子集）
+
+- 上一轮 ADR 0134/0136 只确认 Applied/LKG、最新候选与 `apply_history` 已归档元数据，未验证**仍保留但已经不再被当前状态引用的旧 generation JSON 内容**。真实 Go v18 的默认保留策略允许最近五个已确认代际继续存在。新增 guest 只读 `generations` ledger：在单个 WAL-aware 事务中完整扫描最多 128 条，核验代际 ID/版本、config+SHA、可选 manifest/source-map BLOB+SHA、创建时间戳及 v17+ 的 nullable `restore_origin_generation_id`，并对顺序化元数据（包括所有内容摘要与字节数）计算 SHA-256。超过上限或 JSON/摘要/版本异常直接拒绝。
+- guest 私有 witness 版本 **v5→v6**，不可对旧基线静默升级或复写。Python mock 案例覆盖旧代际的 config 被替换并**同步重算 SHA**、时间戳更改、异常可选元数据及超配额；Go/Python 跨语言用例用真正生产 Store 连续提交三代到一次性 SQLite，在最旧代际不属于 Applied/LKG/最新候选且历史 journal 未改变的情况下，要求独立只读 audit 必须识别其篡改。不能将哈希摘要误当成历史签名或真实掉电证明。
+- 本改动不迁移生产 SQLite、不开用户备份恢复接口、不开 Core/TUN、不执行 VM 掉电/重启、不清理元数据；T15/T23/T25、完整资源/凭据恢复、CN 离线规则许可证、Core 双重回滚和 72h/7d/30d 稳定运行验收全部保持未通过。
