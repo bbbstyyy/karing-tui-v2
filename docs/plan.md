@@ -1605,3 +1605,9 @@ docs/
 - ADR 0138 已覆盖完整声明修订链，但订阅 Profile 的当前/上次 `profile_snapshots` 和 `profile_snapshot_nodes` 仍是独立的 SQLite v18 持久数据。仅变更**前一个**快照节点 JSON 并同步重算行内 SHA 时，Applied/LKG、当前 Profile 和此前 guest ledger 都可能不变。新增 guest **v8** 基线，单个 WAL-aware SQLite 只读事务检查 `profile_state`、所有保留快照与节点的有界顺序摘要、snapshot 指针和所有权、每快照连续 ordinal、JSON/SHA 及可解释的字段/时间戳；只输出计数与摘要，不输出订阅地址或节点字段。
 - 实验专用上限 64 条 Profile 状态、128 条快照、8192 条节点、每个节点 JSON 最大 1 MiB、节点总量 48 MiB；超限立即拒绝，**不是**新的生产订阅配额。Python synthetic 测试覆盖上一快照的内容+SHA 同步篡改、指针/名称漂移、畸形 JSON/ordinal/哈希及上限；真实 Go v18 跨语言用例使用两次生产 `CommitProfileSnapshot`，验证原始 SHA 固定后旧节点修改必拒绝，且未修改前的 Python 读审计不改变 SQLite 主文件。
 - 此切片**未覆盖** `profile_sources` 的 URL/定时更新数据和 `profile_node_overlays` 用户覆盖，也不验证已经被实际 prune 的历史快照。guest v7→v8 不迁移生产 SQLite v18，旧 witness 不得静默复用；没有真实 VM/电气掉电、Core 流量/双回滚、规则资源闭包、原始订阅认证或 HMAC 恢复，所有 Restore/GC 权限继续关闭，T15/T23/T25、CN 离线许可证及 72h/7d/30d 仍未通过。
+
+### 2026-10-20 — M4 ADR 0140 节点用户覆盖状态（含已移除节点）的有界只读审计
+
+- 上一阶段 ADR 0139 已在 guest v8 固定当前/上一版本的 Profile 快照和节点 JSON，但 Go v18 的 `profile_node_overlays` 独立保存节点 Disabled/Favorite、别名、排序以及 CAS 修订号。即使历史快照完全不变，已移除节点保留的“休眠”覆盖记录也可能被单独修改而不被旧基线识别。新增 **guest v9** 全量有界覆盖摘要：同一个 WAL-aware SQLite 只读事务遍历所有覆盖行，核验 ID/修订号/布尔/别名/排序/时间戳，并固定完整字段顺序 SHA-256；不会要求所有覆盖记录必须指向当前节点（生产 Go 明确保留已移除节点的用户意图）。
+- 仅实验允许的上限为**全库 2048 条**覆盖记录，超限拒绝，**不更改生产每 Profile 8192 条上限**。Python synthetic 回归涵盖休眠节点篡改但 revision 不变、畸形字段、超配额，以及 prepared→interrupted 后只允许 journal 差异的严格复核；Go v18 跨语言回归用真实 `CommitProfileSnapshot` 与 `CommitProfileNodeOverlay` 建立两代及休眠覆盖，Python 独立固定外部 SHA 后更改休眠记录必须拒绝。仅计数和摘要进入私有 witness，别名/节点信息不出现在报告。
+- guest witness **v8→v9** 不迁移产品 SQLite v18，不兼容更早的证据；`profile_sources` URL、拉取/调度状态和流量数据仍待单独闭包验证，T15/T23/T25、真实 VM/电气掉电、Core 路由与双回滚、规则资源、CN 离线许可证、HMAC、恢复授权和 72h/7d/30d soak **全部仍未验收**。
