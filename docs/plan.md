@@ -1599,3 +1599,9 @@ docs/
 - SQLite v18 的 `declaration_revisions` 持有路由/DNS 原始声明修订链，独立于已 Applied 的 generation / selection。之前的 guest 审计即使把代际全量纳入 SHA，仍没有覆盖**已不再是当前头版本**的旧声明：其 `document_json` 被替换并同步重算 `document_sha256` 时会漏检。新增 owner-private guest v7 只读 ledger：在原 WAL-aware SQLite 单事务中完整核验最多 128 条声明的连续 revision/parent 链、current 指针、声明 JSON+SHA、Go 合法来源标识与创建时间，并生成全修订 SHA-256 ledger；异常或超限立即拒绝。
 - Python synthetic 测试覆盖旧声明 rehash、断裂 parent、失效 current 及畸形来源/JSON、超 128 条；Linux Go v18 跨语言测试使用真实 `CommitDeclaration` 两次原子写入、独立 Python capture/verify，然后仅对一次性测试库的**旧**声明做内容+SHA 同步替换，必须拒绝。该操作不触碰实际 Core、TUI、Daemon 或真实用户配置。
 - guest witness v6→**v7** 只更新实验文档结构，不迁移生产 SQLite；不可覆盖/复用老证据。该摘要既非完整路由编译器，也非签名或恢复授权，T15/T23/T25、真实 VM/电源故障、Core 恢复、规则文件闭包、CN 离线许可证、HMAC、72h/7d/30d soak 仍未通过。
+
+### 2026-10-20 — M4 ADR 0139 Profile 当前/上一快照与节点 BLOB 的只读有界审计（T15/T23 实验子集）
+
+- ADR 0138 已覆盖完整声明修订链，但订阅 Profile 的当前/上次 `profile_snapshots` 和 `profile_snapshot_nodes` 仍是独立的 SQLite v18 持久数据。仅变更**前一个**快照节点 JSON 并同步重算行内 SHA 时，Applied/LKG、当前 Profile 和此前 guest ledger 都可能不变。新增 guest **v8** 基线，单个 WAL-aware SQLite 只读事务检查 `profile_state`、所有保留快照与节点的有界顺序摘要、snapshot 指针和所有权、每快照连续 ordinal、JSON/SHA 及可解释的字段/时间戳；只输出计数与摘要，不输出订阅地址或节点字段。
+- 实验专用上限 64 条 Profile 状态、128 条快照、8192 条节点、每个节点 JSON 最大 1 MiB、节点总量 48 MiB；超限立即拒绝，**不是**新的生产订阅配额。Python synthetic 测试覆盖上一快照的内容+SHA 同步篡改、指针/名称漂移、畸形 JSON/ordinal/哈希及上限；真实 Go v18 跨语言用例使用两次生产 `CommitProfileSnapshot`，验证原始 SHA 固定后旧节点修改必拒绝，且未修改前的 Python 读审计不改变 SQLite 主文件。
+- 此切片**未覆盖** `profile_sources` 的 URL/定时更新数据和 `profile_node_overlays` 用户覆盖，也不验证已经被实际 prune 的历史快照。guest v7→v8 不迁移生产 SQLite v18，旧 witness 不得静默复用；没有真实 VM/电气掉电、Core 流量/双回滚、规则资源闭包、原始订阅认证或 HMAC 恢复，所有 Restore/GC 权限继续关闭，T15/T23/T25、CN 离线许可证及 72h/7d/30d 仍未通过。
