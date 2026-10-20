@@ -106,6 +106,12 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     source_key TEXT NOT NULL, source_name TEXT NOT NULL,
                     payload_json BLOB NOT NULL, payload_sha256 TEXT NOT NULL,
                     PRIMARY KEY(snapshot_id, ordinal));
+                CREATE TABLE profile_node_overlays (
+                    profile_id TEXT NOT NULL, node_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL, disabled INTEGER NOT NULL,
+                    favorite INTEGER NOT NULL, alias TEXT NOT NULL,
+                    sort_rank INTEGER, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(profile_id, node_id));
                 CREATE TABLE selection_state (
                     singleton INTEGER PRIMARY KEY, revision INTEGER, current_target_json BLOB);
             """)
@@ -804,6 +810,99 @@ class GuestBootReadOnlyTests(unittest.TestCase):
             db.execute("UPDATE profile_snapshot_nodes SET payload_json=?, "
                        "payload_sha256=? WHERE snapshot_id=1",
                        (huge, hashlib.sha256(huge).hexdigest()))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def add_dormant_overlays(self):
+        """Persist an active overlay and one detached from current snapshots."""
+        rows = [
+            ("profile-a", "node-a", 2, 0, 1, "Visible current alias", 7,
+             "2026-01-01T00:00:06Z"),
+            ("profile-a", "node-retired", 4, 1, 0,
+             "Private dormant alias - never print", 99,
+             "2026-01-01T00:00:05Z"),
+        ]
+        with sqlite3.connect(self.dbpath) as db:
+            db.executemany(
+                "INSERT INTO profile_node_overlays VALUES(?, ?, ?, ?, ?, ?, ?, ?)", rows)
+
+    def reset_dormant_overlays(self):
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("DELETE FROM profile_node_overlays")
+        self.add_dormant_overlays()
+
+    def test_guest_v9_pins_detached_overlay_even_if_revision_unchanged(self):
+        self.add_dormant_overlays()
+        before = self.dbpath.read_bytes()
+        self.capture()
+        result = lab.inspect(self.args)
+        self.assertEqual(result["status"], "sqlite_subset_consistent_manual_review_only")
+        self.assertFalse(result["restore_authorized"])
+        self.assertEqual(before, self.dbpath.read_bytes())
+        baseline = (self.witness / ("baseline-" + self.nonce + ".json")).read_bytes()
+        self.assertNotIn(b"Private dormant alias", baseline)
+        self.assertNotIn(b"node-retired", baseline)
+        # Existing config, current source/node and overlay are unchanged.
+        # Only old/dormant user intent changes without revision/CAS increment.
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE profile_node_overlays SET disabled=0, favorite=1, "
+                "alias='tampered dormant preference' "
+                "WHERE profile_id='profile-a' AND node_id='node-retired'")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v9_overlay_refuses_non_go_values_at_capture(self):
+        self.add_dormant_overlays()
+        mutations = [
+            ("UPDATE profile_node_overlays SET revision=0 WHERE node_id='node-retired'", ()),
+            ("UPDATE profile_node_overlays SET disabled=7 WHERE node_id='node-retired'", ()),
+            ("UPDATE profile_node_overlays SET favorite=2 WHERE node_id='node-retired'", ()),
+            ("UPDATE profile_node_overlays SET sort_rank=-1 WHERE node_id='node-retired'", ()),
+            ("UPDATE profile_node_overlays SET sort_rank=? WHERE node_id='node-retired'",
+             (lab.MAX_PROFILE_OVERLAY_SORT_RANK + 1,)),
+            ("UPDATE profile_node_overlays SET alias=? WHERE node_id='node-retired'",
+             (" " + "Alias",)),
+            ("UPDATE profile_node_overlays SET alias=? WHERE node_id='node-retired'",
+             ("A" * (lab.MAX_PROFILE_OVERLAY_ALIAS_BYTES + 1),)),
+            ("UPDATE profile_node_overlays SET alias=? WHERE node_id='node-retired'",
+             ("line\nbreak",)),
+            ("UPDATE profile_node_overlays SET updated_at='not-a-time' "
+             "WHERE node_id='node-retired'", ()),
+        ]
+        for statement, arguments in mutations:
+            with self.subTest(statement=statement, arguments=str(arguments)[:40]):
+                self.reset_dormant_overlays()
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute(statement, arguments)
+                with self.assertRaises(lab.AuditRefusal):
+                    lab.inspect(self.args)
+
+    def test_guest_v9_overlay_budget_refuses_2049_rows(self):
+        # A narrow guest cap, not the Go Store's 8192 PER-profile quota.
+        with sqlite3.connect(self.dbpath) as db:
+            db.executemany(
+                "INSERT INTO profile_node_overlays VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                (("profile-a", f"former-node-{i:05d}", 1, 0, 0, "", None,
+                  "2026-01-01T00:00:00Z")
+                 for i in range(lab.MAX_PROFILE_OVERLAY_ROWS + 1)))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v9_reconcile_preserves_overlay_ledger(self):
+        self.add_dormant_overlays()
+        self.add_prepared()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE apply_journal SET phase='interrupted', active_slot=NULL, "
+                "error='daemon restarted before apply completed' WHERE id=2")
+        self.args.mode = "reconcile-verify"
+        self.assertTrue(lab.inspect(self.args)["prepared_journal_transition_checked"])
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE profile_node_overlays SET sort_rank=NULL "
+                "WHERE node_id='node-retired'")
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
