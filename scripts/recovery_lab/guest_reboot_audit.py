@@ -25,7 +25,12 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 7
+VERSION = 8
+MAX_PROFILE_STATES = 64
+MAX_PROFILE_SNAPSHOTS = 128
+MAX_PROFILE_NODES = 8192
+MAX_PROFILE_NODE_BYTES = 1 << 20
+MAX_PROFILE_TOTAL_BYTES = 48 << 20  # disposable-guest-only, stricter than Go's per-snapshot limit
 MAX_DECLARATION_ROWS = 128
 MAX_DECLARATION_BYTES = 16 << 20
 DECLARATION_SOURCE = re.compile(r"[A-Za-z0-9_./:-]{1,128}\Z")
@@ -425,6 +430,124 @@ def complete_declaration_ledger(db: sqlite3.Connection) -> tuple[int, int | None
     return len(rows), current, checksum.hexdigest()
 
 
+def complete_profile_snapshot_ledger(db: sqlite3.Connection) -> tuple[int, int, int, str]:
+    """Bounded v18 profile snapshot and node evidence, without exporting credentials.
+
+    The Go Store retains current+previous snapshots per profile, not unbounded
+    history. Source URL/fetch state and user overlays are different tables and
+    deliberately remain OUTSIDE this ledger.
+    """
+    def bounded_text(value, maximum, required=True, trimmed=True):
+        if (not isinstance(value, str) or
+                (required and not value) or len(value.encode("utf-8")) > maximum or
+                (trimmed and value.strip() != value) or
+                any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+            refuse("invalid retained profile identity or metadata")
+
+    def bounded_time(value):
+        if (not isinstance(value, str) or not value.isascii() or
+                not 0 < len(value) <= 96):
+            refuse("invalid retained profile timestamp")
+        try:
+            instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise AuditRefusal("invalid retained profile timestamp") from exc
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            refuse("retained profile timestamp lacks timezone")
+
+    digest = hashlib.sha256()
+
+    def pin(kind, fields):
+        digest.update(kind.encode("ascii"))
+        digest.update(json.dumps(
+            fields, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        digest.update(b"\n")
+
+    state_rows = db.execute(
+        "SELECT profile_id, current_snapshot_id, previous_snapshot_id, "
+        "updated_at FROM profile_state ORDER BY profile_id LIMIT ?",
+        (MAX_PROFILE_STATES + 1,)).fetchall()
+    if len(state_rows) > MAX_PROFILE_STATES:
+        refuse("too many guest profile state rows")
+    state_by_profile = {}
+    referenced = set()
+    for profile_id, current, previous, updated in state_rows:
+        bounded_text(profile_id, 512)
+        if (type(current) is not int or current <= 0 or
+                (previous is not None and
+                 (type(previous) is not int or previous <= 0 or previous >= current))):
+            refuse("invalid guest profile current/previous snapshot pointers")
+        bounded_time(updated)
+        state_by_profile[profile_id] = (current, previous)
+        referenced.add(current)
+        if previous is not None:
+            referenced.add(previous)
+        pin("S", [profile_id, current, previous, updated])
+
+    snapshot_rows = db.execute(
+        "SELECT id, profile_id, source_kind, source_revision, "
+        "source_sha256, created_at FROM profile_snapshots ORDER BY id LIMIT ?",
+        (MAX_PROFILE_SNAPSHOTS + 1,)).fetchall()
+    if len(snapshot_rows) > MAX_PROFILE_SNAPSHOTS:
+        refuse("too many retained guest profile snapshots")
+    snapshots = {}
+    previous_id = 0
+    for sid, profile_id, kind, source_revision, source_sha, created in snapshot_rows:
+        if (type(sid) is not int or sid <= previous_id or
+                sid not in referenced or profile_id not in state_by_profile or
+                sid not in state_by_profile[profile_id] or
+                not isinstance(source_sha, str) or not SHA.fullmatch(source_sha)):
+            refuse("invalid retained guest profile snapshot owner or source hash")
+        bounded_text(profile_id, 512)
+        bounded_text(kind, 128)
+        bounded_text(source_revision, 4096, required=False)
+        bounded_time(created)
+        snapshots[sid] = profile_id
+        pin("P", [sid, profile_id, kind, source_revision, source_sha, created])
+        previous_id = sid
+    if set(snapshots) != referenced:
+        refuse("profile snapshot pointer or retained snapshot is missing")
+
+    # Iterate one row at a time; do not materialize thousands of 1 MiB secret
+    # node JSON documents in memory or put them in witness/report fields.
+    ordinals = {sid: 0 for sid in snapshots}
+    per_snapshot_bytes = {sid: 0 for sid in snapshots}
+    total_nodes = 0
+    total_bytes = 0
+    cursor = db.execute(
+        "SELECT snapshot_id, ordinal, node_id, source_key, source_name, "
+        "payload_json, payload_sha256 "
+        "FROM profile_snapshot_nodes ORDER BY snapshot_id, ordinal")
+    for sid, ordinal, node_id, source_key, source_name, raw, stored_sha in cursor:
+        total_nodes += 1
+        if total_nodes > MAX_PROFILE_NODES:
+            refuse("too many retained guest snapshot nodes")
+        if (type(sid) is not int or sid not in snapshots or
+                type(ordinal) is not int or ordinal != ordinals[sid]):
+            refuse("invalid guest snapshot node owner or ordinal")
+        bounded_text(node_id, 512)
+        bounded_text(source_key, 4096)
+        bounded_text(source_name, 4096, trimmed=False)
+        if not isinstance(raw, bytes) or not 0 < len(raw) <= MAX_PROFILE_NODE_BYTES:
+            refuse("missing or oversized guest snapshot node JSON")
+        total_bytes += len(raw)
+        per_snapshot_bytes[sid] += len(raw)
+        if (total_bytes > MAX_PROFILE_TOTAL_BYTES or
+                per_snapshot_bytes[sid] > (64 << 20)):
+            refuse("guest profile snapshot payload budget exceeded")
+        payload_sha = sha_blob(raw, stored_sha)
+        try:
+            json.loads(raw, parse_constant=lambda _: refuse(
+                "non-JSON constant in guest snapshot node"))
+        except (UnicodeError, ValueError) as exc:
+            raise AuditRefusal("invalid guest snapshot node JSON") from exc
+        pin("N", [sid, ordinal, node_id, source_key, source_name,
+                  payload_sha, len(raw)])
+        ordinals[sid] += 1
+
+    return len(state_rows), len(snapshot_rows), total_nodes, digest.hexdigest()
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -527,6 +650,7 @@ def logical_state(db: sqlite3.Connection) -> dict:
             refuse("active apply journal is not the latest candidate")
         generation_count, generation_ledger_sha = complete_generation_ledger(db)
         declaration_count, declaration_current, declaration_sha = complete_declaration_ledger(db)
+        profile_states, profile_snapshots, profile_nodes, profile_sha = complete_profile_snapshot_ledger(db)
         digests = []
         for gid in (applied, lkg):
             if gid is None:
@@ -556,6 +680,10 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "declaration_record_count": declaration_count,
             "declaration_current_revision": declaration_current,
             "declaration_ledger_sha256": declaration_sha,
+            "profile_state_record_count": profile_states,
+            "profile_snapshot_record_count": profile_snapshots,
+            "profile_snapshot_node_count": profile_nodes,
+            "profile_snapshot_ledger_sha256": profile_sha,
             "core_desired_state": core,
             "routing_mode": mode,
             "private_direct": bool(private_direct),
