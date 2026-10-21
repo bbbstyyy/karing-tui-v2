@@ -70,3 +70,25 @@ Until physical/virtual crash replay and the full *post-restart invariants* are i
 The disposable host `vm_power_cut.py` emits two distinct, owner-private, non-overwriting and fsynced files: `intent-<nonce>.json` before forced stop, and `observation-<nonce>.json` only after the specified same-UUID session guest is independently observed `shut off`. The guest v11 auditor now refuses a lone observation without intent, and requires the host marker digest match the **pre-cut** independently pinned guest baseline `phase_marker_sha256`. For legitimate lab replay, ensure the guest's non-root isolated witness channel preserves the exact original `ready`/intent/observation files across stop and restart. Inspect any missing, torn or overwritten evidence manually; **do not synthesize a replacement** or retry the same nonce.
 
 CI exercises the actual host producer through mock libvirt (never real `virsh destroy`) and real Go v18 SQLite observer contracts; `host_stop_chain_checked` is strictly a local receipt continuity flag. No command here starts a VM, certifies reboot, proves electrical power loss, verifies the Core or authorizes recovery/cleanup. Full T15/T23 acceptance remains open.
+
+## ADR 0143 — non-destructive host post-start observation after manual guest restart
+
+**New optional laboratory bridge; do not treat it as reboot certification.** Following a legitimate `vm_power_cut.py --execute` with exact durable phase/intent/observed-stop receipts, an operator must **independently/manual** restart ONLY the original throwaway guest. The new host `scripts/recovery_lab/vm_postboot_observe.py` performs *read-only* `virsh --connect qemu:///session domuuid` / `domstate` and confirms that the named UUID is now `running`; it never calls start/destroy/shutdown. Provide the separately saved original guest **v12** `baseline_sha256` (not a new hash derived from a possibly changed witness). Preview without `--record` first; this does not write or mutate a VM:
+
+```sh
+# Run on ordinary-user host, never production, with the same values as stop:
+baseline_sha256=<externally-pinned-64-lowercase-hex>
+python3 scripts/recovery_lab/vm_postboot_observe.py \
+  --domain "$domain" --uuid "$uuid" --case "$case" --nonce "$nonce" \
+  --sandbox "$sandbox" --baseline-sha256 "$baseline_sha256"
+
+# Only after independently reviewing all evidence and confirming the VM was
+# restarted manually, use a distinct exact one-time acknowledgement:
+export KTUI_LAB_VM_POSTBOOT_ACK="OBSERVE:$domain:$uuid:$case:$nonce:$baseline_sha256"
+python3 scripts/recovery_lab/vm_postboot_observe.py \
+  --domain "$domain" --uuid "$uuid" --case "$case" --nonce "$nonce" \
+  --sandbox "$sandbox" --baseline-sha256 "$baseline_sha256" --record
+unset KTUI_LAB_VM_POSTBOOT_ACK
+```
+
+The private durable `poststart-<nonce>.json` is written O_EXCL, O_NOFOLLOW, 0600 and fsynced only after rechecking the pinned pre-cut marker, baseline, intent, original observed-stop and running domain UUID. A duplicate or missing/unsafe receipt is a manual hold; do not recreate/overwrite, reuse the nonce or launch recovery. `running` and an operator-writable timestamp are **not** proof of a fresh guest OS boot, electrical power loss, complete SQLite credentials, Core/rule health or safe resource deletion. CI uses only fake libvirt and synthetic SQLite, never real VM stop or restart.
