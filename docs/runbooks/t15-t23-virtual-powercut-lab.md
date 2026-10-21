@@ -64,3 +64,9 @@ GitHub CI runs `python3 -m unittest discover -s scripts/recovery_lab -p 'test_*.
 ## Release-stop conditions
 
 Until physical/virtual crash replay and the full *post-restart invariants* are independently established, `PowerLossReplayVerified=false`, `RestoreSupported=false`, `RestoreReady=false`, and metadata cleanup remains disabled. This tool never generates a restore/deletion authorization. T15/T23, pending-orphan reconciliation, CN offline licensing, full Core rollback-of-rollback and 72h/7d/30d soak remain open.
+
+## ADR 0142 — carry durable host stop receipts into guest v11 verification
+
+The disposable host `vm_power_cut.py` emits two distinct, owner-private, non-overwriting and fsynced files: `intent-<nonce>.json` before forced stop, and `observation-<nonce>.json` only after the specified same-UUID session guest is independently observed `shut off`. The guest v11 auditor now refuses a lone observation without intent, and requires the host marker digest match the **pre-cut** independently pinned guest baseline `phase_marker_sha256`. For legitimate lab replay, ensure the guest's non-root isolated witness channel preserves the exact original `ready`/intent/observation files across stop and restart. Inspect any missing, torn or overwritten evidence manually; **do not synthesize a replacement** or retry the same nonce.
+
+CI exercises the actual host producer through mock libvirt (never real `virsh destroy`) and real Go v18 SQLite observer contracts; `host_stop_chain_checked` is strictly a local receipt continuity flag. No command here starts a VM, certifies reboot, proves electrical power loss, verifies the Core or authorizes recovery/cleanup. Full T15/T23 acceptance remains open.

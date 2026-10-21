@@ -25,7 +25,9 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 10
+VERSION = 11
+MAX_HOST_RECEIPT = 4096
+UTC_HOST_CLOCK = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?\+00:00\Z")
 MAX_PROFILE_SOURCE_ROWS = 64  # guest-only bounded source URL/schedule/lease/usage evidence
 PROFILE_UPDATE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 MAX_PROFILE_OVERLAY_ROWS = 2048  # guest-only global bound; not production per-profile quota
@@ -96,7 +98,7 @@ def file_identity(fd: int, path: Path):
 def private_json_at(dfd: int, name: str, maximum=MAX_WITNESS) -> tuple[dict, str]:
     # All witness reads are descriptor-relative to the same private directory
     # that was validated before the SQLite inspection. No path-based reopen.
-    if not re.fullmatch(r"(baseline|observation)-[0-9a-f]{32}\.json", name):
+    if not re.fullmatch(r"(baseline|intent|observation)-[0-9a-f]{32}\.json", name):
         refuse("invalid witness name")
     try:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
@@ -114,7 +116,18 @@ def private_json_at(dfd: int, name: str, maximum=MAX_WITNESS) -> tuple[dict, str
                     (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) !=
                     (later.st_dev, later.st_ino, later.st_size, later.st_mtime_ns)):
                 refuse("witness changed while being read")
-            doc = json.loads(raw)
+            # The host writer never emits duplicate keys or NaN/Infinity.
+            # JSON decoders can disagree about those ambiguous records; reject
+            # them in all baselines and host-stop receipts before binding SHA.
+            def unique_object(fields):
+                value = dict(fields)
+                if len(value) != len(fields):
+                    refuse("ambiguous duplicate private witness JSON key")
+                return value
+
+            doc = json.loads(
+                raw, object_pairs_hook=unique_object,
+                parse_constant=lambda _: refuse("non-finite private witness value"))
             if not isinstance(doc, dict):
                 refuse("witness must be a JSON object")
             return doc, hashlib.sha256(raw).hexdigest()
@@ -759,6 +772,89 @@ def complete_profile_source_ledger(db: sqlite3.Connection) -> tuple[int, str]:
     return len(rows), digest.hexdigest()
 
 
+def private_phase_marker_at(dfd: int, args: argparse.Namespace) -> str:
+    """Bind the durable phase marker to the independently pinned baseline.
+
+    The matching host vm_power_cut.py tool reads this marker; presence alone
+    is not proof of checkpoint fidelity, VM boot or electrical power loss.
+    """
+    name = "ready-" + args.nonce + ".txt"
+    expected = vm.marker_body(args.case, args.nonce)
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
+        try:
+            info = os.fstat(fd)
+            first = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            if (not stat.S_ISREG(info.st_mode) or
+                    info.st_uid != os.geteuid() or
+                    stat.S_IMODE(info.st_mode) not in (0o400, 0o600) or
+                    info.st_nlink != 1 or
+                    info.st_size != len(expected) or
+                    info.st_size > vm.MAX_MARKER or
+                    (first.st_dev, first.st_ino, first.st_size, first.st_mtime_ns) !=
+                    (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)):
+                refuse("invalid private guest phase marker")
+            raw = os.pread(fd, vm.MAX_MARKER + 1, 0)
+            last = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            if (raw != expected or
+                    (last.st_dev, last.st_ino, last.st_size, last.st_mtime_ns) !=
+                    (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)):
+                refuse("guest phase marker changed or mismatched")
+            return hashlib.sha256(raw).hexdigest()
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise AuditRefusal("missing or unsafe guest phase marker") from exc
+
+
+def host_stop_chain_at(dfd: int, args: argparse.Namespace,
+                       pinned_marker_sha: str) -> tuple[str, str]:
+    """Verify host-produced durable intent and observed-stop receipts as a pair.
+
+    These operator-writable records cannot certify a real reboot, disk
+    durability, physical power loss or Core health.
+    """
+    if not SHA.fullmatch(pinned_marker_sha):
+        refuse("no independently pinned phase-marker digest")
+    fixed = {
+        "schema_version": 1, "case": args.case, "nonce": args.nonce,
+        "domain": args.domain, "domain_uuid": args.uuid,
+        "marker_sha256": pinned_marker_sha,
+        "guest_boot_verified": False,
+        "post_reboot_consistency_verified": False,
+        "physical_power_loss_verified": False,
+        "restore_authorized": False,
+        "metadata_deletion_authorized": False,
+    }
+
+    def strict_receipt(kind, status):
+        record, digest = private_json_at(
+            dfd, kind + "-" + args.nonce + ".json", maximum=MAX_HOST_RECEIPT)
+        if (set(record) != set(fixed) | {"status", "time_utc"} or
+                record.get("status") != status or
+                any(record.get(key) != value or
+                    (isinstance(value, (bool, int)) and
+                     type(record.get(key)) is not type(value))
+                    for key, value in fixed.items())):
+            refuse("host stop receipt is not bound to this phase and VM")
+        stamp = record.get("time_utc")
+        if not isinstance(stamp, str) or not UTC_HOST_CLOCK.fullmatch(stamp):
+            refuse("host stop receipt has no canonical UTC timestamp")
+        try:
+            when = datetime.fromisoformat(stamp)
+        except ValueError as exc:
+            raise AuditRefusal("invalid host stop timestamp") from exc
+        return digest, when
+
+    intent_sha, intent_time = strict_receipt(
+        "intent", "intent_before_forced_virtual_stop")
+    observed_sha, observed_time = strict_receipt(
+        "observation", "virtual_guest_forced_off_observed")
+    if observed_time < intent_time:
+        refuse("host stop observation predates durable intent")
+    return intent_sha, observed_sha
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -983,10 +1079,12 @@ def inspect(args: argparse.Namespace) -> dict:
     with ExitStack() as stack:
         dfd = private_fd(witness, 0, directory=True)
         stack.callback(os.close, dfd)
+        marker_sha = private_phase_marker_at(dfd, args)
         state = observe_db(db_path)
         baseline_name = "baseline-" + args.nonce + ".json"
         base_doc = {"format": VERSION, "case": args.case, "nonce": args.nonce,
-                    "domain": args.domain, "domain_uuid": args.uuid, "state": state}
+                    "domain": args.domain, "domain_uuid": args.uuid,
+                    "phase_marker_sha256": marker_sha, "state": state}
         if args.mode == "capture":
             digest = write_private_baseline(dfd, baseline_name, base_doc)
             if not file_identity(dfd, witness):
@@ -1000,28 +1098,23 @@ def inspect(args: argparse.Namespace) -> dict:
         if (baseline_hash != args.baseline_sha256 or baseline.get("format") != VERSION or
                 (baseline.get("case"), baseline.get("nonce"), baseline.get("domain"),
                  baseline.get("domain_uuid")) !=
-                (args.case, args.nonce, args.domain, args.uuid)):
+                (args.case, args.nonce, args.domain, args.uuid) or
+                baseline.get("phase_marker_sha256") != marker_sha):
             refuse("baseline changed, invalid or not bound to this experiment")
-        observation, _ = private_json_at(dfd, "observation-" + args.nonce + ".json")
-        if (observation.get("schema_version") != 1 or
-                observation.get("status") != "virtual_guest_forced_off_observed" or
-                observation.get("case") != args.case or observation.get("nonce") != args.nonce or
-                observation.get("domain") != args.domain or observation.get("domain_uuid") != args.uuid or
-                observation.get("physical_power_loss_verified") is not False or
-                observation.get("post_reboot_consistency_verified") is not False or
-                observation.get("restore_authorized") is not False or
-                observation.get("metadata_deletion_authorized") is not False):
-            refuse("host witness is not a non-authorizing observed virtual stop")
+        host_chain = host_stop_chain_at(dfd, args, marker_sha)
         if not file_identity(dfd, witness):
             refuse("private lab witness directory replaced")
         if args.mode == "reconcile-verify":
             if args.case != "T15-prepared-journal":
                 refuse("only the test-only T15 prepared phase may be reconciled")
             check_prepared_reconciliation(baseline.get("state"), state)
+            if host_stop_chain_at(dfd, args, marker_sha) != host_chain:
+                refuse("host stop receipts changed during guest audit")
             return {"status": "prepared_journal_sqlite_subset_manual_review_only",
                     "sqlite_subset_checked": True,
                     "prepared_journal_transition_checked": True,
                     "virtual_stop_witness_seen": True,
+                    "host_stop_chain_checked": True,
                     "guest_reboot_verified": False,
                     "physical_power_loss_verified": False,
                     "core_health_verified": False,
@@ -1032,9 +1125,12 @@ def inspect(args: argparse.Namespace) -> dict:
             refuse("guest post-boot SQLite snapshot differs from trusted baseline")
         if state["recovery_required"] or state["active_apply_attempt"] is not None:
             refuse("unfinished apply recovery remains; manual incident review required")
+        if host_stop_chain_at(dfd, args, marker_sha) != host_chain:
+            refuse("host stop receipts changed during guest audit")
         return {"status": "sqlite_subset_consistent_manual_review_only",
                 "sqlite_subset_checked": True,
                 "virtual_stop_witness_seen": True,
+                "host_stop_chain_checked": True,
                 "guest_reboot_verified": False,
                 "physical_power_loss_verified": False,
                 "core_health_verified": False,
