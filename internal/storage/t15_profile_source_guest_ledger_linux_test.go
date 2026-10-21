@@ -41,9 +41,9 @@ func TestGuestAuditRealV18ProfileSourceMetadataDrift(t *testing.T) {
 	upload, download, total := int64(1024), int64(2048), int64(4096)
 	expires := time.Date(2027, time.January, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.FinishProfileUpdateSuccess(ctx, first, ProfileUpdateSuccess{
-		SourceRevision: "etag-v1",
-		ETag:           "\"private-etag-v1\"",
-		LastModified:   "Wed, 07 Oct 2026 16:00:00 GMT",
+		SourceRevision:        "etag-v1",
+		ETag:                  "\"private-etag-v1\"",
+		LastModified:          "Wed, 07 Oct 2026 16:00:00 GMT",
 		UsageMetadataObserved: true,
 		SubscriptionUsage: &profile.SubscriptionUsage{
 			UploadBytes: &upload, DownloadBytes: &download,
