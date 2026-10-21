@@ -56,6 +56,13 @@ func newGuestBridge(t *testing.T) guestBridge {
 			t.Fatal(err)
 		}
 	}
+	// The guest v11 pre-stop witness must contain the same phase marker the
+	// real non-root host VM stop tool would inspect; entirely synthetic here.
+	marker := []byte("KTUI_T15T23_LAB_READY_V1\ncase=" + guestBridgeCase +
+		"\nnonce=" + guestBridgeNonce + "\n")
+	if err := os.WriteFile(filepath.Join(leaf, "ready-"+guestBridgeNonce+".txt"), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	script, err := filepath.Abs(filepath.Join("..", "..", "scripts", "recovery_lab", "guest_reboot_audit.py"))
 	if err != nil {
 		t.Fatal(err)
@@ -158,27 +165,48 @@ func (g guestBridge) seedRealV18(t *testing.T, prepared bool) int64 {
 
 func (g guestBridge) syntheticStopObservation(t *testing.T) {
 	t.Helper()
-	// Deliberately synthetic! An observation alone never proves a reboot,
-	// actual VM shutdown or power loss, even when it has the same schema.
-	fake := map[string]any{
+	// Deliberately synthetic! These host-shaped records do NOT prove VM stop,
+	// reboot, electrical outage or real Core recovery.
+	marker, err := os.ReadFile(filepath.Join(g.witness, "ready-"+guestBridgeNonce+".txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerDigest := sha256.Sum256(marker)
+	base := map[string]any{
 		"schema_version":                   1,
-		"status":                           "virtual_guest_forced_off_observed",
 		"case":                             guestBridgeCase,
 		"nonce":                            guestBridgeNonce,
 		"domain":                           guestBridgeDomain,
 		"domain_uuid":                      guestBridgeUUID,
+		"marker_sha256":                    hex.EncodeToString(markerDigest[:]),
+		"guest_boot_verified":              false,
 		"physical_power_loss_verified":     false,
 		"post_reboot_consistency_verified": false,
 		"restore_authorized":               false,
 		"metadata_deletion_authorized":     false,
 	}
-	raw, err := json.Marshal(fake)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(g.witness, "observation-"+guestBridgeNonce+".json")
-	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
-		t.Fatal(err)
+	for _, entry := range []struct {
+		name   string
+		status string
+		stamp  string
+	}{
+		{"intent", "intent_before_forced_virtual_stop", "2026-01-01T00:00:00+00:00"},
+		{"observation", "virtual_guest_forced_off_observed", "2026-01-01T00:00:01+00:00"},
+	} {
+		record := make(map[string]any, len(base)+2)
+		for key, value := range base {
+			record[key] = value
+		}
+		record["status"] = entry.status
+		record["time_utc"] = entry.stamp
+		raw, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(g.witness, entry.name+"-"+guestBridgeNonce+".json")
+		if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -347,3 +375,25 @@ func TestGuestAuditRealV18PreparedReconciliation(t *testing.T) {
 	}
 	g.run(t, "reconcile-verify", sha, false)
 }
+
+// The Go DB is real, but the stop observation is purely synthetic. Verify
+// that an intact v18 database cannot compensate for a missing durable host
+// intent: v11 requires the entire phase->intent->observed-stop chain.
+func TestGuestAuditRealV18RequiresDurableHostStopIntent(t *testing.T) {
+	g := newGuestBridge(t)
+	g.seedRealV18(t, false)
+	pinned := g.capture(t)
+	g.syntheticStopObservation(t)
+	ok := g.run(t, "verify", pinned, true)
+	if ok["host_stop_chain_checked"] != true ||
+		ok["guest_reboot_verified"] != false ||
+		ok["restore_authorized"] != false {
+		t.Fatalf("synthetic host witness claimed unsupported recovery: %+v", ok)
+	}
+	intent := filepath.Join(g.witness, "intent-"+guestBridgeNonce+".json")
+	if err := os.Remove(intent); err != nil {
+		t.Fatal(err)
+	}
+	g.run(t, "verify", pinned, false)
+}
+
