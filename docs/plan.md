@@ -1611,3 +1611,9 @@ docs/
 - 上一阶段 ADR 0139 已在 guest v8 固定当前/上一版本的 Profile 快照和节点 JSON，但 Go v18 的 `profile_node_overlays` 独立保存节点 Disabled/Favorite、别名、排序以及 CAS 修订号。即使历史快照完全不变，已移除节点保留的“休眠”覆盖记录也可能被单独修改而不被旧基线识别。新增 **guest v9** 全量有界覆盖摘要：同一个 WAL-aware SQLite 只读事务遍历所有覆盖行，核验 ID/修订号/布尔/别名/排序/时间戳，并固定完整字段顺序 SHA-256；不会要求所有覆盖记录必须指向当前节点（生产 Go 明确保留已移除节点的用户意图）。
 - 仅实验允许的上限为**全库 2048 条**覆盖记录，超限拒绝，**不更改生产每 Profile 8192 条上限**。Python synthetic 回归涵盖休眠节点篡改但 revision 不变、畸形字段、超配额，以及 prepared→interrupted 后只允许 journal 差异的严格复核；Go v18 跨语言回归用真实 `CommitProfileSnapshot` 与 `CommitProfileNodeOverlay` 建立两代及休眠覆盖，Python 独立固定外部 SHA 后更改休眠记录必须拒绝。仅计数和摘要进入私有 witness，别名/节点信息不出现在报告。
 - guest witness **v8→v9** 不迁移产品 SQLite v18，不兼容更早的证据；`profile_sources` URL、拉取/调度状态和流量数据仍待单独闭包验证，T15/T23/T25、真实 VM/电气掉电、Core 路由与双回滚、规则资源、CN 离线许可证、HMAC、恢复授权和 72h/7d/30d soak **全部仍未验收**。
+
+### 2026-10-21 — M4 ADR 0141 所有 Profile 来源、租约及订阅用量的有界只读审计（T15/T23 实验子集）
+
+- 之前 ADR 0139、0140 分别闭合 guest 快照/节点及用户覆盖状态，但 SQLite v18 的 `profile_sources` 有独立持久字段：订阅地址或绝对文件路径、拉取目标、过滤表达式、更新周期、HTTP 源版本/ETag/Last-Modified、重试错误与期限、更新租约以及订阅流量/到期元数据。**来源可以在没有节点快照时单独存在**，不能用当前快照的摘要代替。新增 **guest v10**，在同一 WAL-aware SQLite 只读事务中顺序检查并 SHA 固定全部 33 个来源字段，避免仅修改 URL、retry、lease 或用量但不推进 CAS 时审计静默漏检；私有 witness 仅保留数量和摘要、不输出敏感 URL/Token/节点或 HTTP 元数据。
+- 独立实验上限**全库 64 条来源**，超出即拒绝，绝非生产配额。根据 Go 类型约束验证来源 ID/格式、HTTP(S) 或 Linux 清洁绝对路径、Fetch/Filter/UpdateInterval、启用状态、时戳、用量非负、更新 ID/时间配对及失败计数。Python synthetic 覆盖没有快照的正常来源、URL 和用量不推进修订号的漂移、活动更新租约清理、异常字段/超配额、以及只允许 prepared→interrupted 的 journal 差分中额外来源漂移必拒绝。Go v18 跨语言用例以生产 `CommitProfileSource`、`BeginProfileUpdate`、`FinishProfileUpdateSuccess/Failure` 和 `RecoverInterruptedProfileUpdates` 生成真实 SQLite 状态，再由独立 Python 审计器验证内容一致性和拒绝语义。
+- guest witness v9→**v10**，生产 SQLite 仍为 **v18**，不复用更早 witness；即使现有 Core/应用恢复 journal 部分匹配，**更新租约的独立恢复绝不自动获得 T15 审核许可**。这一工作无 TUN、无真实 VM/电源故障、Core 激活/流量、归档 HMAC、远端订阅认证、凭据/规则资源闭包或用户备份导入。T15/T23/T25、CN 离线资源/许可证、两次回滚及 72h/7d/30d 浸泡继续保持 OPEN，正式恢复和物理删除权限全部关闭。
