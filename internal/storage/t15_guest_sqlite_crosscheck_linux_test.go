@@ -396,4 +396,3 @@ func TestGuestAuditRealV18RequiresDurableHostStopIntent(t *testing.T) {
 	}
 	g.run(t, "verify", pinned, false)
 }
-
