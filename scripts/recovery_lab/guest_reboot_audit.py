@@ -18,14 +18,16 @@ import re
 import sqlite3
 import stat
 import sys
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import vm_power_cut as vm
 
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 9
+VERSION = 10
+MAX_PROFILE_SOURCE_ROWS = 64  # guest-only bounded source URL/schedule/lease/usage evidence
+PROFILE_UPDATE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 MAX_PROFILE_OVERLAY_ROWS = 2048  # guest-only global bound; not production per-profile quota
 MAX_PROFILE_OVERLAY_ALIAS_BYTES = 512
 MAX_PROFILE_OVERLAY_SORT_RANK = (1 << 62) - 1
@@ -614,6 +616,149 @@ def complete_profile_overlay_ledger(db: sqlite3.Connection) -> tuple[int, str]:
     return len(rows), digest.hexdigest()
 
 
+def complete_profile_source_ledger(db: sqlite3.Connection) -> tuple[int, str]:
+    """Complete bounded v18 source-spec, fetch/lease and usage ledger.
+
+    A source may exist before ANY profile snapshot and a snapshot may
+    outlive its source. No artificial FK to profile_state is imposed.
+    Credentials, source URLs and mutable HTTP metadata never leave the
+    transaction except through the private SHA-256 ledger.
+    """
+    def bounded_text(value, limit, required=False, trimmed=False):
+        if (not isinstance(value, str) or
+                (required and not value) or len(value.encode("utf-8")) > limit or
+                (trimmed and value.strip() != value) or
+                any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            refuse("invalid persisted profile source text")
+
+    def source_time(value, optional=False, expiry=False):
+        if value is None and optional:
+            return
+        if (not isinstance(value, str) or not value.isascii() or
+                len(value) > 96 or not re.fullmatch(
+                    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+                    r"(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})", value)):
+            refuse("invalid persisted profile source timestamp")
+        try:
+            instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise AuditRefusal("invalid persisted profile source timestamp") from exc
+        if instant.tzinfo is None or instant.utcoffset() is None or (
+                expiry and instant.year < 1970):
+            refuse("invalid persisted profile source timestamp or expiry")
+
+    columns = (
+        "profile_id", "revision", "source_format", "location_kind", "location",
+        "user_agent", "fetch_mode", "fetch_profile_id", "fetch_node_id",
+        "filter_method", "filter_expression", "filter_match_attribute",
+        "enabled", "update_interval_seconds", "created_at", "updated_at",
+        "last_attempt_at", "last_success_at", "last_error",
+        "last_source_revision", "etag", "last_modified",
+        "subscription_upload_bytes", "subscription_download_bytes",
+        "subscription_total_bytes", "subscription_expires_at",
+        "subscription_usage_updated_at", "subscription_metadata_observed_at",
+        "subscription_metadata_error", "consecutive_failures",
+        "retry_after_at", "active_update_id", "active_update_started_at",
+    )
+    rows = db.execute(
+        "SELECT " + ", ".join(columns) +
+        " FROM profile_sources ORDER BY profile_id LIMIT ?",
+        (MAX_PROFILE_SOURCE_ROWS + 1,)).fetchall()
+    if len(rows) > MAX_PROFILE_SOURCE_ROWS:
+        refuse("guest profile sources exceed bounded audit limit")
+
+    digest = hashlib.sha256()
+    digest.update(b"ktui/guest-v10/profile-source-rows\0")
+    previous = None
+    lease_ids = set()
+    for row in rows:
+        (pid, revision, fmt, kind, location, user_agent, fetch_mode,
+         fetch_profile, fetch_node, filter_method, filter_expr,
+         filter_attribute, enabled, interval, created, updated,
+         last_attempt, last_success, last_error, source_revision, etag,
+         last_modified, upload, download, total, expires, usage_updated,
+         metadata_observed, metadata_error, failures, retry_after,
+         active_id, active_started) = row
+        bounded_text(pid, 512, required=True, trimmed=True)
+        if (previous is not None and pid <= previous or
+                type(revision) is not int or revision <= 0 or
+                fmt not in ("sing-box", "uri-list", "uri-list-base64") or
+                kind not in ("url", "file")):
+            refuse("invalid persisted profile source identity or revision")
+        bounded_text(location, 8192, required=True, trimmed=True)
+        if kind == "url":
+            try:
+                url = urlsplit(location)
+                hostname = url.hostname
+            except ValueError as exc:
+                raise AuditRefusal("invalid profile source URL") from exc
+            if (url.scheme not in ("http", "https") or not hostname or
+                    "@" in url.netloc):
+                refuse("invalid profile source URL")
+        else:
+            # Linux-only source model: Go filepath.Clean rejects unclean paths.
+            if (not os.path.isabs(location) or
+                    os.path.normpath(location) != location):
+                refuse("invalid profile source file path")
+        bounded_text(user_agent, 1024)
+        if fetch_mode in ("direct", "selected"):
+            if fetch_profile != "" or fetch_node != "":
+                refuse("unbound profile fetch mode contains node reference")
+        elif fetch_mode == "specific_node":
+            bounded_text(fetch_profile, 512, required=True, trimmed=True)
+            bounded_text(fetch_node, 512, required=True, trimmed=True)
+        else:
+            refuse("unsupported persisted profile fetch mode")
+        if kind == "file" and fetch_mode != "direct":
+            refuse("local file source requires direct fetch")
+        if filter_method not in ("", "include", "exclude"):
+            refuse("invalid persisted profile filter mode")
+        bounded_text(filter_expr, 4096, trimmed=True)
+        if (type(filter_attribute) is not int or
+                filter_attribute not in (0, 1) or
+                type(enabled) is not int or enabled not in (0, 1) or
+                type(interval) is not int or
+                (interval != 0 and
+                 (kind != "url" or not 300 <= interval <= 31536000))):
+            refuse("invalid profile source filter, enabled or schedule")
+        source_time(created)
+        source_time(updated)
+        for timestamp in (last_attempt, last_success, retry_after,
+                          usage_updated, metadata_observed):
+            source_time(timestamp, optional=True)
+        source_time(expires, optional=True, expiry=True)
+        for value, maximum in ((last_error, 8192),
+                               (source_revision, 4096), (etag, 4096),
+                               (last_modified, 4096),
+                               (metadata_error, 2048)):
+            bounded_text(value, maximum)
+        if type(failures) is not int or not 0 <= failures <= 0xffffffff:
+            refuse("invalid persisted profile update failure count")
+        for byte_count in (upload, download, total):
+            if byte_count is not None and (
+                    type(byte_count) is not int or byte_count < 0):
+                refuse("invalid persisted subscription usage bytes")
+        if any(v is not None for v in (
+                upload, download, total, expires)) and usage_updated is None:
+            refuse("subscription usage has no observation timestamp")
+        if (active_id is None) != (active_started is None):
+            refuse("invalid persisted profile update lease pair")
+        if active_id is not None:
+            if (not isinstance(active_id, str) or
+                    not PROFILE_UPDATE_ID.fullmatch(active_id) or
+                    active_id in lease_ids or enabled != 1):
+                refuse("invalid or duplicate persisted profile update lease")
+            source_time(active_started)
+            lease_ids.add(active_id)
+        # Include all 33 raw stored values, including NULL-vs-empty distinctions;
+        # no separate mutable filter/source/scheduler field can escape the pin.
+        digest.update(json.dumps(
+            list(row), separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        digest.update(b"\n")
+        previous = pid
+    return len(rows), digest.hexdigest()
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -718,6 +863,7 @@ def logical_state(db: sqlite3.Connection) -> dict:
         declaration_count, declaration_current, declaration_sha = complete_declaration_ledger(db)
         profile_states, profile_snapshots, profile_nodes, profile_sha = complete_profile_snapshot_ledger(db)
         overlay_count, overlay_sha = complete_profile_overlay_ledger(db)
+        source_count, source_sha = complete_profile_source_ledger(db)
         digests = []
         for gid in (applied, lkg):
             if gid is None:
@@ -753,6 +899,8 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "profile_snapshot_ledger_sha256": profile_sha,
             "profile_overlay_record_count": overlay_count,
             "profile_overlay_ledger_sha256": overlay_sha,
+            "profile_source_record_count": source_count,
+            "profile_source_ledger_sha256": source_sha,
             "core_desired_state": core,
             "routing_mode": mode,
             "private_direct": bool(private_direct),
