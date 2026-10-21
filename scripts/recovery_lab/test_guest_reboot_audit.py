@@ -112,6 +112,26 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                     favorite INTEGER NOT NULL, alias TEXT NOT NULL,
                     sort_rank INTEGER, updated_at TEXT NOT NULL,
                     PRIMARY KEY(profile_id, node_id));
+                CREATE TABLE profile_sources (
+                    profile_id TEXT PRIMARY KEY, revision INTEGER NOT NULL,
+                    source_format TEXT NOT NULL, location_kind TEXT NOT NULL,
+                    location TEXT NOT NULL, user_agent TEXT NOT NULL,
+                    fetch_mode TEXT NOT NULL, fetch_profile_id TEXT NOT NULL,
+                    fetch_node_id TEXT NOT NULL, filter_method TEXT NOT NULL,
+                    filter_expression TEXT NOT NULL, filter_match_attribute INTEGER NOT NULL,
+                    enabled INTEGER NOT NULL, update_interval_seconds INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    last_attempt_at TEXT, last_success_at TEXT,
+                    last_error TEXT NOT NULL, last_source_revision TEXT NOT NULL,
+                    etag TEXT NOT NULL, last_modified TEXT NOT NULL,
+                    subscription_upload_bytes INTEGER,
+                    subscription_download_bytes INTEGER,
+                    subscription_total_bytes INTEGER,
+                    subscription_expires_at TEXT, subscription_usage_updated_at TEXT,
+                    subscription_metadata_observed_at TEXT,
+                    subscription_metadata_error TEXT NOT NULL,
+                    consecutive_failures INTEGER NOT NULL, retry_after_at TEXT,
+                    active_update_id TEXT, active_update_started_at TEXT);
                 CREATE TABLE selection_state (
                     singleton INTEGER PRIMARY KEY, revision INTEGER, current_target_json BLOB);
             """)
@@ -151,6 +171,54 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                   hashlib.sha256(old).hexdigest()),
                  (2, 0, "node-a", "tag-a", "Alpha renamed", new,
                   hashlib.sha256(new).hexdigest())])
+
+    @staticmethod
+    def source_row(profile_id="profile-a", active=False):
+        """Synthetic v18-shaped source without requiring a snapshot."""
+        return {
+            "profile_id": profile_id,
+            "revision": 2,
+            "source_format": "sing-box",
+            "location_kind": "url",
+            "location": "https://subscription.example.invalid/private?token=DO-NOT-PRINT",
+            "user_agent": "karing-tui-v2/test",
+            "fetch_mode": "direct",
+            "fetch_profile_id": "",
+            "fetch_node_id": "",
+            "filter_method": "include",
+            "filter_expression": "HK|Hong Kong",
+            "filter_match_attribute": 1,
+            "enabled": 1,
+            "update_interval_seconds": 43200,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:01Z",
+            "last_attempt_at": "2026-01-01T00:00:02Z",
+            "last_success_at": "2026-01-01T00:00:03Z",
+            "last_error": "temporary error",
+            "last_source_revision": "etag-1",
+            "etag": '"private-etag"',
+            "last_modified": "Wed, 07 Oct 2026 16:00:00 GMT",
+            "subscription_upload_bytes": 100,
+            "subscription_download_bytes": 200,
+            "subscription_total_bytes": 300,
+            "subscription_expires_at": "2027-01-01T00:00:00Z",
+            "subscription_usage_updated_at": "2026-01-01T00:00:03Z",
+            "subscription_metadata_observed_at": "2026-01-01T00:00:03Z",
+            "subscription_metadata_error": "",
+            "consecutive_failures": 1,
+            "retry_after_at": "2026-01-01T00:15:00Z",
+            "active_update_id": "lease-test-1" if active else None,
+            "active_update_started_at": "2026-01-01T00:00:04Z" if active else None,
+        }
+
+    def add_source(self, profile_id="profile-a", active=False):
+        record = self.source_row(profile_id, active)
+        fields = list(record)
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "INSERT INTO profile_sources(" + ", ".join(fields) + ")"
+                " VALUES(" + ", ".join("?" for _ in fields) + ")",
+                [record[field] for field in fields])
 
     def add_prepared(self):
         config = b'{"inbounds":[],"pending":true}'
@@ -903,6 +971,131 @@ class GuestBootReadOnlyTests(unittest.TestCase):
             db.execute(
                 "UPDATE profile_node_overlays SET sort_rank=NULL "
                 "WHERE node_id='node-retired'")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v10_source_url_and_update_metadata_pinned_privately(self):
+        # A source without any accepted snapshot is a legitimate Go state.
+        self.add_source()
+        before = self.dbpath.read_bytes()
+        self.capture()
+        result = lab.inspect(self.args)
+        self.assertEqual(result["status"], "sqlite_subset_consistent_manual_review_only")
+        self.assertFalse(result["restore_authorized"])
+        self.assertEqual(before, self.dbpath.read_bytes())
+        baseline = (self.witness / ("baseline-" + self.nonce + ".json")).read_bytes()
+        for private in (b"DO-NOT-PRINT", b"private-etag", b"HK|Hong Kong",
+                        b"profile-a"):
+            self.assertNotIn(private, baseline)
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE profile_sources SET location=? WHERE profile_id=?",
+                       ("https://subscription.example.invalid/private?token=CHANGED",
+                        "profile-a"))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v10_source_retry_and_subscription_counter_drift(self):
+        self.add_source()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE profile_sources SET retry_after_at=?, consecutive_failures=? "
+                "WHERE profile_id='profile-a'",
+                ("2026-01-01T00:20:00Z", 2))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE profile_sources SET retry_after_at=?, consecutive_failures=? "
+                "WHERE profile_id='profile-a'",
+                ("2026-01-01T00:15:00Z", 1))
+        self.assertEqual(lab.inspect(self.args)["status"],
+                         "sqlite_subset_consistent_manual_review_only")
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute("UPDATE profile_sources SET subscription_total_bytes=900 "
+                       "WHERE profile_id='profile-a'")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v10_pins_inflight_source_lease_without_claiming_recovery(self):
+        self.add_source(active=True)
+        self.capture()
+        report = lab.inspect(self.args)
+        self.assertEqual(report["status"], "sqlite_subset_consistent_manual_review_only")
+        self.assertFalse(report["guest_reboot_verified"])
+        self.assertFalse(report["restore_authorized"])
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE profile_sources SET active_update_id=NULL, "
+                "active_update_started_at=NULL, "
+                "last_error='daemon restarted during profile update', "
+                "consecutive_failures=consecutive_failures+1 "
+                "WHERE profile_id='profile-a'")
+        # Go's independent RecoverInterruptedProfileUpdates would write this
+        # change; no general permission to absorb it from a T15 apply journal.
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v10_reconcile_refuses_profile_source_drift(self):
+        self.add_source()
+        self.add_prepared()
+        self.capture()
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE apply_journal SET phase='interrupted', active_slot=NULL, "
+                "error='daemon restarted before apply completed' WHERE id=2")
+        self.args.mode = "reconcile-verify"
+        self.assertTrue(lab.inspect(self.args)["prepared_journal_transition_checked"])
+        with sqlite3.connect(self.dbpath) as db:
+            db.execute(
+                "UPDATE profile_sources SET filter_expression='different-region' "
+                "WHERE profile_id='profile-a'")
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v10_invalid_source_shapes_refused_at_capture(self):
+        self.add_source()
+        cases = [
+            ("source_format", "clash"),
+            ("location", "file:///tmp/not-an-http-url"),
+            ("location", "https://private:secret@subscription.invalid/list"),
+            ("fetch_mode", "specific_node"),
+            ("filter_method", "unknown"),
+            ("filter_expression", " trailing "),
+            ("filter_match_attribute", 2),
+            ("enabled", -1),
+            ("update_interval_seconds", 123),
+            ("created_at", "broken"),
+            ("last_success_at", "no-timezone"),
+            ("last_error", "a" * 8193),
+            ("subscription_metadata_error", "a" * 2049),
+            ("subscription_total_bytes", -1),
+            ("subscription_usage_updated_at", None),
+            ("consecutive_failures", -1),
+            ("active_update_started_at", "2026-01-01T00:00:04Z"),
+            ("active_update_id", "lease with spaces"),
+        ]
+        for field, forged in cases:
+            with self.subTest(field=field, forged=str(forged)[:20]):
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute("DELETE FROM profile_sources")
+                self.add_source(active=field == "active_update_id")
+                with sqlite3.connect(self.dbpath) as db:
+                    db.execute("UPDATE profile_sources SET " + field + "=? "
+                               "WHERE profile_id='profile-a'", (forged,))
+                with self.assertRaises(lab.AuditRefusal):
+                    lab.inspect(self.args)
+
+    def test_guest_v10_profile_source_guest_row_cap(self):
+        record = self.source_row("profile-0")
+        fields = list(record)
+        with sqlite3.connect(self.dbpath) as db:
+            db.executemany(
+                "INSERT INTO profile_sources(" + ", ".join(fields) + ") "
+                "VALUES(" + ", ".join("?" for _ in fields) + ")",
+                ([dict(record, profile_id=f"profile-{i}")[field]
+                  for field in fields]
+                 for i in range(lab.MAX_PROFILE_SOURCE_ROWS + 1)))
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
