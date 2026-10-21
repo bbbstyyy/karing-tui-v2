@@ -25,7 +25,10 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 8
+VERSION = 9
+MAX_PROFILE_OVERLAY_ROWS = 2048  # guest-only global bound; not production per-profile quota
+MAX_PROFILE_OVERLAY_ALIAS_BYTES = 512
+MAX_PROFILE_OVERLAY_SORT_RANK = (1 << 62) - 1
 MAX_PROFILE_STATES = 64
 MAX_PROFILE_SNAPSHOTS = 128
 MAX_PROFILE_NODES = 8192
@@ -434,8 +437,8 @@ def complete_profile_snapshot_ledger(db: sqlite3.Connection) -> tuple[int, int, 
     """Bounded v18 profile snapshot and node evidence, without exporting credentials.
 
     The Go Store retains current+previous snapshots per profile, not unbounded
-    history. Source URL/fetch state and user overlays are different tables and
-    deliberately remain OUTSIDE this ledger.
+    history. Source URL/fetch state remains outside this ledger; separately
+    persisted node user overlays are pinned by another bounded ledger below.
     """
     def bounded_text(value, maximum, required=True, trimmed=True):
         if (not isinstance(value, str) or
@@ -548,6 +551,69 @@ def complete_profile_snapshot_ledger(db: sqlite3.Connection) -> tuple[int, int, 
     return len(state_rows), len(snapshot_rows), total_nodes, digest.hexdigest()
 
 
+def complete_profile_overlay_ledger(db: sqlite3.Connection) -> tuple[int, str]:
+    """Pin all retained node user overlays, including detached/dormant IDs.
+
+    Go intentionally retains overlays for nodes removed from a newer snapshot.
+    Therefore do NOT require node_id to exist in current/previous snapshots:
+    this would silently lose the exact dormant user intent we must audit.
+    """
+    def stable_id(value):
+        if (not isinstance(value, str) or not value or
+                len(value.encode("utf-8")) > 512 or value.strip() != value or
+                any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+            refuse("invalid persisted profile overlay identity")
+
+    def overlay_alias(value):
+        if (not isinstance(value, str) or
+                len(value.encode("utf-8")) > MAX_PROFILE_OVERLAY_ALIAS_BYTES or
+                value.strip() != value or
+                any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+            refuse("invalid persisted profile overlay alias")
+
+    rows = db.execute(
+        "SELECT profile_id, node_id, revision, disabled, favorite, "
+        "alias, sort_rank, updated_at FROM profile_node_overlays "
+        "ORDER BY profile_id, node_id LIMIT ?",
+        (MAX_PROFILE_OVERLAY_ROWS + 1,)).fetchall()
+    if len(rows) > MAX_PROFILE_OVERLAY_ROWS:
+        refuse("guest profile overlays exceed bounded audit limit")
+    digest = hashlib.sha256()
+    digest.update(b"ktui/guest-v9/profile-overlay-rows\0")
+    previous = None
+    for profile_id, node_id, revision, disabled, favorite, alias, sort_rank, updated in rows:
+        stable_id(profile_id)
+        stable_id(node_id)
+        overlay_alias(alias)
+        identity = (profile_id, node_id)
+        if (previous is not None and identity <= previous or
+                type(revision) is not int or revision <= 0 or
+                type(disabled) is not int or disabled not in (0, 1) or
+                type(favorite) is not int or favorite not in (0, 1) or
+                (sort_rank is not None and
+                 (type(sort_rank) is not int or
+                  not 0 <= sort_rank <= MAX_PROFILE_OVERLAY_SORT_RANK))):
+            refuse("invalid persisted profile overlay revision, flags, rank or order")
+        if (not isinstance(updated, str) or not updated.isascii() or
+                not 0 < len(updated) <= 96):
+            refuse("invalid persisted profile overlay timestamp")
+        try:
+            instant = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise AuditRefusal("invalid persisted profile overlay timestamp") from exc
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            refuse("profile overlay timestamp must include timezone")
+        # Entire row is pinned, but private alias and IDs never appear in
+        # baseline/report plaintext or errors (only count + ordered digest).
+        record = [profile_id, node_id, revision, disabled, favorite,
+                  alias, sort_rank, updated]
+        digest.update(json.dumps(
+            record, separators=(",", ":"), ensure_ascii=True).encode("ascii"))
+        digest.update(b"\n")
+        previous = identity
+    return len(rows), digest.hexdigest()
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -651,6 +717,7 @@ def logical_state(db: sqlite3.Connection) -> dict:
         generation_count, generation_ledger_sha = complete_generation_ledger(db)
         declaration_count, declaration_current, declaration_sha = complete_declaration_ledger(db)
         profile_states, profile_snapshots, profile_nodes, profile_sha = complete_profile_snapshot_ledger(db)
+        overlay_count, overlay_sha = complete_profile_overlay_ledger(db)
         digests = []
         for gid in (applied, lkg):
             if gid is None:
@@ -684,6 +751,8 @@ def logical_state(db: sqlite3.Connection) -> dict:
             "profile_snapshot_record_count": profile_snapshots,
             "profile_snapshot_node_count": profile_nodes,
             "profile_snapshot_ledger_sha256": profile_sha,
+            "profile_overlay_record_count": overlay_count,
+            "profile_overlay_ledger_sha256": overlay_sha,
             "core_desired_state": core,
             "routing_mode": mode,
             "private_direct": bool(private_direct),
