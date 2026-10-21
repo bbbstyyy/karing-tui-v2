@@ -116,7 +116,18 @@ def private_json_at(dfd: int, name: str, maximum=MAX_WITNESS) -> tuple[dict, str
                     (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) !=
                     (later.st_dev, later.st_ino, later.st_size, later.st_mtime_ns)):
                 refuse("witness changed while being read")
-            doc = json.loads(raw)
+            # The host writer never emits duplicate keys or NaN/Infinity.
+            # JSON decoders can disagree about those ambiguous records; reject
+            # them in all baselines and host-stop receipts before binding SHA.
+            def unique_object(fields):
+                value = dict(fields)
+                if len(value) != len(fields):
+                    refuse("ambiguous duplicate private witness JSON key")
+                return value
+
+            doc = json.loads(
+                raw, object_pairs_hook=unique_object,
+                parse_constant=lambda _: refuse("non-finite private witness value"))
             if not isinstance(doc, dict):
                 refuse("witness must be a JSON object")
             return doc, hashlib.sha256(raw).hexdigest()

@@ -1213,6 +1213,17 @@ class GuestBootReadOnlyTests(unittest.TestCase):
             self.assertFalse(verified[key])
         self.assertEqual(before, self.dbpath.read_bytes())
 
+    def test_guest_v11_duplicate_host_receipt_keys_fail_closed(self):
+        self.capture()
+        intent = self.witness / ("intent-" + self.nonce + ".json")
+        raw = intent.read_bytes()
+        self.assertIn(b'"status":', raw)
+        # Even same-valued duplicate keys are ambiguous to other readers.
+        intent.write_bytes(raw.replace(
+            b'"status":', b'"status":"intent_before_forced_virtual_stop","status":', 1))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
 
 if __name__ == "__main__":
     unittest.main()
