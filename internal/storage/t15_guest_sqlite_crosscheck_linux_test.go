@@ -208,6 +208,46 @@ func (g guestBridge) syntheticStopObservation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Host running-state witness is still synthetic and cannot certify reboot.
+	// Its evidence is independently SHA-linked to the exact pre-cut baseline,
+	// the original stop intent and stop observation. No libvirt call is made.
+	digests := map[string]string{}
+	for _, kind := range []string{"baseline", "intent", "observation"} {
+		raw, err := os.ReadFile(filepath.Join(g.witness, kind+"-"+guestBridgeNonce+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(raw)
+		digests[kind] = hex.EncodeToString(sum[:])
+	}
+	post := map[string]any{
+		"schema_version":                   1,
+		"status":                           "virtual_guest_running_observed_after_forced_off",
+		"case":                             guestBridgeCase,
+		"nonce":                            guestBridgeNonce,
+		"domain":                           guestBridgeDomain,
+		"domain_uuid":                      guestBridgeUUID,
+		"marker_sha256":                    hex.EncodeToString(markerDigest[:]),
+		"baseline_sha256":                  digests["baseline"],
+		"intent_sha256":                    digests["intent"],
+		"observation_sha256":               digests["observation"],
+		"guest_boot_verified":              false,
+		"post_reboot_consistency_verified": false,
+		"physical_power_loss_verified":     false,
+		"core_health_verified":             false,
+		"archive_hmac_verified":            false,
+		"restore_authorized":               false,
+		"metadata_deletion_authorized":     false,
+		"time_utc":                         "2026-01-01T00:00:02+00:00",
+	}
+	postRaw, err := json.Marshal(post)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(g.witness, "poststart-"+guestBridgeNonce+".json"),
+		append(postRaw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (g guestBridge) capture(t *testing.T) string {
@@ -392,6 +432,27 @@ func TestGuestAuditRealV18RequiresDurableHostStopIntent(t *testing.T) {
 	}
 	intent := filepath.Join(g.witness, "intent-"+guestBridgeNonce+".json")
 	if err := os.Remove(intent); err != nil {
+		t.Fatal(err)
+	}
+	g.run(t, "verify", pinned, false)
+}
+
+// Even real Go v18 Applied/LKG, declarations and Profile source records that
+// remain intact must fail if a later host running-state receipt is lost.
+func TestGuestAuditRealV18RequiresHostPoststartObservation(t *testing.T) {
+	g := newGuestBridge(t)
+	g.seedRealV18(t, false)
+	pinned := g.capture(t)
+	g.syntheticStopObservation(t)
+	result := g.run(t, "verify", pinned, true)
+	if result["host_running_observation_checked"] != true ||
+		result["guest_reboot_verified"] != false ||
+		result["physical_power_loss_verified"] != false ||
+		result["restore_authorized"] != false {
+		t.Fatalf("synthetic running observation gained unjustified authority: %+v", result)
+	}
+	postPath := filepath.Join(g.witness, "poststart-"+guestBridgeNonce+".json")
+	if err := os.Remove(postPath); err != nil {
 		t.Fatal(err)
 	}
 	g.run(t, "verify", pinned, false)
