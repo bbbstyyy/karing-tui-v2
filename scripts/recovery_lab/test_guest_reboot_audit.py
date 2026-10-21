@@ -39,6 +39,9 @@ class GuestBootReadOnlyTests(unittest.TestCase):
             uuid="01234567-89ab-cdef-0123-456789abcdef",
             witness=str(self.witness), baseline_sha256=None,
         )
+        self.ready = self.witness / ("ready-" + self.nonce + ".txt")
+        self.ready.write_bytes(lab.vm.marker_body(self.args.case, self.nonce))
+        self.ready.chmod(0o600)
         os.environ["KTUI_LAB_GUEST_AUDIT_ACK"] = self.ack()
         self.addCleanup(lambda: os.environ.pop("KTUI_LAB_GUEST_AUDIT_ACK", None))
 
@@ -274,18 +277,31 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         self.assertFalse(record["physical_power_loss_verified"])
         self.args.mode = "verify"
         self.args.baseline_sha256 = record["baseline_sha256"]
-        observed = {
+        # Host stop evidence is synthetic here; a fake JSON receipt does NOT
+        # attest that a VM ever stopped or rebooted. We intentionally mirror
+        # the actual vm_power_cut.py writer's exact immutable fields.
+        common = {
             "schema_version": 1,
-            "status": "virtual_guest_forced_off_observed",
             "case": self.args.case, "nonce": self.args.nonce,
             "domain": self.args.domain, "domain_uuid": self.args.uuid,
+            "marker_sha256": hashlib.sha256(self.ready.read_bytes()).hexdigest(),
+            "guest_boot_verified": False,
             "physical_power_loss_verified": False,
             "post_reboot_consistency_verified": False,
             "restore_authorized": False,
             "metadata_deletion_authorized": False,
         }
+        intent = self.witness / ("intent-" + self.nonce + ".json")
+        intent.write_text(json.dumps({
+            **common, "status": "intent_before_forced_virtual_stop",
+            "time_utc": "2026-01-01T00:00:00+00:00",
+        }), encoding="utf-8")
+        intent.chmod(0o600)
         receipt = self.witness / ("observation-" + self.nonce + ".json")
-        receipt.write_text(json.dumps(observed), encoding="utf-8")
+        receipt.write_text(json.dumps({
+            **common, "status": "virtual_guest_forced_off_observed",
+            "time_utc": "2026-01-01T00:00:01+00:00",
+        }), encoding="utf-8")
         receipt.chmod(0o600)
         return receipt
 
@@ -1098,6 +1114,104 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                  for i in range(lab.MAX_PROFILE_SOURCE_ROWS + 1)))
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
+
+    def test_guest_v11_missing_or_replaced_host_intent_is_not_a_stop_chain(self):
+        self.capture()
+        intent = self.witness / ("intent-" + self.nonce + ".json")
+        intent.unlink()
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v11_rejects_marker_mutation_after_baseline_pin(self):
+        self.capture()
+        # Both host receipts still claim the original digest; no intent
+        # or observation can upgrade a changed post-cut marker.
+        self.ready.write_bytes(lab.vm.marker_body(
+            "T15-checked-candidate", self.nonce))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v11_host_receipt_identity_digest_time_and_privacy(self):
+        self.capture()
+        intent = self.witness / ("intent-" + self.nonce + ".json")
+        observed = self.witness / ("observation-" + self.nonce + ".json")
+        pristine_intent = json.loads(intent.read_text())
+        pristine_observed = json.loads(observed.read_text())
+        cases = [
+            (intent, "marker_sha256", "f" * 64),
+            (intent, "domain_uuid", "f" * 8 + self.args.uuid[8:]),
+            (intent, "guest_boot_verified", True),
+            (intent, "restore_authorized", 0),
+            (intent, "time_utc", "2026-01-01T00:00:00"),
+            (intent, "time_utc", "not-a-clock"),
+            (observed, "time_utc", "2025-12-31T23:59:59+00:00"),
+            (observed, "post_reboot_consistency_verified", True),
+            (observed, "status", "intent_before_forced_virtual_stop"),
+            (observed, "unexpected_field", "silently forged"),
+        ]
+        for path, field, replacement in cases:
+            with self.subTest(field=field, path=path.name):
+                intent.write_text(json.dumps(pristine_intent))
+                observed.write_text(json.dumps(pristine_observed))
+                altered = dict(pristine_intent if path == intent else pristine_observed)
+                altered[field] = replacement
+                path.write_text(json.dumps(altered))
+                with self.assertRaises(lab.AuditRefusal):
+                    lab.inspect(self.args)
+
+        intent.write_text(json.dumps(pristine_intent))
+        observed.write_text(json.dumps(pristine_observed))
+        intent.chmod(0o644)
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+        intent.chmod(0o600)
+        outside = self.witness / "second-link.json"
+        os.link(observed, outside)
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v11_mock_actual_host_producer_is_accepted_read_only(self):
+        # Exercise the actual protected producer with an injected fake libvirt
+        # runner, not a manually assembled JSON record and NEVER a real VM.
+        before = self.dbpath.read_bytes()
+        pinned = lab.inspect(self.args)
+        self.assertEqual(pinned["status"], "baseline_captured_no_reboot_claim")
+        state = {"machine": "running", "calls": []}
+
+        def fake_session(command, domain):
+            state["calls"].append((command, domain))
+            if command == "domuuid":
+                return self.args.uuid
+            if command == "domstate":
+                return state["machine"]
+            if command == "destroy":
+                if state["machine"] != "running":
+                    raise AssertionError("fake destroyed an already stopped VM")
+                state["machine"] = "shut off"
+                return ""
+            raise AssertionError("unexpected fake virsh operation")
+
+        stop_args = argparse.Namespace(
+            domain=self.args.domain, uuid=self.args.uuid,
+            case=self.args.case, nonce=self.args.nonce,
+            sandbox=str(self.witness), execute=True)
+        with mock.patch.dict(os.environ, {"KTUI_LAB_VM_STOP_ACK":
+                            "EXECUTE:" + ":".join(
+                                (self.args.domain, self.args.uuid,
+                                 self.args.case, self.args.nonce))}):
+            result = lab.vm.run_case(
+                stop_args, runner=fake_session, effective_uid=1000)
+        self.assertEqual(result["status"], "virtual_guest_forced_off_observed")
+        self.assertEqual(state["calls"].count(("destroy", self.args.domain)), 1)
+        self.args.mode = "verify"
+        self.args.baseline_sha256 = pinned["baseline_sha256"]
+        verified = lab.inspect(self.args)
+        self.assertEqual(verified["status"], "sqlite_subset_consistent_manual_review_only")
+        self.assertTrue(verified["host_stop_chain_checked"])
+        for key in ("guest_reboot_verified", "physical_power_loss_verified",
+                    "restore_authorized", "metadata_deletion_authorized"):
+            self.assertFalse(verified[key])
+        self.assertEqual(before, self.dbpath.read_bytes())
 
 
 if __name__ == "__main__":
