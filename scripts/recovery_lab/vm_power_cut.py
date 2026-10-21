@@ -110,7 +110,7 @@ def virsh_session(command: str, domain: str) -> str:
 
 
 def write_new_private_json(dfd: int, name: str, value: dict[str, object]) -> None:
-    if not re.fullmatch(r"(intent|observation)-[0-9a-f]{32}\.json", name):
+    if not re.fullmatch(r"(intent|observation|poststart)-[0-9a-f]{32}\.json", name):
         raise LabRefusal("unsafe observation filename")
     raw = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     if len(raw) > 4096:
