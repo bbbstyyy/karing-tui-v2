@@ -25,7 +25,7 @@ import vm_power_cut as vm
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_DB = 64 << 20  # deliberately narrower than the application's 768 MiB archive bound
 MAX_WITNESS = 16 << 10
-VERSION = 11
+VERSION = 12
 MAX_HOST_RECEIPT = 4096
 UTC_HOST_CLOCK = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?\+00:00\Z")
 MAX_PROFILE_SOURCE_ROWS = 64  # guest-only bounded source URL/schedule/lease/usage evidence
@@ -98,7 +98,7 @@ def file_identity(fd: int, path: Path):
 def private_json_at(dfd: int, name: str, maximum=MAX_WITNESS) -> tuple[dict, str]:
     # All witness reads are descriptor-relative to the same private directory
     # that was validated before the SQLite inspection. No path-based reopen.
-    if not re.fullmatch(r"(baseline|intent|observation)-[0-9a-f]{32}\.json", name):
+    if not re.fullmatch(r"(baseline|intent|observation|poststart)-[0-9a-f]{32}\.json", name):
         refuse("invalid witness name")
     try:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
@@ -855,6 +855,54 @@ def host_stop_chain_at(dfd: int, args: argparse.Namespace,
     return intent_sha, observed_sha
 
 
+def host_poststart_at(dfd: int, args: argparse.Namespace, marker_sha: str,
+                      baseline_sha: str, host_chain: tuple[str, str]) -> str:
+    """Bind the separate *read-only host* running-state observation.
+
+    All of these receipts remain operator-writable. This verifies strictly
+    local record continuity, NOT reboot, electricity, Core or restoration.
+    """
+    record, post_sha = private_json_at(
+        dfd, "poststart-" + args.nonce + ".json", maximum=MAX_HOST_RECEIPT)
+    fixed = {
+        "schema_version": 1,
+        "status": "virtual_guest_running_observed_after_forced_off",
+        "case": args.case, "nonce": args.nonce,
+        "domain": args.domain, "domain_uuid": args.uuid,
+        "marker_sha256": marker_sha, "baseline_sha256": baseline_sha,
+        "intent_sha256": host_chain[0],
+        "observation_sha256": host_chain[1],
+        "guest_boot_verified": False,
+        "post_reboot_consistency_verified": False,
+        "physical_power_loss_verified": False,
+        "core_health_verified": False,
+        "archive_hmac_verified": False,
+        "restore_authorized": False,
+        "metadata_deletion_authorized": False,
+    }
+    if (set(record) != set(fixed) | {"time_utc"} or
+            any(type(record.get(key)) is not type(value) or
+                record.get(key) != value for key, value in fixed.items())):
+        refuse("host running observation is not bound to pinned guest evidence")
+    post_stamp = record.get("time_utc")
+    if not isinstance(post_stamp, str) or not UTC_HOST_CLOCK.fullmatch(post_stamp):
+        refuse("invalid host running-observation UTC timestamp")
+    try:
+        post_time = datetime.fromisoformat(post_stamp)
+    except ValueError as exc:
+        raise AuditRefusal("invalid host running-observation time") from exc
+    previous_stop, previous_sha = private_json_at(
+        dfd, "observation-" + args.nonce + ".json", maximum=MAX_HOST_RECEIPT)
+    if previous_sha != host_chain[1]:
+        refuse("host stop record changed before running observation comparison")
+    earlier_stamp = previous_stop.get("time_utc")
+    if not isinstance(earlier_stamp, str) or not UTC_HOST_CLOCK.fullmatch(earlier_stamp):
+        refuse("invalid original host stop timestamp")
+    if post_time < datetime.fromisoformat(earlier_stamp):
+        refuse("running observation predates original observed host stop")
+    return post_sha
+
+
 def logical_state(db: sqlite3.Connection) -> dict:
     try:
         db.execute("PRAGMA query_only=ON")
@@ -1102,19 +1150,25 @@ def inspect(args: argparse.Namespace) -> dict:
                 baseline.get("phase_marker_sha256") != marker_sha):
             refuse("baseline changed, invalid or not bound to this experiment")
         host_chain = host_stop_chain_at(dfd, args, marker_sha)
+        poststart_sha = host_poststart_at(dfd, args, marker_sha,
+                                         args.baseline_sha256, host_chain)
         if not file_identity(dfd, witness):
             refuse("private lab witness directory replaced")
         if args.mode == "reconcile-verify":
             if args.case != "T15-prepared-journal":
                 refuse("only the test-only T15 prepared phase may be reconciled")
             check_prepared_reconciliation(baseline.get("state"), state)
-            if host_stop_chain_at(dfd, args, marker_sha) != host_chain:
-                refuse("host stop receipts changed during guest audit")
+            if (private_phase_marker_at(dfd, args) != marker_sha or
+                    host_stop_chain_at(dfd, args, marker_sha) != host_chain or
+                    host_poststart_at(dfd, args, marker_sha,
+                                      args.baseline_sha256, host_chain) != poststart_sha):
+                refuse("host stop/restart receipts changed during guest audit")
             return {"status": "prepared_journal_sqlite_subset_manual_review_only",
                     "sqlite_subset_checked": True,
                     "prepared_journal_transition_checked": True,
                     "virtual_stop_witness_seen": True,
                     "host_stop_chain_checked": True,
+                    "host_running_observation_checked": True,
                     "guest_reboot_verified": False,
                     "physical_power_loss_verified": False,
                     "core_health_verified": False,
@@ -1125,12 +1179,16 @@ def inspect(args: argparse.Namespace) -> dict:
             refuse("guest post-boot SQLite snapshot differs from trusted baseline")
         if state["recovery_required"] or state["active_apply_attempt"] is not None:
             refuse("unfinished apply recovery remains; manual incident review required")
-        if host_stop_chain_at(dfd, args, marker_sha) != host_chain:
-            refuse("host stop receipts changed during guest audit")
+        if (private_phase_marker_at(dfd, args) != marker_sha or
+                host_stop_chain_at(dfd, args, marker_sha) != host_chain or
+                host_poststart_at(dfd, args, marker_sha,
+                                  args.baseline_sha256, host_chain) != poststart_sha):
+            refuse("host stop/restart receipts changed during guest audit")
         return {"status": "sqlite_subset_consistent_manual_review_only",
                 "sqlite_subset_checked": True,
                 "virtual_stop_witness_seen": True,
                 "host_stop_chain_checked": True,
+                    "host_running_observation_checked": True,
                 "guest_reboot_verified": False,
                 "physical_power_loss_verified": False,
                 "core_health_verified": False,

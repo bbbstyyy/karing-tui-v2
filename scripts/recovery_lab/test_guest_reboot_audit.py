@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 import guest_reboot_audit as lab
+import vm_postboot_observe as postboot
 
 
 class GuestBootReadOnlyTests(unittest.TestCase):
@@ -303,6 +304,18 @@ class GuestBootReadOnlyTests(unittest.TestCase):
             "time_utc": "2026-01-01T00:00:01+00:00",
         }), encoding="utf-8")
         receipt.chmod(0o600)
+        post = self.witness / ("poststart-" + self.nonce + ".json")
+        post.write_text(json.dumps({
+            **common,
+            "status": "virtual_guest_running_observed_after_forced_off",
+            "baseline_sha256": record["baseline_sha256"],
+            "intent_sha256": hashlib.sha256(intent.read_bytes()).hexdigest(),
+            "observation_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+            "core_health_verified": False,
+            "archive_hmac_verified": False,
+            "time_utc": "2026-01-01T00:00:02+00:00",
+        }), encoding="utf-8")
+        post.chmod(0o600)
         return receipt
 
     def test_subset_matches_but_cannot_certify_reboot_or_real_power_loss(self):
@@ -1203,11 +1216,28 @@ class GuestBootReadOnlyTests(unittest.TestCase):
                 stop_args, runner=fake_session, effective_uid=1000)
         self.assertEqual(result["status"], "virtual_guest_forced_off_observed")
         self.assertEqual(state["calls"].count(("destroy", self.args.domain)), 1)
+        # The operator, NOT the tool, separately starts this isolated VM.
+        state["machine"] = "running"
+        post_args = argparse.Namespace(
+            domain=self.args.domain, uuid=self.args.uuid,
+            case=self.args.case, nonce=self.args.nonce,
+            sandbox=str(self.witness), baseline_sha256=pinned["baseline_sha256"],
+            record=True)
+        post_ack = "OBSERVE:" + ":".join(
+            (self.args.domain, self.args.uuid, self.args.case,
+             self.args.nonce, pinned["baseline_sha256"]))
+        with mock.patch.dict(os.environ, {"KTUI_LAB_VM_POSTBOOT_ACK": post_ack}):
+            observed = postboot.run_case(
+                post_args, runner=fake_session, effective_uid=1000)
+        self.assertEqual(
+            observed["status"], "virtual_guest_running_observed_after_forced_off")
+        self.assertEqual(state["calls"].count(("destroy", self.args.domain)), 1)
         self.args.mode = "verify"
         self.args.baseline_sha256 = pinned["baseline_sha256"]
         verified = lab.inspect(self.args)
         self.assertEqual(verified["status"], "sqlite_subset_consistent_manual_review_only")
         self.assertTrue(verified["host_stop_chain_checked"])
+        self.assertTrue(verified["host_running_observation_checked"])
         for key in ("guest_reboot_verified", "physical_power_loss_verified",
                     "restore_authorized", "metadata_deletion_authorized"):
             self.assertFalse(verified[key])
@@ -1221,6 +1251,53 @@ class GuestBootReadOnlyTests(unittest.TestCase):
         # Even same-valued duplicate keys are ambiguous to other readers.
         intent.write_bytes(raw.replace(
             b'"status":', b'"status":"intent_before_forced_virtual_stop","status":', 1))
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v12_missing_poststart_receipt_fails_closed(self):
+        self.capture()
+        post = self.witness / ("poststart-" + self.nonce + ".json")
+        post.unlink()
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v12_forged_running_receipt_and_wrong_digest_refused(self):
+        self.capture()
+        post = self.witness / ("poststart-" + self.nonce + ".json")
+        original = json.loads(post.read_text())
+        changes = [
+            ("baseline_sha256", "a" * 64),
+            ("observation_sha256", "f" * 64),
+            ("intent_sha256", "f" * 64),
+            ("marker_sha256", "f" * 64),
+            ("domain_uuid", "f" * 8 + self.args.uuid[8:]),
+            ("guest_boot_verified", True),
+            ("physical_power_loss_verified", 0),
+            ("core_health_verified", True),
+            ("archive_hmac_verified", True),
+            ("time_utc", "2025-12-31T23:59:59+00:00"),
+            ("time_utc", "not-a-timestamp"),
+            ("status", "virtual_guest_forced_off_observed"),
+            ("unapproved_extra_field", "forged"),
+        ]
+        for name, value in changes:
+            with self.subTest(name=name):
+                candidate = dict(original)
+                candidate[name] = value
+                post.write_text(json.dumps(candidate))
+                with self.assertRaises(lab.AuditRefusal):
+                    lab.inspect(self.args)
+        post.write_text(json.dumps(original))
+        post.chmod(0o644)
+        with self.assertRaises(lab.AuditRefusal):
+            lab.inspect(self.args)
+
+    def test_guest_v12_stale_poststart_after_host_receipt_replacement(self):
+        self.capture()
+        original = self.witness / ("observation-" + self.nonce + ".json")
+        record = json.loads(original.read_text())
+        record["time_utc"] = "2026-01-01T00:00:01.000001+00:00"
+        original.write_text(json.dumps(record))
         with self.assertRaises(lab.AuditRefusal):
             lab.inspect(self.args)
 
