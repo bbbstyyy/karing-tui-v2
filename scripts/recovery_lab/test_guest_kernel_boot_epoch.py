@@ -12,7 +12,7 @@ from unittest import mock
 
 import guest_kernel_boot_epoch as epoch
 import guest_reboot_audit as guest
-from test_guest_reboot_audit import GuestBootReadOnlyTests
+import test_guest_reboot_audit as sqlite_fixture
 import vm_postboot_observe as postboot
 import vm_power_cut as vm
 
@@ -26,7 +26,7 @@ class KernelBootEpochTests(unittest.TestCase):
             self.skipTest("the guest evidence lab is non-root only")
         # Borrow only the original synthetic SQLite/setup fixture, without
         # re-running any of its tests or importing production user state.
-        self.g = GuestBootReadOnlyTests(
+        self.g = sqlite_fixture.GuestBootReadOnlyTests(
             "test_subset_matches_but_cannot_certify_reboot_or_real_power_loss")
         self.g.setUp()
         self.addCleanup(self.g.doCleanups)
