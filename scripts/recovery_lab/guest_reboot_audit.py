@@ -98,7 +98,7 @@ def file_identity(fd: int, path: Path):
 def private_json_at(dfd: int, name: str, maximum=MAX_WITNESS) -> tuple[dict, str]:
     # All witness reads are descriptor-relative to the same private directory
     # that was validated before the SQLite inspection. No path-based reopen.
-    if not re.fullmatch(r"(baseline|intent|observation|poststart)-[0-9a-f]{32}\.json", name):
+    if not re.fullmatch(r"(baseline|intent|observation|poststart|boot-epoch)-[0-9a-f]{32}\.json", name):
         refuse("invalid witness name")
     try:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
