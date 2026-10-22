@@ -134,3 +134,28 @@ The auditor returns `host_stop_chain_checked=true` only for strict local record/
 After the operator manually restarts the isolated disposable VM, the host-side non-destructive `vm_postboot_observe.py --record` must have produced the first and only owner-only `poststart-<nonce>.json`. The original v12 guest pre-stop `capture` pins its unique `baseline_sha256` outside the guest. On `verify` or the strict prepared-journal `reconcile-verify`, the guest now checks that the new poststart record contains the **same** case/nonce/domain/UUID/phase-marker SHA, the original externally pinned baseline SHA, and the actual raw SHA of the two old durable stop files. It checks exact JSON fields, strict all-false flags and time not preceding the observed host stop; it double-reads marker/host receipts before reporting. Missing, replaced or invalid evidence refuses, without fixing it or touching SQLite.
 
 `host_running_observation_checked=true` means only *syntactic/digest continuity of an operator-writable host observation*; it does not set `guest_reboot_verified`, `physical_power_loss_verified`, `core_health_verified`, `archive_hmac_verified`, `restore_authorized` or `metadata_deletion_authorized`. This must remain distinct from real guest boot and live Core/credential/rule/backup verification. Guest witness **v12** is incompatible with v11 and earlier; start a fresh disposable guest/nonce, preserve all older pinned evidence, and never recapture after drift.
+
+## ADR 0144 — independently pin Linux kernel boot identity before actual guest stop
+
+The standalone guest-side **read-only** `guest_kernel_boot_epoch.py` supplies a missing check that a host-side libvirt `running` observation cannot provide: the actual Linux `/proc/sys/kernel/random/boot_id` must differ between the original pre-cut guest process and the manually restarted guest. **This is an extra independent observation, not guest v12 SQLite proof or physical reboot certification.** In a genuinely isolated, ordinary-user disposable guest with the ADR 0143 pre-cut witness and matching `KTUI_LAB_GUEST_AUDIT_ACK`, run *after* the guest `--mode capture` but **before** any host stop receipt:
+
+```sh
+# baseline_sha256 MUST have just been externally pinned from guest v12 capture.
+python3 scripts/recovery_lab/guest_kernel_boot_epoch.py \
+  --mode capture --domain "$domain" --uuid "$uuid" --case "$case" \
+  --nonce "$nonce" --witness "$witness" --baseline-sha256 "$baseline_sha256"
+# Preserve the printed boot_epoch_sha256 OUTSIDE the guest before stopping it.
+```
+
+After the operator **independently** performs the existing host VM stop, manual restart and non-destructive `vm_postboot_observe.py --record`, run `guest_reboot_audit.py --mode verify` (or only the permitted prepared-journal `reconcile-verify`) and also:
+
+```sh
+# Supply the *original* two separately stored SHA strings, never rehash
+# current guest files to 'fix' missing evidence.
+python3 scripts/recovery_lab/guest_kernel_boot_epoch.py \
+  --mode verify --domain "$domain" --uuid "$uuid" --case "$case" \
+  --nonce "$nonce" --witness "$witness" --baseline-sha256 "$baseline_sha256" \
+  --boot-epoch-sha256 "$boot_epoch_sha256"
+```
+
+If the actual Linux boot ID is unchanged, the pre-cut epoch or host intent/poststart is missing or altered, or the owner-private 0600/0700 checks fail, **refuse and retain evidence; never reuse the nonce or recreate the record**. The script never writes SQLite, never boots/stops VMs, never calls Core and never grants restoration or cleanup. It does not print raw boot IDs. A successful local observation only yields `kernel_boot_identity_changed_observed=true` while all guest reboot, power loss, Core, HMAC and restore/deletion authority flags remain false. The separate guest v12 SQLite read check and manual real VM/VM filesystem, rules, backup, credentials and Core verification remain mandatory.
