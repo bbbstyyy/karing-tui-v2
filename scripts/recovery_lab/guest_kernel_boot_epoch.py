@@ -56,6 +56,11 @@ def read_kernel_boot_id() -> str:
     return value
 
 
+def valid_boot_id(value: object) -> bool:
+    return (isinstance(value, str) and vm.UUID_RE.fullmatch(value) is not None and
+            value != "00000000-0000-0000-0000-000000000000")
+
+
 def pinned_baseline(dfd: int, args: argparse.Namespace) -> str:
     if not guest.SHA.fullmatch(args.baseline_sha256 or ""):
         refuse("missing independently stored pre-stop guest baseline SHA")
@@ -134,6 +139,8 @@ def inspect(args: argparse.Namespace) -> dict:
         stack.callback(os.close, dfd)
         marker_sha = pinned_baseline(dfd, args)
         before_or_current_boot = read_kernel_boot_id()
+        if not valid_boot_id(before_or_current_boot):
+            refuse("noncanonical guest kernel boot identity")
         if args.mode == "capture":
             no_prior_host_stop(dfd, args.nonce)
             doc = epoch_doc(args, marker_sha, before_or_current_boot)
@@ -157,9 +164,7 @@ def inspect(args: argparse.Namespace) -> dict:
         if original_sha != args.boot_epoch_sha256:
             refuse("pre-stop kernel witness no longer matches external SHA")
         old_boot = record.get("kernel_boot_id")
-        if (not isinstance(old_boot, str) or
-                not vm.UUID_RE.fullmatch(old_boot) or
-                old_boot == "00000000-0000-0000-0000-000000000000" or
+        if (not valid_boot_id(old_boot) or
                 record != epoch_doc(args, marker_sha, old_boot) or
                 before_or_current_boot == old_boot):
             refuse("kernel boot identity did not change or witness was modified")

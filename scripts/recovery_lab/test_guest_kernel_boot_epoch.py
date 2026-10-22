@@ -169,13 +169,9 @@ class KernelBootEpochTests(unittest.TestCase):
         ]
         for value in bad:
             with self.subTest(value=value):
-                with mock.patch.object(epoch, "read_kernel_boot_id",
-                                       return_value=value):
-                    # Invalid boot IDs should be refused even when synthetic
-                    # mocked readings bypass the real procfs syntax reader.
-                    # The capture document itself must not accept malformed IDs.
-                    if value == bad[0]:
-                        continue
+                with self.assertRaises(guest.AuditRefusal):
+                    self.inspect_with_boot(value)
+                self.assertFalse(self.epoch_file.exists())
         self.capture()
         self.simulate_host_stop_then_operator_manual_start()
         epoch_file = self.epoch_file
