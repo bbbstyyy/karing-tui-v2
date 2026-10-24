@@ -13,6 +13,8 @@ on:
       - 'internal/coreartifact/**'
       - 'internal/backupclosure/**'
       - 'internal/domain/**'
+      - 'internal/preset/**'
+      - 'cmd/cn-resource-audit/**'
       - 'internal/storage/**'
       - 'resources/core-entry/**'
       - 'resources/core.lock.json'
