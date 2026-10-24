@@ -2,13 +2,39 @@ name: core-provenance
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/core-provenance.yml'
+      - 'scripts/verify-core-build.sh'
+      - 'scripts/smoke-core-runtime.sh'
+      - 'scripts/offline_lab/**'
+      - 'resources/core-entry/main.go.txt'
+      - 'resources/core.lock.json'
+      - 'cmd/karing-tui/**'
+      - 'internal/app/**'
+      - 'internal/runtimepath/**'
+      - 'internal/daemon/**'
+      - 'go.mod'
+      - 'go.sum'
   push:
     paths:
       - '.github/workflows/core-provenance.yml'
       - 'scripts/verify-core-build.sh'
       - 'scripts/smoke-core-runtime.sh'
+      - 'scripts/offline_lab/**'
       - 'resources/core-entry/main.go.txt'
       - 'resources/core.lock.json'
+      - 'cmd/karing-tui/**'
+      - 'internal/app/**'
+      - 'internal/runtimepath/**'
+      - 'internal/daemon/**'
+      - 'go.mod'
+      - 'go.sum'
+
+concurrency:
+  group: core-provenance-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -19,7 +45,7 @@ jobs:
   build:
     name: linux-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -34,5 +60,48 @@ jobs:
         with:
           go-version: '1.25.12'
           cache: false
-      - name: Verify locked core build
+      - name: Verify locked core build and retain native binary
+        env:
+          CORE_OUTPUT: ${{ runner.temp }}/t24-approved-core
         run: bash scripts/verify-core-build.sh "${{ matrix.arch }}"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Build native project management binary
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -trimpath -o "${{ runner.temp }}/t24-management" ./cmd/karing-tui
+          test -x "${{ runner.temp }}/t24-management"
+
+      - name: Native offline ordinary-user bootstrap (not licensed CN release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/t24-airgap-${{ matrix.arch }}"
+          mkdir -p "$stage"
+          install -m 0555 "${RUNNER_TEMP}/t24-management" "$stage/app"
+          install -m 0555 "${RUNNER_TEMP}/t24-approved-core" "$stage/core"
+          install -m 0444 scripts/offline_lab/t24_airgap_bootstrap.py "$stage/probe.py"
+          # Stage an OCI test environment while runner network remains enabled.
+          # The isolated test container below explicitly has NO network.
+          docker pull python:3.12-slim-bookworm
+          docker image inspect --format '{{index .RepoDigests 0}}' python:3.12-slim-bookworm
+          version="$(jq -r '.reference_linux_cli_build.version_value' resources/core.lock.json)"
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            python:3.12-slim-bookworm python3 /opt/t24/probe.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-version "$version"
