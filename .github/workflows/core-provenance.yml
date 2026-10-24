@@ -40,6 +40,8 @@ permissions:
 
 env:
   GOTOOLCHAIN: local
+  # Pinned multi-platform OCI index observed on both native runners.
+  T24_IMAGE: docker.io/library/python@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
 
 jobs:
   build:
@@ -79,7 +81,7 @@ jobs:
           go build -trimpath -o "${{ runner.temp }}/t24-management" ./cmd/karing-tui
           test -x "${{ runner.temp }}/t24-management"
 
-      - name: Native offline ordinary-user bootstrap (not licensed CN release)
+      - name: Native offline bootstrap and loopback Core traffic (T24 partial)
         shell: bash
         run: |
           set -euo pipefail
@@ -87,11 +89,12 @@ jobs:
           mkdir -p "$stage"
           install -m 0555 "${RUNNER_TEMP}/t24-management" "$stage/app"
           install -m 0555 "${RUNNER_TEMP}/t24-approved-core" "$stage/core"
-          install -m 0444 scripts/offline_lab/t24_airgap_bootstrap.py "$stage/probe.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_bootstrap.py "$stage/t24_airgap_bootstrap.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_loopback_core.py "$stage/t24_airgap_loopback_core.py"
           # Stage an OCI test environment while runner network remains enabled.
           # The isolated test container below explicitly has NO network.
-          docker pull python:3.12-slim-bookworm
-          docker image inspect --format '{{index .RepoDigests 0}}' python:3.12-slim-bookworm
+          docker pull "$T24_IMAGE"
+          docker image inspect --format '{{index .RepoDigests 0}}' "$T24_IMAGE"
           version="$(jq -r '.reference_linux_cli_build.version_value' resources/core.lock.json)"
           docker run --rm --pull never \
             --network none --cap-drop ALL --security-opt no-new-privileges \
@@ -100,8 +103,23 @@ jobs:
             --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
             --env DISPLAY= --env WAYLAND_DISPLAY= \
             --env PYTHONDONTWRITEBYTECODE=1 \
-            python:3.12-slim-bookworm python3 /opt/t24/probe.py \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_bootstrap.py \
             --arch "${{ matrix.arch }}" \
             --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-version "$version"
+
+          # Separate network-none namespace, real approved Core, local echo
+          # service, three real SOCKS5 CONNECT data paths, and authenticated
+          # Clash API. No TUN, DNS, external IPs or licensed CN rule files.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_loopback_core.py \
+            --arch "${{ matrix.arch }}" \
             --core /opt/t24/core \
             --core-version "$version"
