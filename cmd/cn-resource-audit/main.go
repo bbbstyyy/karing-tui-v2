@@ -1,13 +1,10 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -91,13 +88,11 @@ func buildAudit(assetRoot string) (auditDocument, error) {
 	if err != nil {
 		return auditDocument{}, fmt.Errorf("resolve asset root: %w", err)
 	}
-	info, err := os.Stat(root)
+	rootFD, err := openCNAssetRoot(root)
 	if err != nil {
-		return auditDocument{}, fmt.Errorf("stat asset root: %w", err)
+		return auditDocument{}, fmt.Errorf("open pinned asset root without symlinks: %w", err)
 	}
-	if !info.IsDir() {
-		return auditDocument{}, errors.New("asset root is not a directory")
-	}
+	defer closeCNAssetRoot(rootFD)
 
 	snapshot, err := preset.LoadCN()
 	if err != nil {
@@ -132,23 +127,23 @@ func buildAudit(assetRoot string) (auditDocument, error) {
 			Status:       string(spec.Status),
 			Reason:       spec.Reason,
 		}
-		fullPath := filepath.Join(root, filepath.FromSlash(spec.RelativePath))
 		switch spec.Status {
 		case preset.CNResourceStatusUpstreamAbsent:
-			if _, err := os.Lstat(fullPath); err == nil {
-				return auditDocument{}, fmt.Errorf(
-					"known upstream-absent resource %q unexpectedly exists at %s",
-					spec.Ref,
-					fullPath,
-				)
-			} else if !errors.Is(err, os.ErrNotExist) {
+			present, err := cnAssetExistsAt(rootFD, spec.RelativePath)
+			if err != nil {
 				return auditDocument{}, fmt.Errorf("inspect absent resource %q: %w", spec.Ref, err)
+			}
+			if present {
+				return auditDocument{}, fmt.Errorf("known upstream-absent resource %q unexpectedly exists", spec.Ref)
 			}
 			document.Summary.UpstreamAbsent++
 		case preset.CNResourceStatusFile:
-			size, digest, err := hashRegularFile(fullPath)
+			size, digest, err := hashCNAssetAt(rootFD, spec.RelativePath)
 			if err != nil {
 				return auditDocument{}, fmt.Errorf("audit %q: %w", spec.Ref, err)
+			}
+			if size > maxCNTotalBytes-document.Summary.TotalBytes {
+				return auditDocument{}, errors.New("CN asset audit aggregate byte budget exceeded")
 			}
 			entry.Bytes = size
 			entry.SHA256 = digest
@@ -166,29 +161,4 @@ func buildAudit(assetRoot string) (auditDocument, error) {
 		return auditDocument{}, fmt.Errorf("unexpected audited closure summary: %+v", document.Summary)
 	}
 	return document, nil
-}
-
-func hashRegularFile(path string) (int64, string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return 0, "", err
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return 0, "", err
-	}
-	if !info.Mode().IsRegular() {
-		return 0, "", errors.New("resource is not a regular file")
-	}
-	hash := sha256.New()
-	size, err := io.Copy(hash, file)
-	if err != nil {
-		return 0, "", err
-	}
-	if size != info.Size() {
-		return 0, "", fmt.Errorf("read %d bytes, stat reported %d", size, info.Size())
-	}
-	return size, hex.EncodeToString(hash.Sum(nil)), nil
 }

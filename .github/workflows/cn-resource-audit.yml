@@ -2,6 +2,16 @@ name: cn-resource-audit
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/cn-resource-audit.yml'
+      - 'cmd/cn-resource-audit/**'
+      - 'internal/preset/cn.json'
+      - 'internal/preset/cn.go'
+      - 'internal/preset/cn_resources.go'
+      - 'internal/preset/cn_resources_test.go'
+      - 'go.mod'
+      - 'go.sum'
   push:
     paths:
       - '.github/workflows/cn-resource-audit.yml'
@@ -40,9 +50,45 @@ jobs:
           go-version: '1.27.1'
           cache: false
 
-      - name: Generate immutable CN resource audit
+      - name: Verify upstream checkout commit and clean asset tree
         run: |
-          go run ./cmd/cn-resource-audit             --asset-root upstream-karing/assets/datas             --compact | tee cn-ruleset-audit.json
+          test "$(git -C upstream-karing rev-parse HEAD)" = "9d28b22fbbcca5818d147629aae151d49d4dcb7b"
+          test -z "$(git -C upstream-karing status --porcelain --untracked-files=all -- assets/datas)"
+
+      - name: Test bounded CN audit file safety
+        run: go test ./cmd/cn-resource-audit ./internal/preset
+
+      - name: Generate bounded provenance-only CN resource audit
+        run: |
+          go run ./cmd/cn-resource-audit \
+            --asset-root upstream-karing/assets/datas \
+            --compact > cn-ruleset-audit.json
+          test "$(git -C upstream-karing rev-parse HEAD)" = "9d28b22fbbcca5818d147629aae151d49d4dcb7b"
+          test -z "$(git -C upstream-karing status --porcelain --untracked-files=all -- assets/datas)"
+
+      - name: Guard unresolved distribution and license blockers
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("cn-ruleset-audit.json").read_text())
+          expected = {
+              "schema_version": 1,
+              "distribution_ready": False,
+              "license_status": "blocked_unresolved_upstream_data_licenses",
+          }
+          for key, value in expected.items():
+              if type(data.get(key)) is not type(value) or data.get(key) != value:
+                  raise SystemExit(f"CN distribution safety flag drifted: {key}")
+          summary = data["summary"]
+          if (summary["logical_refs"], summary["files"],
+              summary["upstream_absent"]) != (68, 67, 1):
+              raise SystemExit("CN resource closure cardinality drifted")
+          if not 0 < summary["total_bytes"] <= (64 << 20):
+              raise SystemExit("CN resource audit unbounded or empty")
+          if len(data["resources"]) != 68:
+              raise SystemExit("CN resource rows missing")
+          PY
 
       - name: Upload CN resource audit
         uses: actions/upload-artifact@v4
