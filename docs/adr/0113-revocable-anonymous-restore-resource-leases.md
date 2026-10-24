@@ -1,0 +1,34 @@
+# ADR 0113 — Revocable in-process anonymous resource FD lease for encrypted restore candidates
+
+- Status: **M4 internal staging prerequisite**, not a durable import, resource publication, runtime execution, backup/restore API or activation.
+- Builds on ADR 0108 (journal-bound encrypted candidate flock), 0109 (archived apply lifecycle), 0110 (one-at-a-time anonymous resource probe), 0111 (in-memory native path rebinding preview), 0112 (read-only destination directory audit).
+- Ordinary-user Linux only, no TUN; CN original 28 groups; Custom → GeoSite → GeoIP → ACL → FINAL; subscription/ISP routing layer stays removed. SQLite schema remains **v18**.
+
+## Problem
+
+ADR 0110 proved that every authenticated local rule and optional approved Core can be copied into an anonymous, UID-private Linux `O_TMPFILE`, hashed, chmodded non-executable and closed. But every descriptor disappeared **before returning**, so a future atomic filesystem importer would still have to re-open/re-decrypt resources, recreating a gap between authentication and staged material. ADR 0112 audits a target path only while its own FD pins are live and deliberately does not grant a future filesystem lease. To design an atomic publisher safely we first need a **bounded, explicitly revocable, same-process** ownership object for the authenticated resource bytes themselves.
+
+## Decision
+
+Add `InertRestoreResourceLease.PinAnonymousRestoreResources(ctx, scratchParent, key)` returning an `InertPinnedRestoreResources` object. Unlike a stateless digest report, the internal object retains private file descriptors, **but exports no descriptor, file path, decrypted bytes, or method to publish/execute them**. It is not a restore token.
+
+1. Require a live ADR 0108 ciphertext candidate lease, a separate existing private 0700 scratch directory, explicit caller-supplied key, and Linux `O_TMPFILE` support. Never fall back to a named file. Recheck the exact durable v18 pending journal, active Applied/LKG/declaration/selection/core CAS, encrypted archive SHA/HMAC, in-memory SQLite/schema/profile and candidate inode under **one parent mutex and cross-process flock**.
+2. Replay the entire ciphertext through a shared strict inventory-bound encrypted stream. **No SQLite plaintext file is ever created**; database payload is hashed/discarded during resource staging. For every local rule and optional repository-approved Core, create one separate `O_TMPFILE|O_CLOEXEC|O_RDWR` inode under the pinned scratch directory FD; require UID ownership, `nlink=0`, size and SHA-256 match. Set mode 0400, `fsync`, independently read back/re-hash and retain the FD in a bounded private array.
+3. On *any* copy/HMAC/end-of-stream/identity/journal/CAS error, close **all** already opened anonymous descriptors and directory handles, return no partially usable object, and leave live SQLite, core, rules and ciphertext unchanged. No import state or recovery approval is created.
+4. Complete a final whole-archive MAC/SHA/identity check; then independently verify every retained anonymous FD, directory inode and parent journal/CAS before returning. One live pinned bundle per parent ciphertext lease bounds retained descriptor count/disk budget; a second bundle is refused until the first is explicitly closed.
+5. `InertPinnedRestoreResources.Revalidate(ctx, key)` takes its own mutex followed by the parent mutex, repeats full ciphertext/candidate/journal/CAS verification and independently re-hashes every anonymous FD, checks 0400 non-executable mode, ownership, zero links, size/inode/mtime and the original scratch directory identity. A lease whose parent was closed, or whose scratch was swapped or FD bytes/permissions changed, fails closed. `Close()` atomically revokes the bundle, closes all FDs, drops the parent reservation and can be invoked multiple times.
+6. Only `Evidence()` returns a **non-authorizing**, non-secret hash/count/byte report with both `RestoreSupported=false` and `RestoreReady=false`. Post-close it returns all zeros; no stale report or FD is usable as permission to activate an archived generation.
+
+### Process-lifetime, failure and security limits
+
+- These are anonymous Linux files, **not** a durable cross-restart snapshot. `Close`, SIGKILL, a filesystem losing its inodes or a reboot destroys the resource pins. The original encrypted candidate and its inert SQLite record persist independently and must be reauthenticated with a newly supplied key in the next process.
+- The descriptors are retained only within this Go process and deliberately never exposed to TUI/CLI/HTTP or to the sing-box runner. They are non-executable even when they hold an approved core. Anonymous inodes can consume disk blocks while open; the preexisting authenticated resource-size and filesystem-space ceilings still apply. No forensic secure erasure of page cache/storage blocks is claimed.
+- The parent ciphertext lease can be explicitly closed by a caller; any retained child then **fails Revalidate** and must still be separately closed. The one-child reservation prevents repeated staging from accumulating an unbounded number of FDs on one parent lease. This reservation is not cross-process, is not a transaction and does not allow resource publication.
+- No arbitrary on-disk path is read from the archive or published to the target. A future durable publisher must reacquire target directory descriptors while holding the appropriate daemon operation gate, provide crash-resumable all-or-none publication and rollback, recompile under the active compiler, bind the same SQLite write CAS, and pass core Check/Activate/Verify with T15/T23 fault injection before restoring anything.
+
+## Tests and checkpoints
+
+- Unit regressions cover one retained unnamed rule FD, repeated revalidation, zero named plaintext files, no current state or journal changes, wrong key, unsafe scratch path/mode/symlink, injected stage fault and strict cleanup, corrupt or executable altered FD, directory inode replacement, abandoned journal, changed selection, parent Close, cancellation, and lease `Close` racing the initial stage.
+- A second simultaneous pin attempt is denied; after explicit Close a new bounded pin can be acquired.
+- Managed real-Core integration pins both the actual repository-approved sing-box binary and rule sets without creating an executable or invoking the core, revalidates them, then drops every file descriptor before any other restore audit.
+- This ADR must **not** be used to claim production restore completion. Actual durable resource publication, encrypted credential migration, schema migration, filesystem/SQLite atomicity, rollback-of-rollback, process-death/power-loss T15/T23, CN offline rule licensing and 72h/7d/30d stability gates remain open. PR #1 stays Draft and there are no backup/restore user entrypoints.

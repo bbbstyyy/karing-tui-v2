@@ -1,0 +1,160 @@
+{
+  "schema": 11,
+  "source_repository": "https://github.com/KaringX/sing-box",
+  "candidate_ref": "karing_v1.13.19",
+  "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
+  "candidate_timestamp": "2026-09-17T04:16:38Z",
+  "candidate_role": "M1 stable standalone Linux baseline",
+  "candidate_reason": "karing_v1.14.0@9f020fce failed reproducible provenance builds because its source tree, local sibling workspace, and required build tags are not mutually build-closed; karing_v1.13.19 keeps KaringX dependencies as fixed remote pseudo-versions and has internally consistent Clash/DNS code at the inspected head",
+  "module": "github.com/sagernet/sing-box",
+  "declared_go_version": "1.25.0",
+  "workspace_mode": "module_replacements",
+  "local_replacements": [],
+  "fixed_module_replacement_evidence": [
+    "github.com/sagernet/sing => github.com/KaringX/sing v0.5.0-alpha.11.0.20260819025303-12e7cea73174",
+    "github.com/sagernet/sing-quic => github.com/KaringX/sing-quic v0.2.0-beta.12.0.20260805050642-0122883b056b",
+    "github.com/sagernet/quic-go => github.com/KaringX/quic-go v0.49.0-beta.1.0.20260319073656-e535214ac88c",
+    "github.com/sagernet/sing-tun => github.com/KaringX/sing-tun v0.6.2-0.20260819025838-60cad1147202",
+    "github.com/sagernet/wireguard-go => github.com/KaringX/wireguard-go v0.0.1-beta.5.0.20260812025805-7d2d140c5113",
+    "github.com/sagernet/tailscale => github.com/KaringX/tailscale v1.80.3-mod.5.0.20260812023457-7007033a39f9"
+  ],
+  "fixed_makefile_evidence": {
+    "default_tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
+    "default_tags": "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0",
+    "ldflags_file": "release/LDFLAGS",
+    "ldflags": "-X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0",
+    "version_command": "go run github.com/sagernet/sing-box/cmd/internal/read_tag@latest"
+  },
+  "karing_build_tag_evidence": {
+    "tag": "with_karing",
+    "required_for_library_build": true,
+    "upstream_cli_allowed": false,
+    "upstream_cli_rejection_reason": "cmd/sing-box/cmd_extension_karing.go requires service-config and invokes makeProcessSingleton; on Linux extension_process_linux.go terminates/kills processes by executable basename, violating T19 and supervisor ownership",
+    "project_boundary": "compile the locked Karing library with with_karing but do not compile cmd/sing-box; build the project-owned minimal standalone entrypoint instead",
+    "source_files": [
+      "cmd/sing-box/cmd_extension_karing.go",
+      "cmd/sing-box/extension_process_linux.go"
+    ]
+  },
+  "reference_linux_cli_build": {
+    "go_version": "1.25.12",
+    "go_version_source": ".github/workflows/build.yml at candidate commit",
+    "mode": "project_entrypoint_over_locked_karing_library",
+    "cgo_enabled": false,
+    "goos": "linux",
+    "architectures": [
+      "amd64",
+      "arm64"
+    ],
+    "tags_file": "release/DEFAULT_BUILD_TAGS_OTHERS",
+    "extra_tags": [
+      "with_karing",
+      "with_shadowsocksr"
+    ],
+    "tags_strategy": "use release/DEFAULT_BUILD_TAGS_OTHERS unchanged as the base, append with_karing and with_shadowsocksr for library closure, and build only the project-owned cmd/karing-tui-core entrypoint",
+    "ldflags_file": "release/LDFLAGS",
+    "version_value": "karing-tui-v2-core-1.13.19-beddeaba",
+    "version_strategy": "inject a fixed constant.Version with -ldflags; never invoke the Makefile read_tag@latest helper",
+    "verification_script": "scripts/verify-core-build.sh",
+    "workflow": ".github/workflows/core-provenance.yml",
+    "service_config_required": false,
+    "runtime_smoke_script": "scripts/smoke-core-runtime.sh",
+    "entrypoint_template": "resources/core-entry/main.go.txt",
+    "upstream_cmd_sing_box_allowed": false,
+    "native_runners": {
+      "amd64": "ubuntu-24.04",
+      "arm64": "ubuntu-24.04-arm"
+    }
+  },
+  "rejected_candidates": [
+    {
+      "ref": "karing_v1.14.0",
+      "commit": "9f020fcefd4c9655689d503abd11572f31365b5a",
+      "status": "rejected_as_m1_baseline",
+      "provenance_runs": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "observed_failures": [
+        "go.mod uses local sibling replacements whose commented pseudo-version commits are older than APIs consumed by the core",
+        "the upstream default tag list omits with_karing and with_shadowsocksr although this fork requires them for build closure",
+        "after synchronizing sibling branch snapshots and adding required tags, the fixed core still fails on internal Clash API, DNS, QUIC, and WireGuard API mismatches"
+      ],
+      "upgrade_policy": "do not patch this source in-place for M1; revisit 1.14 only when a reproducible upstream/fork snapshot closes these mismatches"
+    }
+  ],
+  "build_verification": {
+    "status": "approved",
+    "provenance_run_9": {
+      "result": "success",
+      "workflow_run_id": 37216622450,
+      "head_sha": "701cbfcc2adc9ea94ef599ba499c2d5059324506",
+      "linux_amd64_sha256": "829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569",
+      "linux_arm64_sha256": "77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512",
+      "amd64_native_runner": "ubuntu-24.04",
+      "arm64_native_runner": "ubuntu-24.04-arm",
+      "amd64_ordinary_uid_runtime_smoke": true,
+      "arm64_ordinary_uid_runtime_smoke": true,
+      "version_smoke": true,
+      "config_check_smoke": true,
+      "local_clash_api_smoke": true,
+      "mixed_inbound_smoke": true,
+      "sigterm_shutdown_smoke": true
+    },
+    "amd64_sha256": "829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569",
+    "arm64_sha256": "77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512",
+    "amd64_native_runtime_smoke": true,
+    "arm64_native_runtime_smoke": true,
+    "config_check_smoke": true,
+    "local_clash_api_smoke": true,
+    "mixed_inbound_smoke": true,
+    "sigterm_shutdown_smoke": true,
+    "hash_reproducibility_check": true,
+    "unsafe_with_karing_upstream_cli_evidence": {
+      "provenance_run": 5,
+      "linux_amd64_sha256": "5b4e95ec70ef853063b05f58adf11c66a3bd7894818486ae5996e7877b591f42",
+      "linux_arm64_sha256": "4af4440a99f8408f515f4906ac92ee123811eb6a3c63ac5bd17e8f98dd0841b4",
+      "accepted": false,
+      "reason": "upstream with_karing cmd/sing-box uses Karing app service lifecycle and unsafe same-basename singleton handling on Linux"
+    }
+  },
+  "build_approved": true,
+  "reasons": [],
+  "approval": {
+    "scope": "M1 standalone Linux core build and local runtime smoke only",
+    "approved_candidate": "KaringX/sing-box@beddeababcc71dfb0c78124598b13341c06c69fb with project-owned cmd/karing-tui-core entrypoint",
+    "approved_architectures": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "excludes": [
+      "upstream Karing cmd/sing-box entrypoint",
+      "karing_v1.14.0 candidate",
+      "TUN, route takeover, system proxy mutation, TPROXY and redirect modes",
+      "Clash PUT /configs as a full-reload contract",
+      "production daemon/core wiring before apply/recovery integration tests"
+    ]
+  },
+  "artifact_verifier": {
+    "package": "internal/coreartifact",
+    "candidate_version": "karing-tui-v2-core-1.13.19-beddeaba",
+    "candidate_commit": "beddeababcc71dfb0c78124598b13341c06c69fb",
+    "linux_amd64_sha256": "829452e2927ab8a9836fec398d5bbade259b3837df774c53afb3ec4eb20a1569",
+    "linux_arm64_sha256": "77a46000241540067c903bbfdf7c320638066abb9888635bc7a3f1810ee4b512",
+    "policy": [
+      "absolute path only",
+      "open with O_NOFOLLOW",
+      "regular executable file only",
+      "reject group/other-writable artifact",
+      "owner must be root or current uid",
+      "hash the opened file descriptor and require exact architecture SHA-256"
+    ]
+  },
+  "distribution_approved": false,
+  "distribution_blockers": [
+    "project/upstream/resource license closure is still open",
+    "release packaging and offline source/license manifest are not complete"
+  ]
+}
