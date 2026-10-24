@@ -20,6 +20,8 @@ on:
       - 'resources/core.lock.json'
       - 'scripts/verify-core-build.sh'
       - 'scripts/smoke-core-runtime.sh'
+      - 'scripts/offline_lab/**'
+      - '.github/workflows/core-provenance.yml'
 
 concurrency:
   group: managed-core-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
