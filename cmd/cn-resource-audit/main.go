@@ -162,4 +162,3 @@ func buildAudit(assetRoot string) (auditDocument, error) {
 	}
 	return document, nil
 }
-
