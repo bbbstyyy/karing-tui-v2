@@ -114,7 +114,8 @@ def unix_json(path, method, route, payload=None, expected=200, timeout=85):
             "unexpected management API route")
     body = json.dumps(payload, separators=(",", ":")).encode() if payload is not None else None
     require(body is None or len(body) <= 8192, "unbounded test input")
-    with UnixHTTP(path, timeout) as client:
+    client = UnixHTTP(path, timeout)
+    try:
         client.request(method, route, body=body,
                        headers={"Content-Type": "application/json"} if body else {})
         response = client.getresponse()
@@ -124,6 +125,8 @@ def unix_json(path, method, route, payload=None, expected=200, timeout=85):
         doc = json.loads(raw)
         require(isinstance(doc, dict), "management response was not an object")
         return doc
+    finally:
+        client.close()
 
 
 def committed_snapshot(status, generation, desired, running):
