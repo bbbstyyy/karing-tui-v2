@@ -262,7 +262,7 @@ def assert_promoted_core(status, old_generation, generation, old_pid,
     require(status.get("last_known_good_generation_id") == generation and
             status.get("active_operation") in (None, ""),
             "promoted generation did not commit LKG or left a pending operation")
-    if running:
+    if running and old_pid is not None:
         require(type(old_pid) is int and old_pid > 0 and pid != old_pid,
                 "generation activation never replaced old Core process")
     return pid
@@ -679,7 +679,7 @@ def main(argv=None):
 
                         def promoted_restart(daemon, sock, initial):
                             assert_promoted_core(initial, generation,
-                                                 promoted_generation, 0, False)
+                                                 promoted_generation, None, False)
                             require(unix_json(
                                 sock, "GET", "/v1/declaration/current").get("sha256")
                                 == staged_sha,
@@ -689,7 +689,7 @@ def main(argv=None):
                             boot.checked([args.app, "core", "start"], env, timeout=22)
                             running = wait_status(args.app, env, "running")
                             new_pid = assert_promoted_core(
-                                running, generation, promoted_generation, 0, True)
+                                running, generation, promoted_generation, None, True)
                             verify_child(new_pid, daemon.pid, args.core)
                             probe_isolated_routes(echo.server_address[1],
                                                   b"promoted-restart-", node)
@@ -697,7 +697,7 @@ def main(argv=None):
                                                    b"failed-promoted-restart-", node)
                             require(assert_promoted_core(
                                 unix_json(sock, "GET", "/v1/status"),
-                                generation, promoted_generation, 0, True)
+                                generation, promoted_generation, None, True)
                                 == new_pid,
                                 "persisted promoted Core restarted unexpectedly")
                             probe_isolated_routes(echo.server_address[1],
@@ -705,7 +705,7 @@ def main(argv=None):
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
                             assert_promoted_core(
-                                stopped, generation, promoted_generation, 0, False)
+                                stopped, generation, promoted_generation, None, False)
                             verify_stopped_ports()
 
                         run_daemon(args.app, args.core, root, env, promoted_restart)
