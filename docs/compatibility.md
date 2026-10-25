@@ -451,3 +451,7 @@ The approved Core is now started independently in a nonroot, no-capability, read
 ## ADR 0148: disconnected verified-Core Daemon cold-start refusal
 
 The native amd64/arm64 T24 preflight now includes a separate `KARING_TUI_CORE_PATH` configured Daemon in the zero-network, ordinary-user sandbox. A verified Core binary must remain dormant without an applied generation, even when an explicit test-only start command fails. The test resets the failed durable intent with an explicit stop and checks private persistent control secret/SQLite state across Daemon restart; substituted or symlink binaries must be refused. This is only a management-plane safety boundary, not an applied-generation traffic or full offline CN release test. T24 and licenses remain blocked.
+
+## ADR 0149 — native network-none real managed applied generation
+
+A fourth independent native amd64/arm64 zero-network container now exercises actual Daemon Unix API commit/compile/apply of a synthetic non-CN V1 declaration, explicit approved Core start/stop, and real local SOCKS5 traffic from all three configured inbounds (including a temporary selected local SOCKS node). It checks persisted generation and a stopped Daemon restart without network or special permissions. This does not certify real CN rule assets, public proxy/DNS connectivity, offline redistribution, full T24 or recovery/power-loss trials. Existing permissions and license flags remain unchanged.
