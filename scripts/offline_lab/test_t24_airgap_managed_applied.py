@@ -128,6 +128,36 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             applied.unix_json("/fake/sock", "POST",
                               "/v1/declaration", {"oversized": "x" * 8192})
 
+    def test_unix_client_is_closed_on_success_and_error(self):
+        class DummyResponse:
+            status = 200
+            def read(self, _limit):
+                return b'{"api_version":"v1"}'
+
+        clients = []
+        class DummyClient:
+            def __init__(self, path, timeout):
+                self.path = path
+                self.timeout = timeout
+                self.closed = False
+                clients.append(self)
+            def request(self, method, route, body=None, headers=None):
+                self.method = method
+                self.route = route
+            def getresponse(self):
+                return DummyResponse()
+            def close(self):
+                self.closed = True
+
+        with mock.patch.object(applied, "UnixHTTP", DummyClient):
+            doc = applied.unix_json("/test.sock", "GET", "/v1/status")
+            self.assertEqual(doc["api_version"], "v1")
+            self.assertTrue(clients[-1].closed)
+            with self.assertRaises(RuntimeError):
+                applied.unix_json("/test.sock", "GET", "/v1/status",
+                                  expected=201)
+            self.assertTrue(clients[-1].closed)
+
     def test_workflow_requires_four_separate_native_network_none_probes(self):
         workflow = (Path(__file__).resolve().parents[2] /
                     ".github/workflows/core-provenance.yml").read_text()
