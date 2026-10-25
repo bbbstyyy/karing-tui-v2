@@ -84,6 +84,162 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     applied.committed_snapshot(changed, 5, "stopped", False)
 
+    def test_staged_revision_changes_only_logging_and_refuses_network_mutation(self):
+        base = applied.local_document(39871)
+        staged = applied.staged_document(base, 39871)
+        applied.assert_staged_document(staged, 39871)
+        self.assertEqual(base["log_level"], "warn")
+        self.assertEqual(staged["log_level"], "error")
+        original = dict(staged)
+        for name, mutate in (
+            ("remote-node", lambda d: d["nodes"][0].update({"server": "8.8.8.8"})),
+            ("new-rules", lambda d: d.update({"rule_sets": ["geoip:cn"]})),
+            ("route-bypass", lambda d: d["routing"].update({"final": {"kind": "block"}})),
+            ("remote-dns", lambda d: d["dns"]["profiles"][0].update({"server": "1.1.1.1"})),
+            ("privileged-inbound", lambda d: d.update({"tun": True})),
+            ("unapproved-level", lambda d: d.update({"log_level": "debug"})),
+        ):
+            with self.subTest(name=name):
+                altered = json.loads(json.dumps(staged))
+                mutate(altered)
+                with self.assertRaises(RuntimeError):
+                    applied.assert_staged_document(altered, 39871)
+        self.assertEqual(staged, original)
+
+    def test_unapplied_revision_retains_original_core_pid_and_lkg(self):
+        status = self.status("running", True)
+        status.update({
+            "declaration_revision": 2,
+            "last_known_good_generation_id": 5,
+            "active_operation": "",
+        })
+        applied.assert_unapplied_core_unchanged(status, 5, 123, 2)
+        for name, bad in (
+            ("config revision", {"config_revision": 2}),
+            ("applied generation", {"applied_generation_id": 9}),
+            ("LKG drift", {"last_known_good_generation_id": 10}),
+            ("PID churn", {"core_pid": 124}),
+            ("running intent", {"core_desired_state": "stopped"}),
+            ("declaration revision", {"declaration_revision": 1}),
+            ("recovery", {"recovery_required": True}),
+            ("busy apply", {"active_operation": "config-apply"}),
+        ):
+            with self.subTest(name=name):
+                changed = dict(status)
+                changed.update(bad)
+                with self.assertRaises(RuntimeError):
+                    applied.assert_unapplied_core_unchanged(changed, 5, 123, 2)
+        with self.assertRaises(RuntimeError):
+            applied.assert_unapplied_core_unchanged(status, 5, 123, 3)
+
+    def test_unapplied_stage_rejects_invalid_candidate_and_stale_apply(self):
+        original_doc = applied.local_document(39871)
+        original_sha, staged_sha = "a" * 64, "b" * 64
+        original_config, staged_config = "c" * 64, "d" * 64
+        head = {"revision": 1, "sha256": original_sha, "document": original_doc}
+        calls = []
+        probes = []
+
+        class Node:
+            calls = 0
+            failed = False
+        node = Node()
+
+        def fake_api(_sock, method, route, payload=None, expected=200,
+                     timeout=85):
+            calls.append((method, route, expected))
+            if (method, route) == ("GET", "/v1/declaration/current"):
+                return dict(head)
+            if (method, route) == ("GET", "/v1/status"):
+                status = self.status("running", True)
+                status.update({
+                    "declaration_revision": head["revision"],
+                    "last_known_good_generation_id": 5,
+                    "active_operation": "",
+                })
+                return status
+            if (method, route) == ("POST", "/v1/declaration"):
+                self.assertEqual(payload["expected_revision"], 1)
+                if payload["document"].get("tun"):
+                    self.assertEqual(expected, 400)
+                    return {"error": "unknown field"}
+                self.assertEqual(expected, 201)
+                applied.assert_staged_document(payload["document"], 39871)
+                head.update({"revision": 2, "sha256": staged_sha,
+                             "document": payload["document"]})
+                return {"revision": 2, "sha256": staged_sha}
+            if (method, route) == ("POST", "/v1/declaration/compile"):
+                self.assertEqual(payload, {"revision": 2})
+                return {
+                    "revision": 2, "declaration_sha256": staged_sha,
+                    "config_sha256": staged_config, "rule_set_count": 0,
+                }
+            if (method, route) == ("POST", "/v1/declaration/apply"):
+                self.assertEqual(payload, {
+                    "declaration_revision": 2,
+                    "expected_config_revision": 0,
+                })
+                self.assertEqual(expected, 409)
+                return {"error": "stale config revision"}
+            raise AssertionError("unapproved API request")
+
+        def probe(echo_port, payload_prefix, target):
+            self.assertEqual((echo_port, target), (41001, node))
+            probes.append(payload_prefix)
+
+        with mock.patch.object(applied, "unix_json", side_effect=fake_api):
+            with mock.patch.object(applied, "probe_isolated_routes",
+                                   side_effect=probe):
+                sha = applied.stage_and_reject_stale_apply(
+                    "/test.sock", 5, 123, original_doc, 39871,
+                    original_sha, original_config, 41001, node)
+        self.assertEqual(sha, staged_sha)
+        self.assertEqual(original_doc["log_level"], "warn")
+        self.assertEqual(probes, [b"staged-not-applied-"])
+        self.assertEqual(calls.count(("GET", "/v1/declaration/current", 200)), 3)
+        self.assertIn(("POST", "/v1/declaration", 400), calls)
+        self.assertIn(("POST", "/v1/declaration/apply", 409), calls)
+
+    def test_stale_apply_must_report_refusal_not_success(self):
+        source = applied.local_document(39871)
+        original_sha, staged_sha = "a" * 64, "b" * 64
+        state = {"revision": 1, "sha256": original_sha, "document": source}
+
+        def fake_api(_sock, method, route, payload=None, expected=200,
+                     timeout=85):
+            if route == "/v1/declaration/current":
+                return dict(state)
+            if route == "/v1/status":
+                status = self.status("running", True)
+                status.update({
+                    "declaration_revision": state["revision"],
+                    "last_known_good_generation_id": 5,
+                    "active_operation": "",
+                })
+                return status
+            if route == "/v1/declaration":
+                if expected == 400:
+                    return {"error": "rejected"}
+                state.update({
+                    "revision": 2, "sha256": staged_sha,
+                    "document": payload["document"],
+                })
+                return {"revision": 2, "sha256": staged_sha}
+            if route == "/v1/declaration/compile":
+                return {
+                    "revision": 2, "declaration_sha256": staged_sha,
+                    "config_sha256": "d" * 64, "rule_set_count": 0,
+                }
+            if route == "/v1/declaration/apply":
+                return {}  # A missing typed conflict must never pass.
+            raise AssertionError("unexpected request")
+
+        with mock.patch.object(applied, "unix_json", side_effect=fake_api):
+            with self.assertRaises(RuntimeError):
+                applied.stage_and_reject_stale_apply(
+                    "/test.sock", 5, 123, source, 39871,
+                    original_sha, "c" * 64, 41001, object())
+
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):
             with self.subTest(port=port):
