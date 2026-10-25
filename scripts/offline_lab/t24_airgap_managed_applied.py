@@ -147,7 +147,8 @@ def unix_json(path, method, route, payload=None, expected=200, timeout=85):
         client.close()
 
 
-def committed_snapshot(status, generation, desired, running, declaration_revision=1):
+def committed_snapshot(status, generation, desired, running,
+                       declaration_revision=1, config_revision=1):
     require(type(status) is dict and status.get("api_version") == "v1",
             "invalid managed status")
     expected = {
@@ -155,7 +156,7 @@ def committed_snapshot(status, generation, desired, running, declaration_revisio
         "core_desired_state": desired,
         "core_state": "running" if running else "stopped",
         "recovery_required": False,
-        "config_revision": 1,
+        "config_revision": config_revision,
         "declaration_revision": declaration_revision,
         "applied_generation_id": generation,
     }
@@ -246,7 +247,66 @@ def stage_and_reject_stale_apply(sock, generation, pid, source,
     probe_isolated_routes(echo_port, b"staged-not-applied-", node)
     assert_unapplied_core_unchanged(
         unix_json(sock, "GET", "/v1/status"), generation, pid, 2)
-    return next_sha
+    return next_sha, preview["config_sha256"]
+
+
+def assert_promoted_core(status, old_generation, generation, old_pid,
+                         running):
+    """Ensure the persisted new generation, LKG and running intent agree."""
+    require(type(old_generation) is int and old_generation > 0 and
+            type(generation) is int and generation > old_generation,
+            "promoted generation must differ from old applied generation")
+    pid = committed_snapshot(status, generation,
+                             "running" if running else "stopped", running,
+                             declaration_revision=2, config_revision=2)
+    require(status.get("last_known_good_generation_id") == generation and
+            status.get("active_operation") in (None, ""),
+            "promoted generation did not commit LKG or left a pending operation")
+    if running and old_pid is not None:
+        require(type(old_pid) is int and old_pid > 0 and pid != old_pid,
+                "generation activation never replaced old Core process")
+    return pid
+
+
+def promote_staged_generation(sock, app, env, daemon_pid, core_path,
+                              old_generation, old_pid, staged_sha,
+                              staged_config_sha, echo_port, node):
+    """Apply exactly revision 2 under a valid CAS while real Core is running."""
+    require(type(staged_sha) is str and len(staged_sha) == 64 and
+            type(staged_config_sha) is str and len(staged_config_sha) == 64,
+            "invalid staged declaration/config identity")
+    assert_unapplied_core_unchanged(
+        unix_json(sock, "GET", "/v1/status"), old_generation, old_pid, 2)
+    head = unix_json(sock, "GET", "/v1/declaration/current")
+    require(head.get("revision") == 2 and head.get("sha256") == staged_sha,
+            "staged declaration changed before approved apply")
+    preview = unix_json(sock, "POST", "/v1/declaration/compile",
+                        {"revision": 2}, timeout=20)
+    require(preview.get("revision") == 2 and
+            preview.get("declaration_sha256") == staged_sha and
+            preview.get("config_sha256") == staged_config_sha and
+            preview.get("rule_set_count") == 0,
+            "staged native config drifted before approved apply")
+    receipt = unix_json(sock, "POST", "/v1/declaration/apply", {
+        "declaration_revision": 2, "expected_config_revision": 1,
+    }, timeout=85)
+    generation = receipt.get("generation_id")
+    require(type(generation) is int and generation > old_generation and
+            receipt.get("base_config_revision") == 1 and
+            receipt.get("target_config_revision") == 2 and
+            receipt.get("declaration_revision") == 2 and
+            receipt.get("declaration_sha256") == staged_sha and
+            receipt.get("config_sha256") == staged_config_sha and
+            type(receipt.get("attempt_id")) is int and receipt["attempt_id"] > 0,
+            "valid CAS did not produce verified generation 2")
+    status = wait_status(app, env, "running")
+    pid = assert_promoted_core(status, old_generation, generation, old_pid, True)
+    verify_child(pid, daemon_pid, core_path)
+    probe_isolated_routes(echo_port, b"promoted-live-", node)
+    require(assert_promoted_core(unix_json(sock, "GET", "/v1/status"),
+                                 old_generation, generation, old_pid, True) == pid,
+            "promoted Core restarted while forwarding local traffic")
+    return generation, pid
 
 
 def exact_read(sock, n):
@@ -502,9 +562,11 @@ def main(argv=None):
                         assert_synthetic_document(document, node.server_address[1])
                         expected_sha = None
                         staged_sha = None
+                        staged_config_sha = None
+                        promoted_generation = None
 
                         def first(daemon, sock, initial):
-                            nonlocal expected_sha, staged_sha
+                            nonlocal expected_sha, staged_sha, staged_config_sha
                             cold.configured_status(initial)
                             cold.configured_caps(unix_json(sock, "GET", "/v1/capabilities"))
                             request = {
@@ -551,7 +613,7 @@ def main(argv=None):
                                 "node failure unexpectedly restarted managed Core")
                             probe_isolated_routes(echo.server_address[1],
                                                   b"restored-first-", node)
-                            staged_sha = stage_and_reject_stale_apply(
+                            staged_sha, staged_config_sha = stage_and_reject_stale_apply(
                                 sock, generation, pid,
                                 document, node.server_address[1], expected_sha,
                                 compiled["config_sha256"], echo.server_address[1], node)
@@ -567,6 +629,7 @@ def main(argv=None):
                                 "synthetic selected node failed")
 
                         def restart(daemon, sock, initial):
+                            nonlocal promoted_generation
                             committed_snapshot(initial, generation, "stopped", False, 2)
                             require(unix_json(
                                 sock, "GET", "/v1/declaration/current").get("sha256")
@@ -590,15 +653,65 @@ def main(argv=None):
                                 "node failure restarted the persisted Core")
                             probe_isolated_routes(echo.server_address[1],
                                                   b"restored-restart-", node)
+                            promoted_generation, promoted_pid = promote_staged_generation(
+                                sock, args.app, env, daemon.pid, args.core,
+                                generation, pid, staged_sha, staged_config_sha,
+                                echo.server_address[1], node)
+                            probe_isolated_failure(echo.server_address[1],
+                                                   b"failed-promoted-", node)
+                            require(assert_promoted_core(
+                                unix_json(sock, "GET", "/v1/status"),
+                                generation, promoted_generation, pid, True)
+                                == promoted_pid,
+                                "promoted Core restarted after local node refusal")
+                            probe_isolated_routes(echo.server_address[1],
+                                                  b"restored-promoted-", node)
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
-                            committed_snapshot(stopped, generation, "stopped", False, 2)
+                            assert_promoted_core(stopped, generation,
+                                                 promoted_generation, pid, False)
                             verify_stopped_ports()
 
                         run_daemon(args.app, args.core, root, env, restart)
-                        require(node.calls == 5 and node.rejections >= 2 and
+                        require(type(promoted_generation) is int and
+                                promoted_generation > generation,
+                                "successfully applied generation was not persisted")
+
+                        def promoted_restart(daemon, sock, initial):
+                            assert_promoted_core(initial, generation,
+                                                 promoted_generation, None, False)
+                            require(unix_json(
+                                sock, "GET", "/v1/declaration/current").get("sha256")
+                                == staged_sha,
+                                "new applied generation lost its declaration on restart")
+                            cold.configured_caps(unix_json(
+                                sock, "GET", "/v1/capabilities"))
+                            boot.checked([args.app, "core", "start"], env, timeout=22)
+                            running = wait_status(args.app, env, "running")
+                            new_pid = assert_promoted_core(
+                                running, generation, promoted_generation, None, True)
+                            verify_child(new_pid, daemon.pid, args.core)
+                            probe_isolated_routes(echo.server_address[1],
+                                                  b"promoted-restart-", node)
+                            probe_isolated_failure(echo.server_address[1],
+                                                   b"failed-promoted-restart-", node)
+                            require(assert_promoted_core(
+                                unix_json(sock, "GET", "/v1/status"),
+                                generation, promoted_generation, None, True)
+                                == new_pid,
+                                "persisted promoted Core restarted unexpectedly")
+                            probe_isolated_routes(echo.server_address[1],
+                                                  b"restored-promoted-restart-", node)
+                            boot.checked([args.app, "core", "stop"], env, timeout=20)
+                            stopped = wait_status(args.app, env, "stopped")
+                            assert_promoted_core(
+                                stopped, generation, promoted_generation, None, False)
+                            verify_stopped_ports()
+
+                        run_daemon(args.app, args.core, root, env, promoted_restart)
+                        require(node.calls == 9 and node.rejections >= 4 and
                                 not node.reject_connections and not node.failed,
-                                "synthetic failure/recovery routes were not isolated")
+                                "real generation handoff or three-entry routes drifted")
                         cold.hash_pinned_core(core, args.core_sha256)
                     finally:
                         node.shutdown()
@@ -608,6 +721,7 @@ def main(argv=None):
         print("T24_AIRGAP_DAEMON_COMMITTED_CORE_LOOPBACK=ok")
         print("T24_AIRGAP_SELECTED_NODE_FAILURE_ISOLATED=ok")
         print("T24_AIRGAP_STAGED_REVISION_CAS_ISOLATED=ok")
+        print("T24_AIRGAP_LIVE_GENERATION_HANDOFF=ok")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
         return 0

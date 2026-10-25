@@ -193,7 +193,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 sha = applied.stage_and_reject_stale_apply(
                     "/test.sock", 5, 123, original_doc, 39871,
                     original_sha, original_config, 41001, node)
-        self.assertEqual(sha, staged_sha)
+        self.assertEqual(sha, (staged_sha, staged_config))
         self.assertEqual(original_doc["log_level"], "warn")
         self.assertEqual(probes, [b"staged-not-applied-"])
         self.assertEqual(calls.count(("GET", "/v1/declaration/current", 200)), 3)
@@ -239,6 +239,155 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 applied.stage_and_reject_stale_apply(
                     "/test.sock", 5, 123, source, 39871,
                     original_sha, "c" * 64, 41001, object())
+
+    def test_promoted_status_requires_new_generation_lkg_and_running_pid(self):
+        running = self.status("running", True)
+        running.update({
+            "config_revision": 2, "declaration_revision": 2,
+            "applied_generation_id": 9, "last_known_good_generation_id": 9,
+            "core_pid": 222, "active_operation": "",
+        })
+        self.assertEqual(applied.assert_promoted_core(
+            running, 5, 9, 123, True), 222)
+        self.assertEqual(applied.assert_promoted_core(
+            running, 5, 9, None, True), 222)
+        stopped = dict(running)
+        stopped.update({"core_state": "stopped", "core_desired_state": "stopped",
+                        "core_pid": 0})
+        self.assertEqual(applied.assert_promoted_core(
+            stopped, 5, 9, None, False), 0)
+        for name, change in (
+            ("old applied revision", {"config_revision": 1}),
+            ("old declaration", {"declaration_revision": 1}),
+            ("old generation", {"applied_generation_id": 5}),
+            ("wrong last-known-good", {"last_known_good_generation_id": 5}),
+            ("core not running", {"core_state": "stopped"}),
+            ("running intent absent", {"core_desired_state": "stopped"}),
+            ("old core PID", {"core_pid": 123}),
+            ("recovery demanded", {"recovery_required": True}),
+            ("apply still pending", {"active_operation": "declaration-apply"}),
+            ("circuit open", {"core_circuit_open": True}),
+        ):
+            with self.subTest(name=name):
+                changed = dict(running)
+                changed.update(change)
+                with self.assertRaises(RuntimeError):
+                    applied.assert_promoted_core(changed, 5, 9, 123, True)
+        for old_generation in (0, 9, 10):
+            with self.subTest(generation=old_generation):
+                with self.assertRaises(RuntimeError):
+                    applied.assert_promoted_core(
+                        running, old_generation, 9, 123, True)
+
+    def test_valid_cas_promotes_staged_generation_and_checks_local_traffic(self):
+        stage_sha, config_sha = "b" * 64, "d" * 64
+        state = {"applied": False}
+        operations = []
+        class Node:
+            pass
+        node = Node()
+
+        def status():
+            result = self.status("running", True)
+            result.update({"declaration_revision": 2,
+                           "last_known_good_generation_id": 5,
+                           "active_operation": ""})
+            if state["applied"]:
+                result.update({
+                    "config_revision": 2,
+                    "applied_generation_id": 9,
+                    "last_known_good_generation_id": 9,
+                    "core_pid": 222,
+                })
+            return result
+
+        def fake_api(sock, method, route, payload=None, expected=200,
+                     timeout=85):
+            self.assertEqual(sock, "/test.sock")
+            operations.append((method, route))
+            if route == "/v1/status":
+                return status()
+            if route == "/v1/declaration/current":
+                return {"revision": 2, "sha256": stage_sha}
+            if route == "/v1/declaration/compile":
+                self.assertEqual(payload, {"revision": 2})
+                return {"revision": 2, "declaration_sha256": stage_sha,
+                        "config_sha256": config_sha, "rule_set_count": 0}
+            if route == "/v1/declaration/apply":
+                self.assertEqual(payload, {
+                    "declaration_revision": 2, "expected_config_revision": 1,
+                })
+                self.assertEqual(expected, 200)
+                state["applied"] = True
+                return {
+                    "generation_id": 9, "attempt_id": 17,
+                    "base_config_revision": 1, "target_config_revision": 2,
+                    "declaration_revision": 2,
+                    "declaration_sha256": stage_sha,
+                    "config_sha256": config_sha,
+                }
+            raise AssertionError("unexpected privileged management route")
+
+        with mock.patch.object(applied, "unix_json", side_effect=fake_api):
+            with mock.patch.object(applied, "wait_status", side_effect=(
+                lambda *_args: status())):
+                with mock.patch.object(applied, "verify_child") as child:
+                    with mock.patch.object(applied, "probe_isolated_routes") as probe:
+                        promoted = applied.promote_staged_generation(
+                            "/test.sock", "/app", {}, 100, "/approved-core",
+                            5, 123, stage_sha, config_sha, 41001, node)
+        self.assertEqual(promoted, (9, 222))
+        child.assert_called_once_with(222, 100, "/approved-core")
+        probe.assert_called_once_with(41001, b"promoted-live-", node)
+        self.assertEqual(operations.count(("POST", "/v1/declaration/apply")), 1)
+        self.assertFalse(any(route == "/v1/declaration" for _, route in operations))
+
+    def test_unsafe_handoff_receipts_fail_before_any_health_probe(self):
+        stage_sha, config_sha = "b" * 64, "d" * 64
+        good_receipt = {
+            "generation_id": 9, "attempt_id": 17,
+            "base_config_revision": 1, "target_config_revision": 2,
+            "declaration_revision": 2,
+            "declaration_sha256": stage_sha, "config_sha256": config_sha,
+        }
+        for field, value in (
+            ("generation_id", 5),
+            ("generation_id", True),
+            ("attempt_id", 0),
+            ("base_config_revision", 0),
+            ("target_config_revision", 1),
+            ("declaration_revision", 1),
+            ("declaration_sha256", "a" * 64),
+            ("config_sha256", "c" * 64),
+        ):
+            with self.subTest(field=field, value=value):
+                state = self.status("running", True)
+                state.update({"declaration_revision": 2,
+                              "last_known_good_generation_id": 5,
+                              "active_operation": ""})
+                receipt = dict(good_receipt)
+                receipt[field] = value
+
+                def fake_api(_sock, _method, route, payload=None,
+                             expected=200, timeout=85):
+                    if route == "/v1/status":
+                        return dict(state)
+                    if route == "/v1/declaration/current":
+                        return {"revision": 2, "sha256": stage_sha}
+                    if route == "/v1/declaration/compile":
+                        return {"revision": 2, "declaration_sha256": stage_sha,
+                                "config_sha256": config_sha, "rule_set_count": 0}
+                    if route == "/v1/declaration/apply":
+                        return dict(receipt)
+                    raise AssertionError("unexpected management route")
+
+                with mock.patch.object(applied, "unix_json", side_effect=fake_api):
+                    with mock.patch.object(applied, "wait_status") as wait:
+                        with self.assertRaises(RuntimeError):
+                            applied.promote_staged_generation(
+                                "/test.sock", "/app", {}, 100, "/approved-core",
+                                5, 123, stage_sha, config_sha, 41001, object())
+                        wait.assert_not_called()
 
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):
