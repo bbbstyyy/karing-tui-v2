@@ -447,3 +447,7 @@ Both native Linux architectures now exercise the actual compiled CLI/Daemon unde
 ## ADR 0147 — independent native network-none Core loopback data-plane test
 
 The approved Core is now started independently in a nonroot, no-capability, read-only Docker network-none container on native amd64 and arm64. Each of three localhost mixed inbounds must complete real SOCKS5 CONNECT/payload echo to a same-container ephemeral 127.0.0.1 server, with local API 401/authorized version checks. OCI test image is pinned by the observed multi-arch index digest; CI host stages/downloads/builds before isolation. CN SRS, DNS, external node routing, production Daemon-Core activation and redistribution remain untested/unapproved; T24 full release OPEN.
+
+## ADR 0148: disconnected verified-Core Daemon cold-start refusal
+
+The native amd64/arm64 T24 preflight now includes a separate `KARING_TUI_CORE_PATH` configured Daemon in the zero-network, ordinary-user sandbox. A verified Core binary must remain dormant without an applied generation, even when an explicit test-only start command fails. The test resets the failed durable intent with an explicit stop and checks private persistent control secret/SQLite state across Daemon restart; substituted or symlink binaries must be refused. This is only a management-plane safety boundary, not an applied-generation traffic or full offline CN release test. T24 and licenses remain blocked.
