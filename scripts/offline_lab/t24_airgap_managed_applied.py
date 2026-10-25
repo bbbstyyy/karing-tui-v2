@@ -226,6 +226,21 @@ def probe_port(port, echo_port, payload):
                 "managed Core packet round trip failed")
 
 
+
+def probe_isolated_routes(echo_port, prefix, node):
+    """Require exactly one local-node dial, from Selected only, per cycle."""
+    require(node.calls >= 0 and not node.failed,
+            "synthetic SOCKS node unhealthy before route probes")
+    prior = node.calls
+    for port in MANAGED_PORTS:
+        probe_port(port, echo_port, prefix + str(port).encode())
+        expected = prior + (1 if port == 2082 else 0)
+        require(node.calls == expected and not node.failed,
+                "Rule/Direct crossed into Selected or Selected bypassed its node")
+    require(node.calls == prior + 1,
+            "Selected route did not traverse exactly one local proxy")
+
+
 def verify_child(pid, daemon_pid, core_path):
     require(type(pid) is int and pid > 0 and daemon_pid > 0,
             "invalid managed child PID")
@@ -374,9 +389,8 @@ def main(argv=None):
                             running = wait_status(args.app, env, "running")
                             pid = committed_snapshot(running, generation, "running", True)
                             verify_child(pid, daemon.pid, args.core)
-                            for port in MANAGED_PORTS:
-                                probe_port(port, echo.server_address[1],
-                                           b"managed-first-" + str(port).encode())
+                            probe_isolated_routes(echo.server_address[1],
+                                                  b"managed-first-", node)
                             require(node.calls >= 1 and not node.failed,
                                     "selected-in did not use local synthetic SOCKS node")
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
@@ -398,9 +412,8 @@ def main(argv=None):
                             running = wait_status(args.app, env, "running")
                             pid = committed_snapshot(running, generation, "running", True)
                             verify_child(pid, daemon.pid, args.core)
-                            for port in MANAGED_PORTS:
-                                probe_port(port, echo.server_address[1],
-                                           b"managed-restart-" + str(port).encode())
+                            probe_isolated_routes(echo.server_address[1],
+                                                  b"managed-restart-", node)
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
                             committed_snapshot(stopped, generation, "stopped", False)

@@ -92,6 +92,46 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             applied.probe_port(2080, 10000, b"")
 
+    def test_route_separation_requires_only_selected_to_dial_node(self):
+        class Node:
+            calls = 0
+            failed = False
+
+        def separated(port, echo_port, payload):
+            self.assertEqual(echo_port, 40001)
+            self.assertTrue(payload.endswith(str(port).encode()))
+            if port == 2082:
+                node.calls += 1
+
+        node = Node()
+        with mock.patch.object(applied, "probe_port", side_effect=separated):
+            applied.probe_isolated_routes(40001, b"first-", node)
+            applied.probe_isolated_routes(40001, b"restart-", node)
+        self.assertEqual(node.calls, 2)
+
+        def all_via_selected(port, echo_port, payload):
+            node.calls += 1
+
+        node = Node()
+        with mock.patch.object(applied, "probe_port", side_effect=all_via_selected):
+            with self.assertRaises(RuntimeError):
+                applied.probe_isolated_routes(40001, b"bad-", node)
+
+        node = Node()
+        with mock.patch.object(applied, "probe_port", return_value=None):
+            with self.assertRaises(RuntimeError):
+                applied.probe_isolated_routes(40001, b"bypass-", node)
+
+        def failed_node(port, echo_port, payload):
+            if port == 2082:
+                node.calls += 1
+                node.failed = True
+
+        node = Node()
+        with mock.patch.object(applied, "probe_port", side_effect=failed_node):
+            with self.assertRaises(RuntimeError):
+                applied.probe_isolated_routes(40001, b"fail-", node)
+
     def test_node_rejects_nonlocal_connect_without_outbound_dial(self):
         with applied.LocalSocksServer(("127.0.0.1", 0), applied.LocalSocksNode) as srv:
             srv.echo_port = 40892
