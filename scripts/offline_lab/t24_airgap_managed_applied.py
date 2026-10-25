@@ -177,6 +177,12 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
             port = struct.unpack("!H", exact_read(incoming, 2))[0]
             require(address == "127.0.0.1" and port == self.server.echo_port,
                     "Core attempted to forward to a nonlocal target")
+            if self.server.reject_connections:
+                # A real SOCKS5 CONNECT failure, not a closed test listener:
+                # the managed Core must not fall back to an unrequested path.
+                self.server.rejections += 1
+                incoming.sendall(b"\x05\x05\x00\x01\x7f\x00\x00\x01\x00\x00")
+                return
             with socket.create_connection(("127.0.0.1", port), timeout=3) as target:
                 target.settimeout(3)
                 incoming.sendall(b"\x05\x00\x00\x01\x7f\x00\x00\x01" +
@@ -197,6 +203,13 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
 class LocalSocksServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+    def __init__(self, address, handler):
+        super().__init__(address, handler)
+        self.calls = 0
+        self.rejections = 0
+        self.reject_connections = False
+        self.failed = False
 
 
 def probe_port(port, echo_port, payload):
@@ -239,6 +252,52 @@ def probe_isolated_routes(echo_port, prefix, node):
                 "Rule/Direct crossed into Selected or Selected bypassed its node")
     require(node.calls == prior + 1,
             "Selected route did not traverse exactly one local proxy")
+
+
+
+def probe_selected_refusal(echo_port):
+    """Require a bounded failure, not SOCKS success, on the Selected inbound."""
+    require(type(echo_port) is int and 0 < echo_port < 65536,
+            "invalid failure-probe target port")
+    with socket.create_connection(("127.0.0.1", 2082), timeout=4) as sock:
+        sock.settimeout(4)
+        sock.sendall(b"\x05\x01\x00")
+        require(exact_read(sock, 2) == b"\x05\x00",
+                "Selected SOCKS greeting unavailable during node failure")
+        sock.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" +
+                     struct.pack("!H", echo_port))
+        reply = bytearray()
+        while len(reply) < 2:
+            try:
+                fragment = sock.recv(2 - len(reply))
+            except (ConnectionResetError, ConnectionAbortedError):
+                break  # Closing without a success response is fail-closed.
+            if not fragment:
+                break
+            reply.extend(fragment)
+        require(not reply or
+                (len(reply) == 2 and reply[0] == 5 and reply[1] != 0),
+                "Selected returned success or a malformed refusal")
+
+
+def probe_isolated_failure(echo_port, prefix, node):
+    """Block only Selected's local node; Rule and Direct must remain healthy."""
+    require(not node.reject_connections and not node.failed,
+            "synthetic node was not healthy before the failure")
+    accepted, denied = node.calls, node.rejections
+    node.reject_connections = True
+    try:
+        for port in MANAGED_PORTS[:2]:
+            probe_port(port, echo_port, prefix + str(port).encode())
+            require(node.calls == accepted and node.rejections == denied and
+                    not node.failed,
+                    "healthy Rule/Direct unexpectedly used failed Selected node")
+        probe_selected_refusal(echo_port)
+        require(node.rejections > denied and node.calls == accepted and
+                not node.failed,
+                "Selected failure bypassed node or relayed TCP to echo")
+    finally:
+        node.reject_connections = False
 
 
 def verify_child(pid, daemon_pid, core_path):
@@ -342,8 +401,6 @@ def main(argv=None):
                 echo_thread.start()
                 with LocalSocksServer(("127.0.0.1", 0), LocalSocksNode) as node:
                     node.echo_port = echo.server_address[1]
-                    node.calls = 0
-                    node.failed = False
                     node_thread = threading.Thread(target=node.serve_forever, daemon=True)
                     node_thread.start()
                     try:
@@ -391,8 +448,14 @@ def main(argv=None):
                             verify_child(pid, daemon.pid, args.core)
                             probe_isolated_routes(echo.server_address[1],
                                                   b"managed-first-", node)
-                            require(node.calls >= 1 and not node.failed,
-                                    "selected-in did not use local synthetic SOCKS node")
+                            probe_isolated_failure(echo.server_address[1],
+                                                   b"failed-first-", node)
+                            require(committed_snapshot(
+                                wait_status(args.app, env, "running"),
+                                generation, "running", True) == pid,
+                                "node failure unexpectedly restarted managed Core")
+                            probe_isolated_routes(echo.server_address[1],
+                                                  b"restored-first-", node)
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
                             committed_snapshot(stopped, generation, "stopped", False)
@@ -414,14 +477,23 @@ def main(argv=None):
                             verify_child(pid, daemon.pid, args.core)
                             probe_isolated_routes(echo.server_address[1],
                                                   b"managed-restart-", node)
+                            probe_isolated_failure(echo.server_address[1],
+                                                   b"failed-restart-", node)
+                            require(committed_snapshot(
+                                wait_status(args.app, env, "running"),
+                                generation, "running", True) == pid,
+                                "node failure restarted the persisted Core")
+                            probe_isolated_routes(echo.server_address[1],
+                                                  b"restored-restart-", node)
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
                             committed_snapshot(stopped, generation, "stopped", False)
                             verify_stopped_ports()
 
                         run_daemon(args.app, args.core, root, env, restart)
-                        require(node.calls >= 2 and not node.failed,
-                                "synthetic selected proxy was not used on both starts")
+                        require(node.calls == 4 and node.rejections >= 2 and
+                                not node.reject_connections and not node.failed,
+                                "synthetic failure/recovery routes were not isolated")
                         cold.hash_pinned_core(core, args.core_sha256)
                     finally:
                         node.shutdown()
@@ -429,6 +501,7 @@ def main(argv=None):
                         echo.shutdown()
                         echo_thread.join(timeout=5)
         print("T24_AIRGAP_DAEMON_COMMITTED_CORE_LOOPBACK=ok")
+        print("T24_AIRGAP_SELECTED_NODE_FAILURE_ISOLATED=ok")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
         return 0

@@ -132,6 +132,120 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 applied.probe_isolated_routes(40001, b"fail-", node)
 
+    def test_fail_closed_selected_reply_is_not_a_success_or_timeout(self):
+        class FakeConn:
+            def __init__(self, response):
+                self.parts = [b"\x05\x00", response]
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                pass
+            def settimeout(self, _seconds):
+                pass
+            def sendall(self, _data):
+                pass
+            def recv(self, _size):
+                return self.parts.pop(0) if self.parts else b""
+
+        for response in (b"", b"\x05\x05", b"\x05\x01"):
+            with self.subTest(allowed_failure=response):
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=FakeConn(response)):
+                    applied.probe_selected_refusal(41001)
+        for response in (b"\x05\x00", b"\x04\x01", b"\x05"):
+            with self.subTest(forbidden_reply=response):
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=FakeConn(response)):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_refusal(41001)
+        for port in (-1, 0, 65536, True):
+            with self.subTest(invalid_port=port):
+                with self.assertRaises(RuntimeError):
+                    applied.probe_selected_refusal(port)
+
+    def test_selected_failure_isolates_other_ports_and_recovers(self):
+        class Node:
+            calls = 0
+            rejections = 0
+            reject_connections = False
+            failed = False
+        node = Node()
+
+        def local_route(port, echo_port, payload):
+            self.assertEqual(echo_port, 41001)
+            self.assertTrue(payload.endswith(str(port).encode()))
+            if port == 2082:
+                self.assertFalse(node.reject_connections)
+                node.calls += 1
+
+        def rejected(echo_port):
+            self.assertEqual(echo_port, 41001)
+            self.assertTrue(node.reject_connections)
+            node.rejections += 1
+
+        with mock.patch.object(applied, "probe_port", side_effect=local_route):
+            with mock.patch.object(applied, "probe_selected_refusal",
+                                   side_effect=rejected):
+                applied.probe_isolated_routes(41001, b"before-", node)
+                applied.probe_isolated_failure(41001, b"failed-", node)
+                self.assertFalse(node.reject_connections)
+                applied.probe_isolated_routes(41001, b"restored-", node)
+        self.assertEqual((node.calls, node.rejections), (2, 1))
+        self.assertFalse(node.failed)
+
+        node = Node()
+        def wrong_direct(port, _echo_port, _payload):
+            if port == 2080:
+                node.calls += 1
+        with mock.patch.object(applied, "probe_port", side_effect=wrong_direct):
+            with self.assertRaises(RuntimeError):
+                applied.probe_isolated_failure(41001, b"bad-", node)
+        self.assertFalse(node.reject_connections)
+
+        node = Node()
+        with mock.patch.object(applied, "probe_port", return_value=None):
+            with mock.patch.object(applied, "probe_selected_refusal",
+                                   return_value=None):
+                with self.assertRaises(RuntimeError):
+                    applied.probe_isolated_failure(41001, b"bypass-", node)
+        self.assertFalse(node.reject_connections)
+
+        node = Node()
+        def node_broken(_echo_port):
+            node.rejections += 1
+            node.failed = True
+        with mock.patch.object(applied, "probe_port", return_value=None):
+            with mock.patch.object(applied, "probe_selected_refusal",
+                                   side_effect=node_broken):
+                with self.assertRaises(RuntimeError):
+                    applied.probe_isolated_failure(41001, b"fault-", node)
+        self.assertFalse(node.reject_connections)
+
+    def test_synthetic_socks_node_refusal_never_forwards_to_echo(self):
+        with applied.LocalSocksServer(("127.0.0.1", 0), applied.LocalSocksNode) as srv:
+            srv.echo_port = 41001
+            srv.reject_connections = True
+            thread = threading.Thread(target=srv.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with mock.patch.object(applied.socket, "create_connection",
+                                       side_effect=AssertionError("unapproved TCP dial")):
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                        sock.settimeout(3)
+                        sock.connect(srv.server_address)
+                        sock.sendall(b"\x05\x01\x00")
+                        self.assertEqual(applied.exact_read(sock, 2), b"\x05\x00")
+                        sock.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" +
+                                     struct.pack("!H", 41001))
+                        self.assertEqual(applied.exact_read(sock, 10),
+                                         b"\x05\x05\x00\x01\x7f\x00\x00\x01\x00\x00")
+                self.assertEqual(srv.rejections, 1)
+                self.assertEqual(srv.calls, 0)
+                self.assertFalse(srv.failed)
+            finally:
+                srv.shutdown()
+                thread.join(timeout=3)
+
     def test_node_rejects_nonlocal_connect_without_outbound_dial(self):
         with applied.LocalSocksServer(("127.0.0.1", 0), applied.LocalSocksNode) as srv:
             srv.echo_port = 40892
