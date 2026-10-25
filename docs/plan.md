@@ -1671,3 +1671,9 @@ docs/
 - ADR 0150 在 ADR 0149 真实 Daemon/SQLite applied generation 的两个启动周期中，将三个入口的 SOCKS5 TCP 回显与合成 Selected SOCKS 节点计数绑定：Rule 2080 / Direct 2081 不得经 Selected，Selected 2082 必须且只能经一次该节点。独立单元用例拒绝直连旁路、交叉路由和节点报错；不涉及真实 CN 路由或外部服务。
 - ADR 0151 进一步为同一 localhost 合成 SOCKS 节点增加显式 SOCKS5 CONNECT 拒绝开关；在**故障注入期间**仍要求 Rule/Direct 各自回显成功且不接触该节点，Selected 必须在有界超时内失败而不能隐式直连，并验证拒绝实际到达节点、没有成功转发、Core 的 PID/已应用代际和健康状态保持不变。取消拒绝后 Selected 必须恢复成功；Daemon 在同一私有 SQLite 重启后再执行一次相同的成功→拒绝→恢复序列。双原生架构均保留原有四个完全独立的 `--network none` 测试命名空间和普通用户/cap-drop/read-only 限制。
 - 这只验证**受控 localhost SOCKS5 应用层拒绝**，不是公网故障、DNS/GeoSite/GeoIP/ACL 命中、合法 CN 规则/内核分发、真正离线 tar 安装、物理掉电、两次回滚或长期 soak；68/67/1 的 CN 来源/许可证阻断及 T15/T23/T24/T25 和 M5 发布门槛全部保持 OPEN，不开启 Restore/GC，不改变 `main` 或正式发行 Draft PR #1。
+
+### 2026-10-25 — M5 ADR 0152 合成托管 Core 运行期间的未应用声明/CAS 拒绝（T24 仍 OPEN）
+
+- ADR 0151 已覆盖本机合成 Selected SOCKS5 上游显式拒绝与恢复；本阶段进一步覆盖 **运行配置/声明的代际分离**。在真实 Daemon 托管、已应用 config revision 1/generation 1 且三入口健康的隔离测试中，先用实际 Unix API POST 非法顶层 TUN 字段并要求 **400、声明 head 不变**；再仅改 `log_level`（warn→error），正常提交 immutable declaration revision 2、回读其 SHA，并用同一声明编译器校验新原生配置 SHA 与旧应用配置不同、不带任何 CN SRS。此候选只暂存，不允许激活。
+- 使用 intentionally stale `expected_config_revision=0` 发起 revision 2 的正式 apply，必须返回 **HTTP 409**，且真实 Core PID、running/desired、已应用 generation、LKG、config revision 1 与实际本机 Rule/Direct/Selected 流量均不改变，无 recovery/挂起操作。执行显式 stop 后，重新启动同一个隔离 SQLite 的 Daemon，**必须同时保留声明 head=2 与已应用 generation=1**，再明确启动该旧已应用代际并重复合成 Selected 故障/恢复与三入口 TCP 测试，最后干净退出。添加 Python 负面测试防止误允许 TUN、远端 DNS/节点、错误 LKG/PID 或缺失的冲突响应。现有双架构各四个 network-none 容器不变。
+- 此验证仅证实**正常暂存与激活前的 stale CAS 拒绝**，不是有效候选的实际替换、Check 失败故障注入、运行期间真实断网、掉电/故障回滚、正式恢复、CN 68/67/1 离线许可/打包或长时浸泡；T15/T23/T24/T25、M5 release、Restore/GC 及 `core_distribution=false`、`cn_preset_offline_bundle=false` 均不改变。稳定 `main` 和外层 Draft PR #1 不变。

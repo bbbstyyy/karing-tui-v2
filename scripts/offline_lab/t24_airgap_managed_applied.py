@@ -97,6 +97,23 @@ def assert_synthetic_document(doc, local_socks_port):
     }, "local selection changed")
 
 
+def assert_staged_document(doc, local_socks_port):
+    """A second revision may change logging only, never the network envelope."""
+    require(isinstance(doc, dict) and doc.get("log_level") == "error",
+            "unapproved staged revision")
+    original = dict(doc)
+    original["log_level"] = "warn"
+    assert_synthetic_document(original, local_socks_port)
+
+
+def staged_document(source, local_socks_port):
+    assert_synthetic_document(source, local_socks_port)
+    result = json.loads(json.dumps(source))
+    result["log_level"] = "error"
+    assert_staged_document(result, local_socks_port)
+    return result
+
+
 class UnixHTTP(http.client.HTTPConnection):
     def __init__(self, path, timeout=85):
         super().__init__("unix", timeout=timeout)
@@ -109,8 +126,9 @@ class UnixHTTP(http.client.HTTPConnection):
 
 
 def unix_json(path, method, route, payload=None, expected=200, timeout=85):
-    require(route in ("/v1/declaration", "/v1/declaration/compile",
-                      "/v1/declaration/apply", "/v1/status", "/v1/capabilities"),
+    require(route in ("/v1/declaration", "/v1/declaration/current",
+                      "/v1/declaration/compile", "/v1/declaration/apply",
+                      "/v1/status", "/v1/capabilities"),
             "unexpected management API route")
     body = json.dumps(payload, separators=(",", ":")).encode() if payload is not None else None
     require(body is None or len(body) <= 8192, "unbounded test input")
@@ -129,7 +147,7 @@ def unix_json(path, method, route, payload=None, expected=200, timeout=85):
         client.close()
 
 
-def committed_snapshot(status, generation, desired, running):
+def committed_snapshot(status, generation, desired, running, declaration_revision=1):
     require(type(status) is dict and status.get("api_version") == "v1",
             "invalid managed status")
     expected = {
@@ -138,7 +156,7 @@ def committed_snapshot(status, generation, desired, running):
         "core_state": "running" if running else "stopped",
         "recovery_required": False,
         "config_revision": 1,
-        "declaration_revision": 1,
+        "declaration_revision": declaration_revision,
         "applied_generation_id": generation,
     }
     for key, value in expected.items():
@@ -153,6 +171,82 @@ def committed_snapshot(status, generation, desired, running):
     else:
         require(pid in (None, 0), "Core PID survived committed stop")
     return pid
+
+
+def assert_unapplied_core_unchanged(status, generation, pid, declaration_revision):
+    require(type(declaration_revision) is int and declaration_revision in (1, 2),
+            "unexpected synthetic declaration head")
+    require(committed_snapshot(status, generation, "running", True,
+                               declaration_revision) == pid,
+            "staged revision restarted or replaced the running Core")
+    require(status.get("last_known_good_generation_id") == generation,
+            "staged revision replaced last-known-good generation")
+    require(status.get("active_operation") in ("", None),
+            "staged revision left a pending Core operation")
+
+
+def stage_and_reject_stale_apply(sock, generation, pid, source,
+                                 local_socks_port, original_declaration_sha,
+                                 original_config_sha, echo_port, node):
+    """Stage revision 2 but *never* activate it; stale CAS must not stop Core."""
+    current = unix_json(sock, "GET", "/v1/declaration/current")
+    require(current.get("revision") == 1 and
+            current.get("sha256") == original_declaration_sha,
+            "initial declaration head drifted before staging")
+    assert_unapplied_core_unchanged(
+        unix_json(sock, "GET", "/v1/status"), generation, pid, 1)
+
+    # Untrusted/unsupported privileged fields must fail before any commit.
+    invalid = json.loads(json.dumps(source))
+    invalid["tun"] = True
+    rejected = unix_json(sock, "POST", "/v1/declaration", {
+        "expected_revision": 1, "source": "lab:t24-invalid-rejected",
+        "document": invalid,
+    }, expected=400, timeout=10)
+    require(isinstance(rejected.get("error"), str) and rejected["error"],
+            "invalid candidate did not return a typed refusal")
+    unchanged = unix_json(sock, "GET", "/v1/declaration/current")
+    require(unchanged.get("revision") == 1 and
+            unchanged.get("sha256") == original_declaration_sha,
+            "rejected privileged field advanced declaration revision")
+
+    candidate = staged_document(source, local_socks_port)
+    revision = unix_json(sock, "POST", "/v1/declaration", {
+        "expected_revision": 1, "source": "lab:t24-unapplied-only",
+        "document": candidate,
+    }, expected=201, timeout=10)
+    next_sha = revision.get("sha256")
+    require(type(revision.get("revision")) is int and revision["revision"] == 2
+            and isinstance(next_sha, str) and len(next_sha) == 64
+            and next_sha != original_declaration_sha,
+            "staged declaration revision and digest were not advanced")
+    head = unix_json(sock, "GET", "/v1/declaration/current")
+    require(head.get("revision") == 2 and head.get("sha256") == next_sha
+            and head.get("document") == candidate,
+            "staged declaration was not durable or changed its contents")
+
+    preview = unix_json(sock, "POST", "/v1/declaration/compile",
+                        {"revision": 2}, timeout=20)
+    require(preview.get("revision") == 2
+            and preview.get("declaration_sha256") == next_sha
+            and preview.get("rule_set_count") == 0
+            and isinstance(preview.get("config_sha256"), str)
+            and len(preview["config_sha256"]) == 64
+            and preview["config_sha256"] != original_config_sha,
+            "unapplied revision did not compile independently")
+
+    conflict = unix_json(sock, "POST", "/v1/declaration/apply", {
+        "declaration_revision": 2,
+        "expected_config_revision": 0,
+    }, expected=409, timeout=20)
+    require(isinstance(conflict.get("error"), str) and conflict["error"],
+            "stale config revision was not explicitly rejected")
+    assert_unapplied_core_unchanged(
+        unix_json(sock, "GET", "/v1/status"), generation, pid, 2)
+    probe_isolated_routes(echo_port, b"staged-not-applied-", node)
+    assert_unapplied_core_unchanged(
+        unix_json(sock, "GET", "/v1/status"), generation, pid, 2)
+    return next_sha
 
 
 def exact_read(sock, n):
@@ -407,9 +501,10 @@ def main(argv=None):
                         document = local_document(node.server_address[1])
                         assert_synthetic_document(document, node.server_address[1])
                         expected_sha = None
+                        staged_sha = None
 
                         def first(daemon, sock, initial):
-                            nonlocal expected_sha
+                            nonlocal expected_sha, staged_sha
                             cold.configured_status(initial)
                             cold.configured_caps(unix_json(sock, "GET", "/v1/capabilities"))
                             request = {
@@ -456,9 +551,13 @@ def main(argv=None):
                                 "node failure unexpectedly restarted managed Core")
                             probe_isolated_routes(echo.server_address[1],
                                                   b"restored-first-", node)
+                            staged_sha = stage_and_reject_stale_apply(
+                                sock, generation, pid,
+                                document, node.server_address[1], expected_sha,
+                                compiled["config_sha256"], echo.server_address[1], node)
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
-                            committed_snapshot(stopped, generation, "stopped", False)
+                            committed_snapshot(stopped, generation, "stopped", False, 2)
                             verify_stopped_ports()
                             return generation
 
@@ -468,30 +567,36 @@ def main(argv=None):
                                 "synthetic selected node failed")
 
                         def restart(daemon, sock, initial):
-                            committed_snapshot(initial, generation, "stopped", False)
+                            committed_snapshot(initial, generation, "stopped", False, 2)
+                            require(unix_json(
+                                sock, "GET", "/v1/declaration/current").get("sha256")
+                                == staged_sha,
+                                "unapplied declaration did not survive Daemon restart")
                             cold.configured_caps(unix_json(
                                 sock, "GET", "/v1/capabilities"))
                             boot.checked([args.app, "core", "start"], env, timeout=22)
                             running = wait_status(args.app, env, "running")
-                            pid = committed_snapshot(running, generation, "running", True)
+                            pid = committed_snapshot(running, generation, "running", True, 2)
                             verify_child(pid, daemon.pid, args.core)
+                            assert_unapplied_core_unchanged(
+                                unix_json(sock, "GET", "/v1/status"), generation, pid, 2)
                             probe_isolated_routes(echo.server_address[1],
                                                   b"managed-restart-", node)
                             probe_isolated_failure(echo.server_address[1],
                                                    b"failed-restart-", node)
                             require(committed_snapshot(
                                 wait_status(args.app, env, "running"),
-                                generation, "running", True) == pid,
+                                generation, "running", True, 2) == pid,
                                 "node failure restarted the persisted Core")
                             probe_isolated_routes(echo.server_address[1],
                                                   b"restored-restart-", node)
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
-                            committed_snapshot(stopped, generation, "stopped", False)
+                            committed_snapshot(stopped, generation, "stopped", False, 2)
                             verify_stopped_ports()
 
                         run_daemon(args.app, args.core, root, env, restart)
-                        require(node.calls == 4 and node.rejections >= 2 and
+                        require(node.calls == 5 and node.rejections >= 2 and
                                 not node.reject_connections and not node.failed,
                                 "synthetic failure/recovery routes were not isolated")
                         cold.hash_pinned_core(core, args.core_sha256)
@@ -502,6 +607,7 @@ def main(argv=None):
                         echo_thread.join(timeout=5)
         print("T24_AIRGAP_DAEMON_COMMITTED_CORE_LOOPBACK=ok")
         print("T24_AIRGAP_SELECTED_NODE_FAILURE_ISOLATED=ok")
+        print("T24_AIRGAP_STAGED_REVISION_CAS_ISOLATED=ok")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
         return 0
