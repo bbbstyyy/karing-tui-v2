@@ -130,12 +130,12 @@ class ManagedColdGuardTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     cold.no_proxy_listener()
 
-    def test_workflow_runs_three_independent_native_airgaps(self):
+    def test_workflow_retains_cold_guard_when_fourth_native_airgap_added(self):
         workflow = (Path(__file__).resolve().parents[2] /
                     ".github/workflows/core-provenance.yml").read_text()
-        self.assertEqual(workflow.count("docker run --rm --pull never"), 3)
-        self.assertEqual(workflow.count("--network none --cap-drop ALL"), 3)
-        self.assertEqual(workflow.count("--user 10001:10001 --read-only"), 3)
+        self.assertEqual(workflow.count("docker run --rm --pull never"), 4)
+        self.assertEqual(workflow.count("--network none --cap-drop ALL"), 4)
+        self.assertEqual(workflow.count("--user 10001:10001 --read-only"), 4)
         self.assertIn('sudo chown 0:0 "$stage/core"', workflow)
         self.assertIn("t24_airgap_managed_cold_guard.py", workflow)
 

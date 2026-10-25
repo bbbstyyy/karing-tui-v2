@@ -92,6 +92,7 @@ jobs:
           install -m 0444 scripts/offline_lab/t24_airgap_bootstrap.py "$stage/t24_airgap_bootstrap.py"
           install -m 0444 scripts/offline_lab/t24_airgap_loopback_core.py "$stage/t24_airgap_loopback_core.py"
           install -m 0444 scripts/offline_lab/t24_airgap_managed_cold_guard.py "$stage/t24_airgap_managed_cold_guard.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_applied.py "$stage/t24_airgap_managed_applied.py"
           # Host-only staging: root-own the approved Core artifact so the
           # non-root Daemon artifact verifier accepts it in a read-only bind.
           sudo chown 0:0 "$stage/core"
@@ -141,6 +142,25 @@ jobs:
             --env DISPLAY= --env WAYLAND_DISPLAY= \
             --env PYTHONDONTWRITEBYTECODE=1 \
             "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_cold_guard.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
+
+          # Fourth network-none namespace: actual production Daemon receives
+          # and commits a synthetic V1 declaration through the Unix API,
+          # applies the compiled generation, supervises the approved Core,
+          # forwards localhost SOCKS through direct AND synthetic selected
+          # local node, then durably stops and restarts from same SQLite.
+          # All data stays in 127.0.0.1; never stage CN resources or secrets.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_applied.py \
             --arch "${{ matrix.arch }}" \
             --app /opt/t24/app \
             --core /opt/t24/core \
