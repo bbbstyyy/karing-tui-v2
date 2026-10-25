@@ -91,11 +91,17 @@ jobs:
           install -m 0555 "${RUNNER_TEMP}/t24-approved-core" "$stage/core"
           install -m 0444 scripts/offline_lab/t24_airgap_bootstrap.py "$stage/t24_airgap_bootstrap.py"
           install -m 0444 scripts/offline_lab/t24_airgap_loopback_core.py "$stage/t24_airgap_loopback_core.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_cold_guard.py "$stage/t24_airgap_managed_cold_guard.py"
+          # Host-only staging: root-own the approved Core artifact so the
+          # non-root Daemon artifact verifier accepts it in a read-only bind.
+          sudo chown 0:0 "$stage/core"
           # Stage an OCI test environment while runner network remains enabled.
           # The isolated test container below explicitly has NO network.
           docker pull "$T24_IMAGE"
           docker image inspect --format '{{index .RepoDigests 0}}' "$T24_IMAGE"
           version="$(jq -r '.reference_linux_cli_build.version_value' resources/core.lock.json)"
+          expected_core_sha="$(jq -er --arg arch "${{ matrix.arch }}" '.build_verification[$arch + "_sha256"]' resources/core.lock.json)"
+          test "$(sha256sum "$stage/core" | awk '{print $1}')" = "$expected_core_sha"
           docker run --rm --pull never \
             --network none --cap-drop ALL --security-opt no-new-privileges \
             --user 10001:10001 --read-only \
@@ -123,3 +129,19 @@ jobs:
             --arch "${{ matrix.arch }}" \
             --core /opt/t24/core \
             --core-version "$version"
+
+          # Third isolated namespace: a configured verified Core path with NO
+          # committed generation must refuse activation and reject a symlink
+          # or modified Core artifact before creating a secret or live socket.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_cold_guard.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
