@@ -185,7 +185,7 @@ def assert_unapplied_core_unchanged(status, generation, pid, declaration_revisio
             "staged revision left a pending Core operation")
 
 
-def stage_and_reject_stale_apply(sock, app, env, generation, pid, source,
+def stage_and_reject_stale_apply(sock, generation, pid, source,
                                  local_socks_port, original_declaration_sha,
                                  original_config_sha, echo_port, node):
     """Stage revision 2 but *never* activate it; stale CAS must not stop Core."""
@@ -552,7 +552,7 @@ def main(argv=None):
                             probe_isolated_routes(echo.server_address[1],
                                                   b"restored-first-", node)
                             staged_sha = stage_and_reject_stale_apply(
-                                sock, args.app, env, generation, pid,
+                                sock, generation, pid,
                                 document, node.server_address[1], expected_sha,
                                 compiled["config_sha256"], echo.server_address[1], node)
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
