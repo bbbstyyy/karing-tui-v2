@@ -558,6 +558,111 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                             5, 9, 222, 41001, object())
                     sent.assert_not_called()
 
+    def test_short_lifecycle_daemon_fd_guard(self):
+        with mock.patch.object(applied.os, "listdir",
+                               return_value=["0", "1", "2", "3"]) as scanned:
+            self.assertEqual(applied.daemon_fd_count(222), 4)
+            scanned.assert_called_once_with("/proc/222/fd")
+        for pid in (0, -2, 1, 2.0, True):
+            with self.subTest(pid=pid):
+                with self.assertRaises(RuntimeError):
+                    applied.daemon_fd_count(pid)
+        applied.assert_cycle_fd_budget(12, [13, 14, 13])
+        for baseline, samples in (
+            (0, [1, 2, 3]),
+            (True, [1, 2, 3]),
+            (12, [13, 14]),
+            (12, [13, 14, 14.0]),
+            (12, [13, 14, True]),
+            (12, [13, 14, 40]),
+            (12, [13, 13, 1024]),
+            (12, [13, 14, -1]),
+            (12, [10, 28, 15]),
+        ):
+            with self.subTest(baseline=baseline, samples=samples):
+                with self.assertRaises(RuntimeError):
+                    applied.assert_cycle_fd_budget(baseline, samples)
+
+    def test_three_lifecycle_cycles_keep_same_promoted_generation(self):
+        state = {"running": False, "next_pid": 400, "pid": 0}
+        transitions = []
+        class Node:
+            pass
+        node = Node()
+        def status():
+            result = self.promoted_status(pid=state["pid"])
+            if not state["running"]:
+                result.update({
+                    "core_desired_state": "stopped",
+                    "core_state": "stopped",
+                    "core_pid": 0,
+                })
+            return result
+        def command(argv, env, timeout=22):
+            self.assertEqual(argv[:2], ["/app", "core"])
+            self.assertEqual(env, {})
+            if argv[2] == "start":
+                self.assertFalse(state["running"])
+                state["running"] = True
+                state["next_pid"] += 1
+                state["pid"] = state["next_pid"]
+            elif argv[2] == "stop":
+                self.assertTrue(state["running"])
+                state["running"] = False
+                state["pid"] = 0
+            else:
+                self.fail("unexpected CLI action")
+            transitions.append(argv[2])
+            return b""
+        def wait(_app, _env, desired):
+            self.assertEqual(desired, "running" if state["running"] else "stopped")
+            return status()
+        def unix(_sock, method, route, payload=None, expected=200, timeout=85):
+            self.assertEqual((method, route), ("GET", "/v1/status"))
+            return status()
+
+        with mock.patch.object(applied, "unix_json", side_effect=unix):
+            with mock.patch.object(applied.boot, "checked", side_effect=command):
+                with mock.patch.object(applied, "wait_status", side_effect=wait):
+                    with mock.patch.object(applied, "daemon_fd_count",
+                                           side_effect=[12, 13, 14, 13]) as fds:
+                        with mock.patch.object(applied, "verify_child") as child:
+                            with mock.patch.object(applied, "probe_isolated_routes") as routes:
+                                with mock.patch.object(applied, "probe_isolated_failure") as denial:
+                                    with mock.patch.object(applied, "verify_stopped_ports") as closed:
+                                        samples = applied.probe_bounded_lifecycle_cycles(
+                                            "/app", {}, "/daemon.sock", 100,
+                                            "/approved-core", 5, 9, 41001, node)
+        self.assertEqual(samples, [13, 14, 13])
+        self.assertEqual(transitions, ["start", "stop"] * 3)
+        self.assertEqual(fds.call_count, 4)
+        self.assertEqual(child.call_args_list, [
+            mock.call(401, 100, "/approved-core"),
+            mock.call(402, 100, "/approved-core"),
+            mock.call(403, 100, "/approved-core"),
+        ])
+        self.assertEqual(routes.call_args_list, [
+            mock.call(41001, b"lifecycle-0-", node),
+            mock.call(41001, b"lifecycle-1-", node),
+            mock.call(41001, b"lifecycle-restored-", node),
+            mock.call(41001, b"lifecycle-2-", node),
+        ])
+        denial.assert_called_once_with(
+            41001, b"lifecycle-refusal-", node)
+        self.assertEqual(closed.call_count, 3)
+
+    def test_short_lifecycle_rejects_implicit_running_initial_state(self):
+        with mock.patch.object(applied, "unix_json",
+                               return_value=self.promoted_status(pid=222)):
+            with mock.patch.object(applied.boot, "checked") as command:
+                with mock.patch.object(applied, "daemon_fd_count") as fds:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_bounded_lifecycle_cycles(
+                            "/app", {}, "/daemon.sock", 100, "/approved-core",
+                            5, 9, 41001, object())
+                    command.assert_not_called()
+                    fds.assert_not_called()
+
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):
             with self.subTest(port=port):
