@@ -617,6 +617,11 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         def wait(_app, _env, desired):
             self.assertEqual(desired, "running" if state["running"] else "stopped")
             return status()
+        def stop_held(app, env, echo_port, target):
+            self.assertEqual((app, env, echo_port, target),
+                             ("/app", {}, 41001, node))
+            command([app, "core", "stop"], env, timeout=20)
+            return status()
         def unix(_sock, method, route, payload=None, expected=200, timeout=85):
             self.assertEqual((method, route), ("GET", "/v1/status"))
             return status()
@@ -636,9 +641,13 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                             with mock.patch.object(
                                                 applied, "probe_parallel_selected_denials",
                                                 return_value=12) as denied_parallel:
-                                                samples = applied.probe_bounded_lifecycle_cycles(
-                                                    "/app", {}, "/daemon.sock", 100,
-                                                    "/approved-core", 5, 9, 41001, node)
+                                                with mock.patch.object(
+                                                    applied, "stop_core_with_held_tunnels",
+                                                    side_effect=stop_held) as held:
+                                                    samples = applied.probe_bounded_lifecycle_cycles(
+                                                        "/app", {}, "/daemon.sock", 100,
+                                                        "/approved-core", 5, 9, 41001, node)
+        held.assert_called_once_with("/app", {}, 41001, node)
         self.assertEqual(parallel.call_args_list, [
             mock.call(41001, node), mock.call(41001, node),
         ])
@@ -885,6 +894,174 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         applied.probe_parallel_selected_denials(41001, node)
                     probe.assert_not_called()
+
+    def test_open_held_socks_echo_retains_live_connection_and_closes_on_error(self):
+        class Conn:
+            def __init__(self):
+                self.closed = False
+                self.writes = []
+                self.timeout = None
+            def settimeout(self, value):
+                self.timeout = value
+            def sendall(self, payload):
+                self.writes.append(payload)
+            def close(self):
+                self.closed = True
+
+        payload = b"held-stop-2082"
+        for port in applied.MANAGED_PORTS:
+            with self.subTest(port=port):
+                conn = Conn()
+                replies = [b"\x05\x00", b"\x05\x00\x00\x01",
+                           b"\x7f\x00\x00\x01", b"\x00\x00",
+                           loopback.REPLY_PREFIX + payload]
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as opened:
+                    with mock.patch.object(applied, "exact_read",
+                                           side_effect=replies):
+                        self.assertIs(
+                            applied.open_held_socks_echo(port, 41001, payload), conn)
+                opened.assert_called_once_with(("127.0.0.1", port), timeout=4)
+                self.assertFalse(conn.closed)
+                self.assertEqual(conn.timeout, 4)
+                self.assertEqual(conn.writes[0], b"\x05\x01\x00")
+                self.assertEqual(conn.writes[-1], payload)
+                conn.close()
+                self.assertTrue(conn.closed)
+
+        for replies in (
+            [b"\x05\x02"],
+            [b"\x05\x00", b"\x05\x05\x00\x01"],
+            [b"\x05\x00", b"\x05\x00\x00\x09"],
+            [b"\x05\x00", b"\x05\x00\x00\x01",
+             b"\x7f\x00\x00\x01", b"\x00\x00", b"wrong"],
+        ):
+            conn = Conn()
+            with mock.patch.object(applied.socket, "create_connection",
+                                   return_value=conn):
+                with mock.patch.object(applied, "exact_read",
+                                       side_effect=replies):
+                    with self.assertRaises(RuntimeError):
+                        applied.open_held_socks_echo(2082, 41001, payload)
+            self.assertTrue(conn.closed)
+
+        for port, target, message in ((2089, 41001, payload),
+                                       (True, 41001, payload),
+                                       (2082, 0, payload),
+                                       (2082, 65536, payload),
+                                       (2082, True, payload),
+                                       (2082, 41001, b""),
+                                       (2082, 41001, "not-bytes")):
+            with self.subTest(port=port, target=target, message=message):
+                with mock.patch.object(applied.socket, "create_connection") as opened:
+                    with self.assertRaises(RuntimeError):
+                        applied.open_held_socks_echo(port, target, message)
+                    opened.assert_not_called()
+
+    def test_held_session_must_close_after_explicit_stop(self):
+        for received in (b"", ConnectionResetError("reset"),
+                         ConnectionAbortedError("aborted")):
+            with self.subTest(received=str(received)):
+                conn = mock.Mock()
+                conn.recv.side_effect = (received if isinstance(received, Exception)
+                                         else None)
+                if isinstance(received, bytes):
+                    conn.recv.return_value = received
+                applied.assert_held_session_closed(conn)
+                conn.settimeout.assert_called_once_with(3)
+                conn.recv.assert_called_once_with(1)
+
+        for received in (b"still forwarding", socket.timeout("old socket open")):
+            with self.subTest(received=str(received)):
+                conn = mock.Mock()
+                if isinstance(received, bytes):
+                    conn.recv.return_value = received
+                else:
+                    conn.recv.side_effect = received
+                with self.assertRaises((RuntimeError, socket.timeout)):
+                    applied.assert_held_session_closed(conn)
+
+    def test_held_stop_closes_three_sessions_and_refuses_wrong_routes(self):
+        class Node:
+            def __init__(self):
+                self.calls = 9
+                self.failed = False
+                self.reject_connections = False
+
+        class Held:
+            def __init__(self):
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+
+        node = Node()
+        opened = []
+        def connect(port, echo_port, payload):
+            self.assertEqual(echo_port, 41001)
+            self.assertEqual(payload, b"held-stop-" + str(port).encode())
+            c = Held()
+            opened.append(c)
+            if port == 2082:
+                node.calls += 1
+            return c
+        stopped = self.status("stopped", False)
+        with mock.patch.object(applied, "open_held_socks_echo",
+                               side_effect=connect) as dial:
+            with mock.patch.object(applied.boot, "checked") as cli:
+                with mock.patch.object(applied, "wait_status",
+                                       return_value=stopped) as status:
+                    with mock.patch.object(applied, "assert_held_session_closed") as eof:
+                        self.assertIs(applied.stop_core_with_held_tunnels(
+                            "/app", {}, 41001, node), stopped)
+        self.assertEqual(dial.call_count, 3)
+        cli.assert_called_once_with(["/app", "core", "stop"], {}, timeout=20)
+        status.assert_called_once_with("/app", {}, "stopped")
+        self.assertEqual(eof.call_args_list,
+                         [mock.call(c) for c in opened])
+        self.assertTrue(all(c.closed for c in opened))
+        self.assertEqual(node.calls, 10)
+
+        for defect in ("Rule-selected-cross", "Selected-bypass", "old-connection-open"):
+            with self.subTest(defect=defect):
+                node = Node()
+                opened = []
+                def bad_connect(port, _echo_port, _payload):
+                    c = Held()
+                    opened.append(c)
+                    if port == 2080 and defect == "Rule-selected-cross":
+                        node.calls += 1
+                    if port == 2082 and defect != "Selected-bypass":
+                        node.calls += 1
+                    return c
+                with mock.patch.object(applied, "open_held_socks_echo",
+                                       side_effect=bad_connect):
+                    with mock.patch.object(applied.boot, "checked") as cli:
+                        with mock.patch.object(applied, "wait_status",
+                                               return_value=stopped):
+                            with mock.patch.object(
+                                applied, "assert_held_session_closed",
+                                side_effect=(RuntimeError("old TCP still live")
+                                             if defect == "old-connection-open"
+                                             else None)):
+                                with self.assertRaises(RuntimeError):
+                                    applied.stop_core_with_held_tunnels(
+                                        "/app", {}, 41001, node)
+                        if defect == "old-connection-open":
+                            cli.assert_called_once()
+                        else:
+                            cli.assert_not_called()
+                self.assertTrue(all(c.closed for c in opened))
+
+        for unhealthy in ("failed", "reject_connections"):
+            node = Node()
+            setattr(node, unhealthy, True)
+            with mock.patch.object(applied, "open_held_socks_echo") as dial:
+                with self.assertRaises(RuntimeError):
+                    applied.stop_core_with_held_tunnels(
+                        "/app", {}, 41001, node)
+                dial.assert_not_called()
 
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):

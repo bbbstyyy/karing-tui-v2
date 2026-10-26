@@ -8,6 +8,7 @@ No CN SRS, remote DNS, TUN, user data, online install or release authority.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import argparse
 import hashlib
 import http.client
@@ -491,6 +492,80 @@ def probe_port(port, echo_port, payload):
 
 
 
+
+def open_held_socks_echo(port, echo_port, payload):
+    """Open one *live* local SOCKS5 echo stream; caller owns socket closure."""
+    require(type(port) is int and port in MANAGED_PORTS and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(payload) is bytes and 1 <= len(payload) <= 128,
+            "invalid held local SOCKS5 session")
+    conn = socket.create_connection(("127.0.0.1", port), timeout=4)
+    try:
+        conn.settimeout(4)
+        conn.sendall(b"\x05\x01\x00")
+        require(exact_read(conn, 2) == b"\x05\x00",
+                "held SOCKS5 greeting was refused")
+        conn.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" +
+                     struct.pack("!H", echo_port))
+        header = exact_read(conn, 4)
+        require(header[:3] == b"\x05\x00\x00",
+                "held SOCKS5 CONNECT was refused")
+        if header[3] == 1:
+            exact_read(conn, 4)
+        elif header[3] == 4:
+            exact_read(conn, 16)
+        elif header[3] == 3:
+            exact_read(conn, exact_read(conn, 1)[0])
+        else:
+            raise RuntimeError("held SOCKS5 reply address type refused")
+        exact_read(conn, 2)
+        conn.sendall(payload)
+        require(exact_read(conn, len(loopback.REPLY_PREFIX) + len(payload)) ==
+                loopback.REPLY_PREFIX + payload,
+                "held SOCKS5 stream failed initial exact echo")
+        return conn
+    except BaseException:
+        conn.close()
+        raise
+
+
+def assert_held_session_closed(conn):
+    """An explicit stop must close each established Core-owned TCP stream."""
+    conn.settimeout(3)
+    try:
+        received = conn.recv(1)
+    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+        return
+    require(received == b"",
+            "stopped Core still relayed data on a held SOCKS5 connection")
+
+
+def stop_core_with_held_tunnels(app, env, echo_port, node):
+    """Stop Core with all 3 inbounds connected; no sessions may survive."""
+    require(type(echo_port) is int and 0 < echo_port < 65536 and
+            type(node.calls) is int and node.calls >= 0 and
+            not node.failed and not node.reject_connections,
+            "invalid or unhealthy held-session fixture")
+    baseline = node.calls
+    with ExitStack() as stack:
+        held = []
+        for port in MANAGED_PORTS:
+            payload = b"held-stop-" + str(port).encode("ascii")
+            held.append(stack.enter_context(
+                open_held_socks_echo(port, echo_port, payload)))
+            require(node.calls == baseline + (1 if port == 2082 else 0)
+                    and not node.failed,
+                    "held Rule/Direct used Selected node or Selected bypassed it")
+        boot.checked([app, "core", "stop"], env, timeout=20)
+        stopped = wait_status(app, env, "stopped")
+        for conn in held:
+            assert_held_session_closed(conn)
+        require(node.calls == baseline + 1 and not node.failed,
+                "held sessions changed route count during stop")
+        return stopped
+
+
+
 def parallel_probe_payload(index, iteration, port):
     """Fixed 32-byte audit tag; synthetic node can reconstruct split TCP reads."""
     require(type(index) is int and 0 <= index < 6 and
@@ -729,8 +804,11 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
             unix_json(sock, "GET", "/v1/status"),
             old_generation, promoted_generation, None, True) == pid,
             "short lifecycle traffic unexpectedly replaced running Core")
-        boot.checked([app, "core", "stop"], env, timeout=20)
-        stopped = wait_status(app, env, "stopped")
+        if cycle == 2:
+            stopped = stop_core_with_held_tunnels(app, env, echo_port, node)
+        else:
+            boot.checked([app, "core", "stop"], env, timeout=20)
+            stopped = wait_status(app, env, "stopped")
         assert_promoted_core(stopped, old_generation, promoted_generation,
                              None, False)
         verify_stopped_ports()
@@ -1021,7 +1099,7 @@ def main(argv=None):
                             verify_stopped_ports()
 
                         run_daemon(args.app, args.core, root, env, after_cycles)
-                        require(node.calls == 23 and node.rejections >= 10 and
+                        require(node.calls == 24 and node.rejections >= 10 and
                                 not node.reject_connections and not node.failed,
                                 "short lifecycle drifted or bypassed selected route")
                         cold.hash_pinned_core(core, args.core_sha256)
@@ -1038,6 +1116,7 @@ def main(argv=None):
         print("T25_AIRGAP_SHORT_LIFECYCLE_SMOKE=ok")
         print("T25_AIRGAP_PARALLEL_LOOPBACK=ok")
         print("T25_AIRGAP_PARALLEL_REFUSAL_ISOLATED=ok")
+        print("T25_AIRGAP_HELD_SESSIONS_STOPPED=ok")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
