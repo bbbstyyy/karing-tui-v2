@@ -99,3 +99,9 @@ On failure the native harness may now additionally print `T24_AIRGAP_FAILURE_COD
 
 
 Native-readiness correction: `core_configured=true` is not sufficient to call a restart/lifecycle callback. The preexisting bounded 20-second Daemon startup poll must first observe *durable stopped intent* and *actual stopped state* with PID 0/null, no pending operation, recovery requirement or circuit breaker. An unexpected running/auto-started Core aborts immediately. Ordinary transitional snapshots continue within the **same** readiness deadline; this does not waive a failed route, echo or FD check, nor change the release gates. A Python regression verifies transient configured snapshots cannot reach the callback.
+
+### ADR 0162: bounded numeric HTTP CONNECT on the existing mixed inbounds
+
+In the same sixth Daemon network-none run after ADR 0161 reconnects, send exactly one HTTP/1.1 CONNECT `127.0.0.1:<ephemeral echo port>` request through each Rule:2080, Direct:2081 and Selected:2082 mixed inbound. Require at most 1,024 bytes of a full HTTP/1.x 200 response header, followed by exact numeric localhost echo bytes; only Selected may increment the local synthetic upstream accepted count. Before and after these three requests, verify the same real pinned Core PID and Applied=LKG generation. Do not add HTTP credentials, external DNS/URLs, hostnames or system proxy changes. On any failure, the existing unconditional explicit stop and stopped-intent audit apply.
+
+Only a fully passing exact-head amd64 **and** arm64 native run may print `T22_AIRGAP_HTTP_CONNECT_IP=ok`; always retain `T22_HOSTNAME_AND_UDP_VERIFIED=false`. This is neither full T22 support nor CN-rules/offline-release/power-loss/long-soak acceptance.

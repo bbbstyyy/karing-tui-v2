@@ -1458,7 +1458,9 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                                    side_effect=refusal) as denied:
                                 with (mock.patch.object(applied, "verify_stopped_ports") as closed,
                                       mock.patch.object(applied, "probe_bounded_reconnect_churn",
-                                                        return_value=72) as churn):
+                                                        return_value=72) as churn,
+                                      mock.patch.object(applied, "probe_http_route_isolation",
+                                                        return_value=3) as http_route):
                                     pid = applied.probe_restart_after_held_stop(
                                         "/app", {}, "/daemon.sock", 100,
                                         "/approved-core", 5, 9,
@@ -1470,6 +1472,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         churn.assert_called_once_with(
             "/daemon.sock", 100, "/approved-core", 5, 9,
             222, 41001, node)
+        http_route.assert_called_once_with(
+            "/daemon.sock", 5, 9, 222, 41001, node)
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
         self.assertEqual(payloads, [
@@ -1665,6 +1669,125 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 if defect == "stale-start":
                     fd.assert_not_called()
                     probe.assert_not_called()
+
+    def test_http_connect_ip_request_and_exact_echo_on_three_mixed_inbounds(self):
+        class Conn:
+            def __init__(self, response):
+                self.received = bytearray(response)
+                self.writes = []
+                self.closed = False
+                self.timeout = None
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+            def settimeout(self, timeout):
+                self.timeout = timeout
+            def sendall(self, data):
+                self.writes.append(data)
+            def recv(self, size):
+                amount = min(size, len(self.received))
+                chunk = bytes(self.received[:amount])
+                del self.received[:amount]
+                return chunk
+
+        for port in applied.MANAGED_PORTS:
+            with self.subTest(port=port):
+                payload = b"http-connect-ip-" + str(port).encode()
+                response = (b"HTTP/1.1 200 Connection established\r\n"
+                            b"Via: private-test\r\n\r\n" +
+                            loopback.REPLY_PREFIX + payload)
+                conn = Conn(response)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as opened:
+                    applied.probe_http_connect_ip(port, 41001, payload)
+                opened.assert_called_once_with(("127.0.0.1", port), timeout=4)
+                self.assertTrue(conn.closed)
+                self.assertEqual(conn.timeout, 4)
+                self.assertEqual(conn.writes[0],
+                                 b"CONNECT 127.0.0.1:41001 HTTP/1.1\r\n"
+                                 b"Host: 127.0.0.1:41001\r\n\r\n")
+                self.assertEqual(conn.writes[1], payload)
+
+        payload = b"local-http"
+        for response in (
+            b"HTTP/1.1 403 Forbidden\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n",  # Truncated header
+            b"HTTP/1.1 200 OK\r\nX: " + b"x" * 1200,
+            b"HTTP/1.1 202 Accepted\r\n\r\n",
+            b"NOTHTTP 200 OK\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n\r\nwrong",
+        ):
+            with self.subTest(response=response[:40]):
+                conn = Conn(response)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_http_connect_ip(2082, 41001, payload)
+                self.assertTrue(conn.closed)
+
+        for port, echo, message in (
+            (True, 41001, payload), (2089, 41001, payload),
+            (2082, True, payload), (2082, 0, payload),
+            (2082, 65536, payload), (2082, 41001, ""),
+            (2082, 41001, b""), (2082, 41001, b"x" * 129),
+        ):
+            with self.subTest(port=port, echo=echo):
+                with mock.patch.object(applied.socket, "create_connection") as opened:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_http_connect_ip(port, echo, message)
+                    opened.assert_not_called()
+
+    def test_http_connect_selected_only_and_generation_guard(self):
+        class Node:
+            calls = 8
+            rejections = 3
+            reject_connections = False
+            failed = False
+        good = self.promoted_status(pid=222)
+        node = Node()
+        connections = []
+        def dial(port, echo, message):
+            self.assertEqual(echo, 41001)
+            self.assertEqual(message, b"http-connect-ip-" + str(port).encode())
+            connections.append(port)
+            if port == 2082:
+                node.calls += 1
+        with mock.patch.object(applied, "unix_json", return_value=good) as api:
+            with mock.patch.object(applied, "probe_http_connect_ip",
+                                   side_effect=dial) as probe:
+                self.assertEqual(applied.probe_http_route_isolation(
+                    "/daemon.sock", 5, 9, 222, 41001, node), 3)
+        self.assertEqual(connections, list(applied.MANAGED_PORTS))
+        self.assertEqual((node.calls, node.rejections), (9, 3))
+        self.assertEqual(probe.call_count, 3)
+        self.assertEqual(api.call_count, 2)
+
+        for defect in ("wrong-pid", "rule-uses-selected", "selected-bypasses",
+                       "new-rejection", "pid-replaced-after-traffic"):
+            with self.subTest(defect=defect):
+                node = Node()
+                def bad_dial(port, _echo, _message):
+                    if defect == "rule-uses-selected" and port == 2080:
+                        node.calls += 1
+                    if port == 2082 and defect != "selected-bypasses":
+                        node.calls += 1
+                    if defect == "new-rejection" and port == 2080:
+                        node.rejections += 1
+                statuses = (
+                    [dict(good, core_pid=333)] if defect == "wrong-pid" else
+                    [good, dict(good, core_pid=333)] if
+                    defect == "pid-replaced-after-traffic" else [good, good]
+                )
+                with mock.patch.object(applied, "unix_json",
+                                       side_effect=statuses):
+                    with mock.patch.object(applied, "probe_http_connect_ip",
+                                           side_effect=bad_dial) as dial:
+                        with self.assertRaises(RuntimeError):
+                            applied.probe_http_route_isolation(
+                                "/daemon.sock", 5, 9, 222, 41001, node)
+                        if defect == "wrong-pid":
+                            dial.assert_not_called()
 
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):

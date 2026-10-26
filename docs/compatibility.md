@@ -505,3 +505,9 @@ The sixth real native amd64/arm64 network-none Daemon session must begin from th
 - Bound procfs FD settle to four seconds: both Daemon and verified same-UID direct-child pinned Core FD counts must remain below 1024, Daemon ≤ baseline+16, Core ≤ baseline+24. No privileged new process control or network access; fail-closed on wrong path, unapproved restart, drift or malformed samples.
 - `T20_AIRGAP_BOUNDED_RECONNECT_FD=ok` is only an early functional/stability signal; `T20_1000_RECONNECTS_VERIFIED=false`, `T25_72H_7D_30D_SOAK_VERIFIED=false`, and full T20/T25, licensed offline CN routing, long-term memory/goroutine/SLA, restore and release gates remain unmet.
 
+
+### M5 / ADR 0162 — real mixed inbound numeric-localhost HTTP CONNECT
+
+- Native amd64/arm64 fourth airgap containers now additionally probe HTTP/1.1 CONNECT with numeric `127.0.0.1:<echo-port>` through Rule/Direct/Selected 2080/2081/2082, bounded 1,024-byte HTTP 200 header and exact application echo. Assert the same approved PID/Applied=LKG, one synthetic Selected upstream and zero Rule/Direct crossing or additional refusal.
+- This is `T22_AIRGAP_HTTP_CONNECT_IP=ok` **only**: no hostname DNS, UDP, HTTP absolute-form, authentic upstreams, credentials, CN SRS bundles or full T22 acceptance. Explicitly preserve `T22_HOSTNAME_AND_UDP_VERIFIED=false`, `T20_1000_RECONNECTS_VERIFIED=false` and `T25_72H_7D_30D_SOAK_VERIFIED=false` until separately proven.
+
