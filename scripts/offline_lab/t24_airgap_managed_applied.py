@@ -7,6 +7,7 @@ No CN SRS, remote DNS, TUN, user data, online install or release authority.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import argparse
 import hashlib
 import http.client
@@ -411,21 +412,37 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
             if self.server.reject_connections:
                 # A real SOCKS5 CONNECT failure, not a closed test listener:
                 # the managed Core must not fall back to an unrequested path.
-                self.server.rejections += 1
+                with self.server.counter_lock:
+                    self.server.rejections += 1
                 incoming.sendall(b"\x05\x05\x00\x01\x7f\x00\x00\x01\x00\x00")
                 return
             with socket.create_connection(("127.0.0.1", port), timeout=3) as target:
                 target.settimeout(3)
                 incoming.sendall(b"\x05\x00\x00\x01\x7f\x00\x00\x01" +
                                  struct.pack("!H", port))
-                self.server.calls += 1
+                with self.server.counter_lock:
+                    self.server.calls += 1
                 until = time.monotonic() + 4
+                audit_prefix = bytearray()
+                audited = False
                 while time.monotonic() < until:
                     ready, _, _ = select.select([incoming, target], [], [], 0.3)
                     for source in ready:
                         chunk = source.recv(4096)
                         if not chunk:
                             return
+                        # The 32-byte test-only parallel payload identifies
+                        # its inbound even if TCP divides the bytes across reads.
+                        if source is incoming and not audited:
+                            audit_prefix.extend(chunk[:32 - len(audit_prefix)])
+                            if (len(audit_prefix) >= 9 and
+                                    not audit_prefix.startswith(b"parallel-")):
+                                audited = True
+                            elif len(audit_prefix) == 32:
+                                with self.server.counter_lock:
+                                    self.server.parallel_payloads.append(
+                                        bytes(audit_prefix))
+                                audited = True
                         (target if source is incoming else incoming).sendall(chunk)
         except (OSError, RuntimeError, ValueError):
             self.server.failed = True
@@ -441,6 +458,8 @@ class LocalSocksServer(socketserver.ThreadingTCPServer):
         self.rejections = 0
         self.reject_connections = False
         self.failed = False
+        self.counter_lock = threading.Lock()
+        self.parallel_payloads = []
 
 
 def probe_port(port, echo_port, payload):
@@ -469,6 +488,58 @@ def probe_port(port, echo_port, payload):
                 loopback.REPLY_PREFIX + payload,
                 "managed Core packet round trip failed")
 
+
+
+
+def parallel_probe_payload(index, iteration, port):
+    """Fixed 32-byte audit tag; synthetic node can reconstruct split TCP reads."""
+    require(type(index) is int and 0 <= index < 6 and
+            type(iteration) is int and iteration in (0, 1) and
+            type(port) is int and port in MANAGED_PORTS,
+            "invalid parallel probe payload identity")
+    payload = ("parallel-" + str(index) + "-" +
+               str(iteration) + "-").encode("ascii").ljust(28, b"_")
+    return payload + str(port).encode("ascii")
+
+
+def probe_bounded_parallel_routes(echo_port, node):
+    """Six concurrent localhost clients; verify Selected's exact payload tags."""
+    require(type(echo_port) is int and 0 < echo_port < 65536,
+            "invalid parallel-probe echo port")
+    require(type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            type(node.parallel_payloads) is list and
+            not node.failed and not node.reject_connections,
+            "parallel-probe synthetic node was not healthy")
+    original_calls, original_denials = node.calls, node.rejections
+    original_tags = len(node.parallel_payloads)
+    barrier = threading.Barrier(6)
+
+    def worker(index):
+        port = MANAGED_PORTS[index % len(MANAGED_PORTS)]
+        barrier.wait(timeout=8)
+        for iteration in range(2):
+            probe_port(port, echo_port,
+                       parallel_probe_payload(index, iteration, port))
+        return port
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [executor.submit(worker, index) for index in range(6)]
+        completed = [future.result(timeout=40) for future in futures]
+    require(all(completed.count(port) == 2 for port in MANAGED_PORTS),
+            "parallel inbounds lacked two simultaneous workers")
+    # Exactly two Selected workers, each making two successful connections.
+    # Rule/Direct must not pass through the Selected synthetic SOCKS node.
+    expected_tags = {
+        parallel_probe_payload(index, iteration, 2082)
+        for index in (2, 5) for iteration in range(2)
+    }
+    actual_tags = node.parallel_payloads[original_tags:]
+    require(node.calls == original_calls + 4 and
+            node.rejections == original_denials and not node.failed and
+            len(actual_tags) == 4 and set(actual_tags) == expected_tags,
+            "parallel Rule/Direct crossed Selected, Selected bypassed, or node failed")
+    return len(completed) * 2
 
 
 def probe_isolated_routes(echo_port, prefix, node):
@@ -601,6 +672,9 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
         if cycle == 1:
             probe_isolated_failure(echo_port, b"lifecycle-refusal-", node)
             probe_isolated_routes(echo_port, b"lifecycle-restored-", node)
+        if cycle == 2:
+            require(probe_bounded_parallel_routes(echo_port, node) == 12,
+                    "bounded parallel workload did not finish all 12 echoes")
         require(assert_promoted_core(
             unix_json(sock, "GET", "/v1/status"),
             old_generation, promoted_generation, None, True) == pid,
@@ -897,7 +971,7 @@ def main(argv=None):
                             verify_stopped_ports()
 
                         run_daemon(args.app, args.core, root, env, after_cycles)
-                        require(node.calls == 15 and node.rejections >= 6 and
+                        require(node.calls == 19 and node.rejections >= 6 and
                                 not node.reject_connections and not node.failed,
                                 "short lifecycle drifted or bypassed selected route")
                         cold.hash_pinned_core(core, args.core_sha256)
@@ -912,6 +986,7 @@ def main(argv=None):
         print("T24_AIRGAP_LIVE_GENERATION_HANDOFF=ok")
         print("T24_AIRGAP_PROMOTED_CRASH_RECOVERY=ok")
         print("T25_AIRGAP_SHORT_LIFECYCLE_SMOKE=ok")
+        print("T25_AIRGAP_PARALLEL_LOOPBACK=ok")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
