@@ -388,6 +388,57 @@ def probe_supervised_crash_recovery(sock, daemon_pid, core_path,
     return restarted_pid
 
 
+
+def probe_held_crash_recovery(sock, daemon_pid, core_path,
+                              old_generation, promoted_generation,
+                              running_pid, echo_port, node):
+    """Crash one verified Core with all three SOCKS5 TCP tunnels established.
+
+    The pre-existing pidfd-bound crash and recovery path still owns the
+    only SIGKILL; this wrapper may not signal an unverified or replaced PID.
+    """
+    require(type(running_pid) is int and running_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            not node.failed and not node.reject_connections,
+            "invalid pre-crash held-session fixture")
+    before = assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True)
+    require(before == running_pid,
+            "Core PID or generation drifted before opening held crash tunnels")
+    baseline_calls, baseline_denials = node.calls, node.rejections
+    with ExitStack() as stack:
+        held = []
+        for port in MANAGED_PORTS:
+            payload = b"held-crash-" + str(port).encode("ascii")
+            held.append(stack.enter_context(
+                open_held_socks_echo(port, echo_port, payload)))
+            require(node.calls == baseline_calls + (1 if port == 2082 else 0)
+                    and node.rejections == baseline_denials and not node.failed,
+                    "held crash tunnel crossed Selected or skipped its node")
+
+        # Refuse to kill an unrelated, replaced or new unapproved Core even
+        # if all three old listening sockets still appear reachable.
+        require(assert_promoted_core(
+            unix_json(sock, "GET", "/v1/status"),
+            old_generation, promoted_generation, None, True) == running_pid,
+            "Core identity drifted while crash tunnels were established")
+        restarted = probe_supervised_crash_recovery(
+            sock, daemon_pid, core_path, old_generation, promoted_generation,
+            running_pid, echo_port, node)
+        # Do not mistake a new healthy Core listener for an old tunnel that
+        # survived the killed process. Every old stream must terminate.
+        for conn in held:
+            assert_held_session_closed(conn)
+        require(node.calls == baseline_calls + 3 and
+                node.rejections > baseline_denials and
+                not node.failed and not node.reject_connections,
+                "held crash, recovery or Selected route changed the audit")
+        return restarted
+
+
 def exact_read(sock, n):
     return loopback.exact_read(sock, n)
 
@@ -1127,7 +1178,7 @@ def main(argv=None):
                                 "persisted promoted Core restarted unexpectedly")
                             probe_isolated_routes(echo.server_address[1],
                                                   b"restored-promoted-restart-", node)
-                            probe_supervised_crash_recovery(
+                            probe_held_crash_recovery(
                                 sock, daemon.pid, args.core,
                                 generation, promoted_generation, new_pid,
                                 echo.server_address[1], node)
@@ -1161,7 +1212,7 @@ def main(argv=None):
                         require(run_daemon(args.app, args.core, root, env,
                                            after_crash_stop) is True,
                                 "post-crash stopped Daemon restart failed")
-                        require(node.calls == 11 and node.rejections >= 5 and
+                        require(node.calls == 12 and node.rejections >= 5 and
                                 not node.reject_connections and not node.failed,
                                 "crash/restart recovery crossed or bypassed routes")
 
@@ -1216,7 +1267,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 26 and node.rejections >= 11 and
+                        require(node.calls == 27 and node.rejections >= 11 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -1236,6 +1287,7 @@ def main(argv=None):
         print("T25_AIRGAP_PARALLEL_REFUSAL_ISOLATED=ok")
         print("T25_AIRGAP_HELD_SESSIONS_STOPPED=ok")
         print("T25_AIRGAP_HELD_STOP_RESTART=ok")
+        print("T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")

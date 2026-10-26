@@ -74,3 +74,10 @@ This is a bounded deliberate operator restart, **not** zero-connection-loss, rea
 - The test node treats only TCP reset/abort/broken-pipe **after a successfully forwarded application reply** as an expected session teardown. Pre-echo resets, protocol violations, other socket errors and timeouts remain hard failures; a client still must independently validate the entire exact echo and the three old held tunnels must report EOF/reset after stop.
 - On native failure, use the fixed `T24_AIRGAP_FAILURE_PHASE` and `T24_AIRGAP_FAILURE_CLASS` labels to distinguish the final stopped-status, listener, Selected accounting or Core-hash gates. Do not print private Daemon logs, arbitrary exception strings, secrets, or network configuration to CI output.
 - A pass on one architecture or a subsequent rerun is not evidence of long soak or complete T24/T25 acceptance; both native architectures and the ordinary CI gates must pass for the same PR head.
+
+### ADR 0160: verify old sessions close on one supervised Core crash
+
+The fourth independent network-none native Core smoke on each architecture must reuse the **existing single** pidfd-bound Core SIGKILL. While three completed localhost SOCKS5 echo tunnels remain open, require the exact same Daemon PID/generation/LKG before fault injection, then require all three old sockets to reach EOF/reset within the bounded checks. Only new connections through the restarted approved Core may succeed. The synthetic Selected node is required exactly once for the held triplet, with Rule/Direct isolated.
+
+A failure before the crash must not signal any process; any failure closes all opened test sockets. Full native success adds `T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok`. This is not zero-drop TCP, long-run soak, CN routing, actual host power loss, credential restore or permission to release distributable offline assets.
+

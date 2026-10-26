@@ -490,6 +490,135 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         ])
         denial.assert_called_once_with(41001, b"failed-after-crash-", node)
 
+
+    def test_held_crash_closes_three_tunnels_and_reuses_one_verified_kill(self):
+        class Node:
+            calls = 5
+            rejections = 3
+            failed = False
+            reject_connections = False
+
+        class Held:
+            def __init__(self):
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+
+        node = Node()
+        opened = []
+        def open_tunnel(port, target, payload):
+            self.assertEqual(target, 41001)
+            self.assertEqual(payload, b"held-crash-" + str(port).encode())
+            held = Held()
+            opened.append(held)
+            if port == 2082:
+                node.calls += 1
+            return held
+        def crash(*args):
+            self.assertEqual(args, (
+                "/daemon.sock", 100, "/approved-core", 5, 9, 222, 41001, node))
+            node.calls += 2  # Existing recovery probes two new Selected relays.
+            node.rejections += 1
+            return 333
+
+        with mock.patch.object(applied, "unix_json",
+                               return_value=self.promoted_status(pid=222)) as api:
+            with mock.patch.object(applied, "open_held_socks_echo",
+                                   side_effect=open_tunnel) as opened_call:
+                with mock.patch.object(applied, "probe_supervised_crash_recovery",
+                                       side_effect=crash) as kill:
+                    with mock.patch.object(applied, "assert_held_session_closed") as eof:
+                        result = applied.probe_held_crash_recovery(
+                            "/daemon.sock", 100, "/approved-core",
+                            5, 9, 222, 41001, node)
+        self.assertEqual(result, 333)
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(opened_call.call_count, 3)
+        kill.assert_called_once()
+        self.assertEqual(eof.call_args_list,
+                         [mock.call(conn) for conn in opened])
+        self.assertTrue(all(conn.closed for conn in opened))
+        self.assertEqual((node.calls, node.rejections), (8, 4))
+
+    def test_held_crash_fails_closed_before_signal_on_drift_or_bypass(self):
+        class Node:
+            calls = 5
+            rejections = 3
+            failed = False
+            reject_connections = False
+
+        class Held:
+            def __init__(self):
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+
+        args = ("/daemon.sock", 100, "/approved-core", 5, 9,
+                222, 41001)
+        good = self.promoted_status(pid=222)
+        drift = dict(good, core_pid=444)
+        with mock.patch.object(applied, "unix_json", return_value=drift):
+            with mock.patch.object(applied, "open_held_socks_echo") as dial:
+                with mock.patch.object(applied, "probe_supervised_crash_recovery") as kill:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_held_crash_recovery(*args, Node())
+                    dial.assert_not_called()
+                    kill.assert_not_called()
+        for attr in ("failed", "reject_connections"):
+            node = Node()
+            setattr(node, attr, True)
+            with mock.patch.object(applied, "unix_json") as api:
+                with mock.patch.object(applied, "open_held_socks_echo") as dial:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_held_crash_recovery(*args, node)
+                    api.assert_not_called()
+                    dial.assert_not_called()
+
+        for defect in ("pid-drift", "Rule-crosses-Selected", "crash-error",
+                       "old-tunnel-still-live"):
+            with self.subTest(defect=defect):
+                node = Node()
+                opened = []
+                def connect(port, _echo, _payload):
+                    held = Held()
+                    opened.append(held)
+                    if port == 2082 or (defect == "Rule-crosses-Selected" and
+                                        port == 2080):
+                        node.calls += 1
+                    return held
+                def crashed(*_args):
+                    node.calls += 2
+                    node.rejections += 1
+                    if defect == "crash-error":
+                        raise RuntimeError("injected Core restart failure")
+                    return 333
+                statuses = ([good, drift] if defect == "pid-drift"
+                            else [good, good])
+                with mock.patch.object(applied, "unix_json",
+                                       side_effect=statuses):
+                    with mock.patch.object(applied, "open_held_socks_echo",
+                                           side_effect=connect):
+                        with mock.patch.object(
+                                applied, "probe_supervised_crash_recovery",
+                                side_effect=crashed) as kill:
+                            with mock.patch.object(
+                                    applied, "assert_held_session_closed",
+                                    side_effect=(RuntimeError("old socket alive")
+                                                 if defect == "old-tunnel-still-live"
+                                                 else None)):
+                                with self.assertRaises(RuntimeError):
+                                    applied.probe_held_crash_recovery(
+                                        *args, node)
+                            if defect in ("pid-drift", "Rule-crosses-Selected"):
+                                kill.assert_not_called()
+                            else:
+                                kill.assert_called_once()
+                self.assertTrue(all(conn.closed for conn in opened))
+
     def test_crash_injection_never_signals_unverified_process(self):
         for bad_pid, daemon_pid in ((0, 100), (1, 100), (100, 100),
                                     (-3, 100), (True, 100), (222, 1)):
