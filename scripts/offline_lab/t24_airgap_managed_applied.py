@@ -560,6 +560,61 @@ def wait_status(app, env, expected_state, timeout=15):
     raise RuntimeError("managed Core never reached expected state")
 
 
+def daemon_fd_count(pid):
+    """Count only the same-UID daemon's procfs descriptors, not Core's."""
+    require(type(pid) is int and pid > 1, "invalid Daemon FD sample PID")
+    count = len(os.listdir("/proc/" + str(pid) + "/fd"))
+    require(0 < count < 1024, "unbounded or empty Daemon fd table")
+    return count
+
+
+def assert_cycle_fd_budget(baseline, samples):
+    """Three short cycles can catch gross leaks, not establish long soak."""
+    require(type(baseline) is int and 0 < baseline < 1024,
+            "invalid baseline Daemon FD count")
+    require(type(samples) is list and len(samples) == 3 and
+            all(type(n) is int and 0 < n < 1024 for n in samples),
+            "missing bounded lifecycle samples")
+    require(max(samples) <= baseline + 24 and
+            max(samples) - min(samples) <= 16,
+            "Daemon FD count drifted during short lifecycle smoke")
+
+
+def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
+                                   old_generation, promoted_generation,
+                                   echo_port, node):
+    """Three explicit start/stop cycles on unchanged persisted generation 2."""
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, False) == 0,
+        "short lifecycle experiment began with Core running")
+    baseline = daemon_fd_count(daemon_pid)
+    samples = []
+    for cycle in range(3):
+        boot.checked([app, "core", "start"], env, timeout=22)
+        running = wait_status(app, env, "running")
+        pid = assert_promoted_core(running, old_generation, promoted_generation,
+                                   None, True)
+        verify_child(pid, daemon_pid, core_path)
+        prefix = ("lifecycle-" + str(cycle) + "-").encode()
+        probe_isolated_routes(echo_port, prefix, node)
+        if cycle == 1:
+            probe_isolated_failure(echo_port, b"lifecycle-refusal-", node)
+            probe_isolated_routes(echo_port, b"lifecycle-restored-", node)
+        require(assert_promoted_core(
+            unix_json(sock, "GET", "/v1/status"),
+            old_generation, promoted_generation, None, True) == pid,
+            "short lifecycle traffic unexpectedly replaced running Core")
+        boot.checked([app, "core", "stop"], env, timeout=20)
+        stopped = wait_status(app, env, "stopped")
+        assert_promoted_core(stopped, old_generation, promoted_generation,
+                             None, False)
+        verify_stopped_ports()
+        samples.append(daemon_fd_count(daemon_pid))
+    assert_cycle_fd_budget(baseline, samples)
+    return samples
+
+
 def verify_stopped_ports():
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
@@ -814,6 +869,37 @@ def main(argv=None):
                         require(node.calls == 11 and node.rejections >= 5 and
                                 not node.reject_connections and not node.failed,
                                 "crash/restart recovery crossed or bypassed routes")
+
+                        def bounded_lifecycle(daemon, sock, initial):
+                            assert_promoted_core(initial, generation,
+                                                 promoted_generation, None, False)
+                            require(unix_json(
+                                sock, "GET", "/v1/declaration/current").get("sha256")
+                                == staged_sha,
+                                "short lifecycle changed the declaration head")
+                            return probe_bounded_lifecycle_cycles(
+                                args.app, env, sock, daemon.pid, args.core,
+                                generation, promoted_generation,
+                                echo.server_address[1], node)
+
+                        counts = run_daemon(args.app, args.core, root, env,
+                                            bounded_lifecycle)
+                        require(len(counts) == 3, "missing lifecycle FD samples")
+                        # A final independent daemon open confirms stopped
+                        # intent still survives the repeated start/stop cycle.
+                        def after_cycles(daemon, sock, initial):
+                            assert_promoted_core(initial, generation,
+                                                 promoted_generation, None, False)
+                            require(unix_json(
+                                sock, "GET", "/v1/declaration/current").get("sha256")
+                                == staged_sha,
+                                "short lifecycle restart lost declaration head")
+                            verify_stopped_ports()
+
+                        run_daemon(args.app, args.core, root, env, after_cycles)
+                        require(node.calls == 15 and node.rejections >= 6 and
+                                not node.reject_connections and not node.failed,
+                                "short lifecycle drifted or bypassed selected route")
                         cold.hash_pinned_core(core, args.core_sha256)
                     finally:
                         node.shutdown()
@@ -825,6 +911,8 @@ def main(argv=None):
         print("T24_AIRGAP_STAGED_REVISION_CAS_ISOLATED=ok")
         print("T24_AIRGAP_LIVE_GENERATION_HANDOFF=ok")
         print("T24_AIRGAP_PROMOTED_CRASH_RECOVERY=ok")
+        print("T25_AIRGAP_SHORT_LIFECYCLE_SMOKE=ok")
+        print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
         return 0
