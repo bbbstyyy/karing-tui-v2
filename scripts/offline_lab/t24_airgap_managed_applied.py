@@ -349,14 +349,23 @@ def probe_supervised_crash_recovery(sock, daemon_pid, core_path,
             type(daemon_pid) is int and daemon_pid > 1 and
             running_pid != daemon_pid,
             "unsafe Core crash injection PID")
-    assert_promoted_core(unix_json(sock, "GET", "/v1/status"),
-                         old_generation, promoted_generation,
-                         None, True)
+    before_pid = assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True)
+    require(before_pid == running_pid,
+            "stale Core PID before fault injection; refuse signal")
     require(hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"),
             "kernel/Python pidfd signaling unavailable; refuse unsafe PID kill")
     pidfd = os.pidfd_open(running_pid)
     try:
         verify_child(running_pid, daemon_pid, core_path)
+        # A pidfd prevents PID reuse, but must still be bound to the *current*
+        # managed generation. Recheck the actual daemon status after opening.
+        sampled_pid = assert_promoted_core(
+            unix_json(sock, "GET", "/v1/status"),
+            old_generation, promoted_generation, None, True)
+        require(sampled_pid == running_pid,
+                "managed Core PID changed after pidfd open; refuse signal")
         signal.pidfd_send_signal(pidfd, signal.SIGKILL)
     finally:
         os.close(pidfd)
