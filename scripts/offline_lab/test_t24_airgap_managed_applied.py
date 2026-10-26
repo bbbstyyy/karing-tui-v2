@@ -617,9 +617,12 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         def wait(_app, _env, desired):
             self.assertEqual(desired, "running" if state["running"] else "stopped")
             return status()
-        def stop_held(app, env, echo_port, target):
-            self.assertEqual((app, env, echo_port, target),
-                             ("/app", {}, 41001, node))
+        def stop_held(app, env, sock, echo_port, target,
+                      old_generation, promoted_generation, expected_pid):
+            self.assertEqual(
+                (app, env, sock, echo_port, target,
+                 old_generation, promoted_generation, expected_pid),
+                ("/app", {}, "/daemon.sock", 41001, node, 5, 9, 403))
             command([app, "core", "stop"], env, timeout=20)
             return status()
         def unix(_sock, method, route, payload=None, expected=200, timeout=85):
@@ -647,7 +650,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                                     samples = applied.probe_bounded_lifecycle_cycles(
                                                         "/app", {}, "/daemon.sock", 100,
                                                         "/approved-core", 5, 9, 41001, node)
-        held.assert_called_once_with("/app", {}, 41001, node)
+        held.assert_called_once_with(
+            "/app", {}, "/daemon.sock", 41001, node, 5, 9, 403)
         self.assertEqual(parallel.call_args_list, [
             mock.call(41001, node), mock.call(41001, node),
         ])
@@ -1007,14 +1011,17 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 node.calls += 1
             return c
         stopped = self.status("stopped", False)
-        with mock.patch.object(applied, "open_held_socks_echo",
-                               side_effect=connect) as dial:
+        running = self.promoted_status(pid=222)
+        with (mock.patch.object(applied, "unix_json", return_value=running),
+              mock.patch.object(applied, "open_held_socks_echo",
+                                side_effect=connect) as dial):
             with mock.patch.object(applied.boot, "checked") as cli:
                 with mock.patch.object(applied, "wait_status",
                                        return_value=stopped) as status:
                     with mock.patch.object(applied, "assert_held_session_closed") as eof:
                         self.assertIs(applied.stop_core_with_held_tunnels(
-                            "/app", {}, 41001, node), stopped)
+                            "/app", {}, "/daemon.sock", 41001, node,
+                            5, 9, 222), stopped)
         self.assertEqual(dial.call_count, 3)
         cli.assert_called_once_with(["/app", "core", "stop"], {}, timeout=20)
         status.assert_called_once_with("/app", {}, "stopped")
@@ -1035,8 +1042,9 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                     if port == 2082 and defect != "Selected-bypass":
                         node.calls += 1
                     return c
-                with mock.patch.object(applied, "open_held_socks_echo",
-                                       side_effect=bad_connect):
+                with (mock.patch.object(applied, "unix_json", return_value=running),
+                      mock.patch.object(applied, "open_held_socks_echo",
+                                        side_effect=bad_connect)):
                     with mock.patch.object(applied.boot, "checked") as cli:
                         with mock.patch.object(applied, "wait_status",
                                                return_value=stopped):
@@ -1047,12 +1055,56 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                              else None)):
                                 with self.assertRaises(RuntimeError):
                                     applied.stop_core_with_held_tunnels(
-                                        "/app", {}, 41001, node)
+                                        "/app", {}, "/daemon.sock", 41001, node,
+                                        5, 9, 222)
                         if defect == "old-connection-open":
                             cli.assert_called_once()
                         else:
                             cli.assert_not_called()
                 self.assertTrue(all(c.closed for c in opened))
+
+        # A stopped, replaced, or unapproved Core must never be signaled
+        # via the held-session stop test, even if its TCP port still accepts.
+        for bad_status in (
+            dict(running, core_pid=333),
+            dict(running, config_revision=1),
+            dict(running, last_known_good_generation_id=5),
+            dict(running, recovery_required=True),
+        ):
+            node = Node()
+            with mock.patch.object(applied, "unix_json",
+                                   return_value=bad_status):
+                with mock.patch.object(applied, "open_held_socks_echo") as opened:
+                    with mock.patch.object(applied.boot, "checked") as cli:
+                        with self.assertRaises(RuntimeError):
+                            applied.stop_core_with_held_tunnels(
+                                "/app", {}, "/daemon.sock", 41001, node,
+                                5, 9, 222)
+                        opened.assert_not_called()
+                        cli.assert_not_called()
+
+        # Even with three established tunnels, PID drift immediately before
+        # stop must refuse the CLI command and close all three test sockets.
+        node = Node()
+        opened = []
+        def connect_for_drift(port, _echo_port, _payload):
+            held_socket = Held()
+            opened.append(held_socket)
+            if port == 2082:
+                node.calls += 1
+            return held_socket
+        with mock.patch.object(applied, "unix_json",
+                               side_effect=[running, dict(running, core_pid=333)]):
+            with mock.patch.object(applied, "open_held_socks_echo",
+                                   side_effect=connect_for_drift):
+                with mock.patch.object(applied.boot, "checked") as cli:
+                    with self.assertRaises(RuntimeError):
+                        applied.stop_core_with_held_tunnels(
+                            "/app", {}, "/daemon.sock", 41001, node,
+                            5, 9, 222)
+                    cli.assert_not_called()
+        self.assertEqual(len(opened), 3)
+        self.assertTrue(all(c.closed for c in opened))
 
         for unhealthy in ("failed", "reject_connections"):
             node = Node()
@@ -1060,7 +1112,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             with mock.patch.object(applied, "open_held_socks_echo") as dial:
                 with self.assertRaises(RuntimeError):
                     applied.stop_core_with_held_tunnels(
-                        "/app", {}, 41001, node)
+                        "/app", {}, "/daemon.sock", 41001, node,
+                        5, 9, 222)
                 dial.assert_not_called()
 
     def test_managed_proxy_port_and_payload_guards(self):
