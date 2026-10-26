@@ -630,9 +630,13 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                             with mock.patch.object(applied, "probe_isolated_routes") as routes:
                                 with mock.patch.object(applied, "probe_isolated_failure") as denial:
                                     with mock.patch.object(applied, "verify_stopped_ports") as closed:
-                                        samples = applied.probe_bounded_lifecycle_cycles(
-                                            "/app", {}, "/daemon.sock", 100,
-                                            "/approved-core", 5, 9, 41001, node)
+                                        with mock.patch.object(
+                                            applied, "probe_bounded_parallel_routes",
+                                            return_value=12) as parallel:
+                                            samples = applied.probe_bounded_lifecycle_cycles(
+                                                "/app", {}, "/daemon.sock", 100,
+                                                "/approved-core", 5, 9, 41001, node)
+        parallel.assert_called_once_with(41001, node)
         self.assertEqual(samples, [13, 14, 13])
         self.assertEqual(transitions, ["start", "stop"] * 3)
         self.assertEqual(fds.call_count, 4)
@@ -662,6 +666,114 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                             5, 9, 41001, object())
                     command.assert_not_called()
                     fds.assert_not_called()
+
+    def test_six_parallel_workers_prove_selected_only_and_distinct_echoes(self):
+        class Node:
+            def __init__(self):
+                self.calls = 5
+                self.rejections = 2
+                self.failed = False
+                self.reject_connections = False
+                self.parallel_payloads = []
+
+        node = Node()
+        received = []
+        lock = threading.Lock()
+
+        def fake_probe(port, target, payload):
+            self.assertEqual(target, 41001)
+            self.assertIn(port, applied.MANAGED_PORTS)
+            self.assertTrue(payload.startswith(b"parallel-"))
+            self.assertTrue(payload.endswith(str(port).encode()))
+            with lock:
+                received.append((port, payload))
+                if port == 2082:
+                    node.calls += 1
+                    node.parallel_payloads.append(payload)
+
+        with mock.patch.object(applied, "probe_port", side_effect=fake_probe) as probe:
+            self.assertEqual(applied.probe_bounded_parallel_routes(41001, node), 12)
+        self.assertEqual(probe.call_count, 12)
+        self.assertEqual(len({payload for _, payload in received}), 12)
+        self.assertEqual([sum(port == x for port, _ in received)
+                          for x in applied.MANAGED_PORTS], [4, 4, 4])
+        self.assertEqual((node.calls, node.rejections), (9, 2))
+        self.assertFalse(node.failed)
+
+    def test_parallel_audit_tag_is_fixed_and_rejects_invalid_identity(self):
+        payloads = [
+            applied.parallel_probe_payload(i, iteration, applied.MANAGED_PORTS[i % 3])
+            for i in range(6) for iteration in (0, 1)
+        ]
+        self.assertEqual(len(set(payloads)), 12)
+        self.assertTrue(all(len(payload) == 32 for payload in payloads))
+        for invalid in ((-1, 0, 2082), (6, 1, 2082), (True, 0, 2082),
+                        (1, -1, 2082), (1, True, 2082),
+                        (1, 0, 2082.0), (1, 0, 2089)):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(RuntimeError):
+                    applied.parallel_probe_payload(*invalid)
+
+    def test_parallel_probe_refuses_misroutes_failures_and_invalid_inputs(self):
+        class Node:
+            def __init__(self):
+                self.calls = 5
+                self.rejections = 2
+                self.failed = False
+                self.reject_connections = False
+                self.parallel_payloads = []
+
+        for bad_port in (0, -1, 65536, True, 3.5):
+            with self.subTest(bad_port=bad_port):
+                with mock.patch.object(applied, "probe_port") as probe:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_bounded_parallel_routes(bad_port, Node())
+                    probe.assert_not_called()
+
+        for defect in ("selected-bypass", "Rule-crossed", "compensating-cross",
+                       "upstream-refused", "upstream-failed", "worker-error"):
+            with self.subTest(defect=defect):
+                node = Node()
+                lock = threading.Lock()
+
+                def corrupt(port, _target, payload):
+                    with lock:
+                        if defect == "worker-error" and port == 2081:
+                            raise RuntimeError("local proxy refused TCP")
+                        skip_selected = (defect == "compensating-cross" and
+                                         payload == applied.parallel_probe_payload(
+                                             5, 1, 2082))
+                        if port == 2082 and defect != "selected-bypass" and not skip_selected:
+                            node.calls += 1
+                            node.parallel_payloads.append(payload)
+                        if port == 2080 and defect == "Rule-crossed":
+                            node.calls += 1
+                            node.parallel_payloads.append(payload)
+                        if (defect == "compensating-cross" and
+                                payload == applied.parallel_probe_payload(0, 0, 2080)):
+                            node.calls += 1
+                            node.parallel_payloads.append(payload)
+                        if port == 2082 and defect == "upstream-refused":
+                            node.rejections += 1
+                        if port == 2082 and defect == "upstream-failed":
+                            node.failed = True
+
+                with mock.patch.object(applied, "probe_port", side_effect=corrupt):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_bounded_parallel_routes(41001, node)
+
+        for invalid_field, value in (
+            ("calls", -1), ("calls", True), ("rejections", -1),
+            ("rejections", None), ("parallel_payloads", None),
+            ("failed", True), ("reject_connections", True),
+        ):
+            with self.subTest(invalid_field=invalid_field):
+                node = Node()
+                setattr(node, invalid_field, value)
+                with mock.patch.object(applied, "probe_port") as probe:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_bounded_parallel_routes(41001, node)
+                    probe.assert_not_called()
 
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):
