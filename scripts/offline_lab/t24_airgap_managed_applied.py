@@ -391,12 +391,18 @@ def probe_supervised_crash_recovery(sock, daemon_pid, core_path,
 
 def probe_held_crash_recovery(sock, daemon_pid, core_path,
                               old_generation, promoted_generation,
-                              running_pid, echo_port, node):
+                              running_pid, echo_port, node, stage_hook=None):
     """Crash one verified Core with all three SOCKS5 TCP tunnels established.
 
     The pre-existing pidfd-bound crash and recovery path still owns the
     only SIGKILL; this wrapper may not signal an unverified or replaced PID.
     """
+    require(stage_hook is None or callable(stage_hook),
+            "invalid crash diagnostic hook")
+    def mark(stage):
+        if stage_hook is not None:
+            stage_hook(stage)
+    mark("crash-held-preflight")
     require(type(running_pid) is int and running_pid > 1 and
             type(echo_port) is int and 0 < echo_port < 65536 and
             type(node.calls) is int and node.calls >= 0 and
@@ -412,6 +418,7 @@ def probe_held_crash_recovery(sock, daemon_pid, core_path,
     with ExitStack() as stack:
         held = []
         for port in MANAGED_PORTS:
+            mark("crash-held-open-%d" % port)
             payload = b"held-crash-" + str(port).encode("ascii")
             held.append(stack.enter_context(
                 open_held_socks_echo(port, echo_port, payload)))
@@ -421,17 +428,21 @@ def probe_held_crash_recovery(sock, daemon_pid, core_path,
 
         # Refuse to kill an unrelated, replaced or new unapproved Core even
         # if all three old listening sockets still appear reachable.
+        mark("crash-held-pid-check")
         require(assert_promoted_core(
             unix_json(sock, "GET", "/v1/status"),
             old_generation, promoted_generation, None, True) == running_pid,
             "Core identity drifted while crash tunnels were established")
+        mark("crash-held-supervised-recovery")
         restarted = probe_supervised_crash_recovery(
             sock, daemon_pid, core_path, old_generation, promoted_generation,
             running_pid, echo_port, node)
         # Do not mistake a new healthy Core listener for an old tunnel that
         # survived the killed process. Every old stream must terminate.
+        mark("crash-held-sockets-closed")
         for conn in held:
             assert_held_session_closed(conn)
+        mark("crash-held-node-audit")
         require(node.calls == baseline_calls + 3 and
                 node.rejections > baseline_denials and
                 not node.failed and not node.reject_connections,
@@ -850,10 +861,83 @@ def assert_cycle_fd_budget(baseline, samples):
             "Daemon FD count drifted during short lifecycle smoke")
 
 
+
+def reconnect_fd_budget(daemon_before, core_before, daemon_after, core_after):
+    """Gross bounded FD drift guard, not a leak-free or long-soak claim."""
+    samples = (daemon_before, core_before, daemon_after, core_after)
+    require(all(type(sample) is int and 0 < sample < 1024
+                for sample in samples), "invalid reconnect FD sample")
+    return (daemon_after <= daemon_before + 16 and
+            core_after <= core_before + 24)
+
+
+def owned_core_fd_count(pid, daemon_pid, core_path):
+    """Read only the exact pinned, same-UID child Core's procfs fd count."""
+    verify_child(pid, daemon_pid, core_path)
+    return daemon_fd_count(pid)
+
+
+def probe_bounded_reconnect_churn(sock, daemon_pid, core_path,
+                                   old_generation, promoted_generation,
+                                   running_pid, echo_port, node, cycles=24):
+    """Reconnect all 3 real localhost inbounds; check unchanged PID and FD."""
+    require(type(cycles) is int and 1 <= cycles <= 24 and
+            type(running_pid) is int and running_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            type(node.parallel_payloads) is list and
+            not node.failed and not node.reject_connections,
+            "invalid reconnect churn precondition")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == running_pid,
+        "reconnect churn began on stale Core or generation")
+    daemon_before = daemon_fd_count(daemon_pid)
+    core_before = owned_core_fd_count(running_pid, daemon_pid, core_path)
+    accepted, denied, parallel_tags = (
+        node.calls, node.rejections, len(node.parallel_payloads))
+    for index in range(cycles):
+        probe_isolated_routes(
+            echo_port, ("reconnect-%02d-" % index).encode("ascii"), node)
+        require(node.calls == accepted + index + 1 and
+                node.rejections == denied and
+                len(node.parallel_payloads) == parallel_tags and
+                not node.failed and not node.reject_connections,
+                "reconnect crossed Selected, bypassed, or changed node health")
+        # Check the actual Daemon state during a bounded reconnect burst, not
+        # merely at the beginning and after a possibly silent Core restart.
+        if (index + 1) % 8 == 0:
+            require(assert_promoted_core(
+                unix_json(sock, "GET", "/v1/status"),
+                old_generation, promoted_generation, None, True) == running_pid,
+                "reconnect silently replaced Core or active generation")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == running_pid,
+        "reconnect ended with wrong Core or generation")
+    deadline = time.monotonic() + 4
+    while True:
+        daemon_after = daemon_fd_count(daemon_pid)
+        core_after = owned_core_fd_count(running_pid, daemon_pid, core_path)
+        if reconnect_fd_budget(daemon_before, core_before,
+                               daemon_after, core_after):
+            return cycles * len(MANAGED_PORTS)
+        if time.monotonic() >= deadline:
+            raise RuntimeError("reconnect FD budget did not settle")
+        time.sleep(0.12)
+
+
 def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
                                    old_generation, promoted_generation,
-                                   echo_port, node):
+                                   echo_port, node, stage_hook=None):
     """Three explicit start/stop cycles on unchanged persisted generation 2."""
+    require(stage_hook is None or callable(stage_hook),
+            "invalid lifecycle diagnostic hook")
+    def mark(stage):
+        if stage_hook is not None:
+            stage_hook(stage)
+    mark("held-lifecycle-preflight")
     require(assert_promoted_core(
         unix_json(sock, "GET", "/v1/status"),
         old_generation, promoted_generation, None, False) == 0,
@@ -861,17 +945,21 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
     baseline = daemon_fd_count(daemon_pid)
     samples = []
     for cycle in range(3):
+        mark("held-lifecycle-cycle-%d-start" % cycle)
         boot.checked([app, "core", "start"], env, timeout=22)
         running = wait_status(app, env, "running")
         pid = assert_promoted_core(running, old_generation, promoted_generation,
                                    None, True)
         verify_child(pid, daemon_pid, core_path)
         prefix = ("lifecycle-" + str(cycle) + "-").encode()
+        mark("held-lifecycle-cycle-%d-routes" % cycle)
         probe_isolated_routes(echo_port, prefix, node)
         if cycle == 1:
+            mark("held-lifecycle-cycle-1-selected-refusal")
             probe_isolated_failure(echo_port, b"lifecycle-refusal-", node)
             probe_isolated_routes(echo_port, b"lifecycle-restored-", node)
         if cycle == 2:
+            mark("held-lifecycle-cycle-2-parallel")
             require(probe_bounded_parallel_routes(echo_port, node) == 12,
                     "bounded parallel workload did not finish all 12 echoes")
             require(probe_parallel_selected_denials(echo_port, node) == 12,
@@ -886,6 +974,7 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
             unix_json(sock, "GET", "/v1/status"),
             old_generation, promoted_generation, None, True) == pid,
             "short lifecycle traffic unexpectedly replaced running Core")
+        mark("held-lifecycle-cycle-%d-stop" % cycle)
         if cycle == 2:
             stopped = stop_core_with_held_tunnels(
                 app, env, sock, echo_port, node,
@@ -893,10 +982,12 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
         else:
             boot.checked([app, "core", "stop"], env, timeout=20)
             stopped = wait_status(app, env, "stopped")
+        mark("held-lifecycle-cycle-%d-stopped-audit" % cycle)
         assert_promoted_core(stopped, old_generation, promoted_generation,
                              None, False)
         verify_stopped_ports()
         samples.append(daemon_fd_count(daemon_pid))
+    mark("held-lifecycle-fd-budget")
     assert_cycle_fd_budget(baseline, samples)
     return samples
 
@@ -943,6 +1034,11 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
                 node.rejections > original_denials and
                 not node.failed and not node.reject_connections,
                 "post-held-stop restart bypassed Selected or failed recovery")
+        # This remains inside the same explicit start/stop and finally guard.
+        require(probe_bounded_reconnect_churn(
+            sock, daemon_pid, core_path, old_generation, promoted_generation,
+            pid, echo_port, node) == 72,
+            "bounded reconnect smoke did not complete all three inbounds")
         return pid
     finally:
         if started:
@@ -967,6 +1063,58 @@ def verify_stopped_ports():
     raise RuntimeError("managed Core ports stayed open after stop")
 
 
+
+# A strict allow-list: never emit exception strings or daemon output, even
+# when a Python or CLI error unexpectedly contains URLs, headers or tokens.
+AIRGAP_FAILURE_CODES = {
+    "managed Daemon readiness timed out": "daemon-readiness",
+    "managed Core never reached expected state": "core-state-timeout",
+    "short lifecycle experiment began with Core running": "unexpected-core-running",
+    "short lifecycle traffic unexpectedly replaced running Core": "core-identity-drift",
+    "Daemon FD count drifted during short lifecycle smoke": "daemon-fd-drift",
+    "managed Core ports stayed open after stop": "proxy-listener-open",
+    "held sessions changed route count during stop": "held-route-drift",
+    "held Rule/Direct used Selected node or Selected bypassed it": "held-route-bypass",
+    "Core changed while test clients were establishing held sessions":
+        "held-core-identity-drift",
+    "stopped Core still relayed data on a held SOCKS5 connection":
+        "held-stream-not-closed",
+    "parallel Selected refusal unexpectedly restarted Core":
+        "parallel-core-restart",
+    "short lifecycle restart lost declaration head": "declaration-drift",
+    "missing lifecycle FD samples": "missing-fd-samples",
+    "invalid lifecycle diagnostic hook": "invalid-stage-hook",
+    "invalid crash diagnostic hook": "invalid-crash-stage-hook",
+    "managed Daemon reopened Core without stopped intent":
+        "daemon-implicit-core-start",
+    "Core PID or generation drifted before opening held crash tunnels":
+        "crash-held-stale-pid",
+    "held crash tunnel crossed Selected or skipped its node":
+        "crash-held-route-bypass",
+    "Core identity drifted while crash tunnels were established":
+        "crash-held-pid-drift",
+    "held crash, recovery or Selected route changed the audit":
+        "crash-held-node-drift",
+    "promoted managed Core failed to restart after one crash":
+        "crash-restart-timeout",
+    "new Core PID lacks supervised failure accounting":
+        "crash-missing-failure-count",
+    "stale Core PID before fault injection; refuse signal":
+        "crash-stale-pid-refused",
+    "managed Core PID changed after pidfd open; refuse signal":
+        "crash-pidfd-drift-refused",
+    "recovered promoted Core restarted after Selected failure":
+        "crash-selected-restarted",
+}
+
+
+def safe_airgap_failure_code(exc):
+    """Sanitize diagnostic root cause: fixed labels only, never str(exc)."""
+    if type(exc) is not RuntimeError:
+        return "unclassified"
+    return AIRGAP_FAILURE_CODES.get(str(exc), "unclassified")
+
+
 def run_daemon(app, core, root, env, work):
     logfile = root / "managed-applied.log"
     with logfile.open("ab") as logs:
@@ -981,11 +1129,26 @@ def run_daemon(app, core, root, env, work):
                 try:
                     current = json.loads(boot.checked(
                         [app, "status", "--json"], env, timeout=3))
-                    if current.get("core_configured") is True:
-                        break
                 except (OSError, RuntimeError, ValueError,
                         subprocess.SubprocessError):
-                    pass
+                    time.sleep(0.12)
+                    continue
+                if current.get("core_configured") is True:
+                    # Every native run_daemon call opens an already-stopped
+                    # Core, including the first fresh private SQLite. A
+                    # configured flag alone can precede journal replay and
+                    # stable stop status. Never pass a transitional snapshot
+                    # to a strict generation/PID audit callback.
+                    require(current.get("core_desired_state") != "running" and
+                            current.get("core_state") != "running",
+                            "managed Daemon reopened Core without stopped intent")
+                    if (current.get("core_desired_state") == "stopped" and
+                            current.get("core_state") == "stopped" and
+                            current.get("core_pid") in (None, 0) and
+                            current.get("recovery_required") is False and
+                            current.get("core_circuit_open") in (None, False) and
+                            current.get("active_operation") in (None, "")):
+                        break
                 time.sleep(0.12)
             else:
                 raise RuntimeError("managed Daemon readiness timed out")
@@ -1154,6 +1317,8 @@ def main(argv=None):
                                 "successfully applied generation was not persisted")
 
                         def promoted_restart(daemon, sock, initial):
+                            nonlocal phase
+                            phase = "crash-initial-check"
                             assert_promoted_core(initial, generation,
                                                  promoted_generation, None, False)
                             require(unix_json(
@@ -1162,13 +1327,16 @@ def main(argv=None):
                                 "new applied generation lost its declaration on restart")
                             cold.configured_caps(unix_json(
                                 sock, "GET", "/v1/capabilities"))
+                            phase = "crash-core-start"
                             boot.checked([args.app, "core", "start"], env, timeout=22)
                             running = wait_status(args.app, env, "running")
                             new_pid = assert_promoted_core(
                                 running, generation, promoted_generation, None, True)
                             verify_child(new_pid, daemon.pid, args.core)
+                            phase = "crash-initial-routes"
                             probe_isolated_routes(echo.server_address[1],
                                                   b"promoted-restart-", node)
+                            phase = "crash-initial-selected-refusal"
                             probe_isolated_failure(echo.server_address[1],
                                                    b"failed-promoted-restart-", node)
                             require(assert_promoted_core(
@@ -1176,12 +1344,19 @@ def main(argv=None):
                                 generation, promoted_generation, None, True)
                                 == new_pid,
                                 "persisted promoted Core restarted unexpectedly")
+                            phase = "crash-initial-selected-restored"
                             probe_isolated_routes(echo.server_address[1],
                                                   b"restored-promoted-restart-", node)
+                            def crash_stage(label):
+                                nonlocal phase
+                                phase = label  # Only fixed internal test labels.
+                            phase = "crash-held-entry"
                             probe_held_crash_recovery(
                                 sock, daemon.pid, args.core,
                                 generation, promoted_generation, new_pid,
-                                echo.server_address[1], node)
+                                echo.server_address[1], node,
+                                stage_hook=crash_stage)
+                            phase = "crash-explicit-stop"
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
                             assert_promoted_core(
@@ -1189,6 +1364,7 @@ def main(argv=None):
                             verify_stopped_ports()
                             # A stopped desired state must win over any pending
                             # retry after the one deliberately injected crash.
+                            phase = "crash-stopped-intent-check"
                             time.sleep(2.2)
                             assert_promoted_core(
                                 unix_json(sock, "GET", "/v1/status"),
@@ -1217,16 +1393,24 @@ def main(argv=None):
                                 "crash/restart recovery crossed or bypassed routes")
 
                         def bounded_lifecycle(daemon, sock, initial):
+                            nonlocal phase
+                            phase = "held-lifecycle-entry"
                             assert_promoted_core(initial, generation,
                                                  promoted_generation, None, False)
                             require(unix_json(
                                 sock, "GET", "/v1/declaration/current").get("sha256")
                                 == staged_sha,
                                 "short lifecycle changed the declaration head")
+                            def diagnostic_stage(label):
+                                nonlocal phase
+                                # Only fixed, test-generated stage labels are
+                                # reported; never exception text or daemon logs.
+                                phase = label
                             return probe_bounded_lifecycle_cycles(
                                 args.app, env, sock, daemon.pid, args.core,
                                 generation, promoted_generation,
-                                echo.server_address[1], node)
+                                echo.server_address[1], node,
+                                stage_hook=diagnostic_stage)
 
                         phase = "held-session-lifecycle"
                         counts = run_daemon(args.app, args.core, root, env,
@@ -1267,7 +1451,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 27 and node.rejections >= 11 and
+                        require(node.calls == 51 and node.rejections >= 11 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -1288,6 +1472,8 @@ def main(argv=None):
         print("T25_AIRGAP_HELD_SESSIONS_STOPPED=ok")
         print("T25_AIRGAP_HELD_STOP_RESTART=ok")
         print("T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok")
+        print("T20_AIRGAP_BOUNDED_RECONNECT_FD=ok")
+        print("T20_1000_RECONNECTS_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
@@ -1298,6 +1484,8 @@ def main(argv=None):
         # arbitrary exception strings, and runtime config must stay private.
         print("T24_AIRGAP_FAILURE_PHASE=" + phase, file=sys.stderr)
         print("T24_AIRGAP_FAILURE_CLASS=" + type(exc).__name__, file=sys.stderr)
+        print("T24_AIRGAP_FAILURE_CODE=" +
+              safe_airgap_failure_code(exc), file=sys.stderr)
         print("T24_AIRGAP_DAEMON_COMMITTED_CORE_LOOPBACK=refused",
               file=sys.stderr)
         return 1

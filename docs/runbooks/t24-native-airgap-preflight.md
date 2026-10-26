@@ -81,3 +81,21 @@ The fourth independent network-none native Core smoke on each architecture must 
 
 A failure before the crash must not signal any process; any failure closes all opened test sockets. Full native success adds `T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok`. This is not zero-drop TCP, long-run soak, CN routing, actual host power loss, credential restore or permission to release distributable offline assets.
 
+
+### ADR 0161: bounded 72-stream reconnect and procfs FD settle
+
+In the sixth real Daemon after explicit Core start and Selected failure/recovery, perform 24 rounds of three complete numeric localhost SOCKS5 echo reconnects, closing each stream before the next. Verify exactly 24 additional Selected hops, no new denial or changed parallel payload tags, and unchanged real Daemon Core PID/Applied=LKG every eight rounds. Read only the pinned same-UID child Core and Daemon `/proc/<pid>/fd` baselines and final values. Allow no more than four seconds for Daemon ≤ baseline+16 and Core ≤ baseline+24; never accept empty/invalid or ≥1024 values. The existing unconditional explicit-stop cleanup must still run on failure.
+
+A successful native amd64 **and** arm64 Core provenance run prints `T20_AIRGAP_BOUNDED_RECONNECT_FD=ok`, `T20_1000_RECONNECTS_VERIFIED=false`, and `T25_72H_7D_30D_SOAK_VERIFIED=false`. This early smoke is not the 1,000 reconnect or long soak performance/resource/SLA experiment, nor a CN licensed offline, remote DNS, physical power loss, rollback or production restore claim.
+
+
+
+### ADR 0161 amd64 lifecycle failure isolation
+
+One pre-rebase linux-amd64 native fourth-container run failed at the coarse `held-session-lifecycle` phase (before ADR 0161 reconnects); arm64 native and ordinary checks passed. The rerun must use the **new exact-head commit** after rebasing ADR 0161 onto merged ADR 0160. The test now records only hardcoded `held-lifecycle-preflight`, `held-lifecycle-cycle-{0,1,2}-{start,routes,stop,stopped-audit}`, `held-lifecycle-cycle-1-selected-refusal`, `held-lifecycle-cycle-2-parallel`, and `held-lifecycle-fd-budget` as sanitized CI failure phases. These are fail-closed diagnosis checkpoints, not retries, timeouts or skipped checks. Preserve failure status and investigate any recurring phase before merge.
+
+
+On failure the native harness may now additionally print `T24_AIRGAP_FAILURE_CODE` from a strict fixed whitelist (e.g. `daemon-fd-drift`, `held-stream-not-closed`); `unclassified` is the safe fallback. Do **not** copy or forward temporary Daemon logs, exception messages, private network addresses or tokens into CI output. Keep the exact-head CI failure status until the issue is resolved.
+
+
+Native-readiness correction: `core_configured=true` is not sufficient to call a restart/lifecycle callback. The preexisting bounded 20-second Daemon startup poll must first observe *durable stopped intent* and *actual stopped state* with PID 0/null, no pending operation, recovery requirement or circuit breaker. An unexpected running/auto-started Core aborts immediately. Ordinary transitional snapshots continue within the **same** readiness deadline; this does not waive a failed route, echo or FD check, nor change the release gates. A Python regression verifies transient configured snapshots cannot reach the callback.

@@ -498,3 +498,10 @@ The sixth real native amd64/arm64 network-none Daemon session must begin from th
 - **Safety regression:** verify exact PID/generation before and after opening sockets; no SIGKILL on PID drift, invalid fixture, route crossing or stale ownership. Resource cleanup is unconditional, and a still-live old tunnel fails verification. Native amd64/arm64 fourth network-none containers print `T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok` only after all predicates.
 - **Unverified:** survival of old TCP sessions, remote networks/DNS/CN multi-layer SRS, independent physical power loss, production restoration and 72h/7d/30d soak. All T15/T23/T24/T25 final release and Restore/GC gates remain OPEN; no TUN or subscription/ISP diversion layer.
 
+
+### M5 / ADR 0161 — bounded reconnect and process FD early guard
+
+- Reuse the existing sixth native Daemon after an operator-approved explicit Core restart. Run 24 sets of exact 127.0.0.1 Rule/Direct/Selected SOCKS5 TCP echo reconnects (72 fresh streams); each set requires exactly one Selected node relay and unchanged approved Core PID/Applied=LKG, rechecked every eight sets.
+- Bound procfs FD settle to four seconds: both Daemon and verified same-UID direct-child pinned Core FD counts must remain below 1024, Daemon ≤ baseline+16, Core ≤ baseline+24. No privileged new process control or network access; fail-closed on wrong path, unapproved restart, drift or malformed samples.
+- `T20_AIRGAP_BOUNDED_RECONNECT_FD=ok` is only an early functional/stability signal; `T20_1000_RECONNECTS_VERIFIED=false`, `T25_72H_7D_30D_SOAK_VERIFIED=false`, and full T20/T25, licensed offline CN routing, long-term memory/goroutine/SLA, restore and release gates remain unmet.
+
