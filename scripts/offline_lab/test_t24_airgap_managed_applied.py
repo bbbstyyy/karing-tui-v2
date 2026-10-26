@@ -530,9 +530,16 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 with mock.patch.object(applied, "probe_supervised_crash_recovery",
                                        side_effect=crash) as kill:
                     with mock.patch.object(applied, "assert_held_session_closed") as eof:
+                        stages = []
                         result = applied.probe_held_crash_recovery(
                             "/daemon.sock", 100, "/approved-core",
-                            5, 9, 222, 41001, node)
+                            5, 9, 222, 41001, node, stage_hook=stages.append)
+        self.assertEqual(stages, [
+            "crash-held-preflight", "crash-held-open-2080",
+            "crash-held-open-2081", "crash-held-open-2082",
+            "crash-held-pid-check", "crash-held-supervised-recovery",
+            "crash-held-sockets-closed", "crash-held-node-audit",
+        ])
         self.assertEqual(result, 333)
         self.assertEqual(api.call_count, 2)
         self.assertEqual(opened_call.call_count, 3)
@@ -541,6 +548,18 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                          [mock.call(conn) for conn in opened])
         self.assertTrue(all(conn.closed for conn in opened))
         self.assertEqual((node.calls, node.rejections), (8, 4))
+
+    def test_invalid_crash_diagnostic_hook_never_contacts_core(self):
+        with mock.patch.object(applied, "unix_json") as api:
+            with mock.patch.object(applied, "open_held_socks_echo") as dial:
+                with mock.patch.object(applied, "probe_supervised_crash_recovery") as kill:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_held_crash_recovery(
+                            "/daemon.sock", 100, "/approved-core",
+                            5, 9, 222, 41001, object(), stage_hook="unsafe")
+                    api.assert_not_called()
+                    dial.assert_not_called()
+                    kill.assert_not_called()
 
     def test_held_crash_fails_closed_before_signal_on_drift_or_bypass(self):
         class Node:
@@ -776,9 +795,29 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                                 with mock.patch.object(
                                                     applied, "stop_core_with_held_tunnels",
                                                     side_effect=stop_held) as held:
+                                                    stages = []
                                                     samples = applied.probe_bounded_lifecycle_cycles(
                                                         "/app", {}, "/daemon.sock", 100,
-                                                        "/approved-core", 5, 9, 41001, node)
+                                                        "/approved-core", 5, 9, 41001, node,
+                                                        stage_hook=stages.append)
+        self.assertEqual(stages, [
+            "held-lifecycle-preflight",
+            "held-lifecycle-cycle-0-start",
+            "held-lifecycle-cycle-0-routes",
+            "held-lifecycle-cycle-0-stop",
+            "held-lifecycle-cycle-0-stopped-audit",
+            "held-lifecycle-cycle-1-start",
+            "held-lifecycle-cycle-1-routes",
+            "held-lifecycle-cycle-1-selected-refusal",
+            "held-lifecycle-cycle-1-stop",
+            "held-lifecycle-cycle-1-stopped-audit",
+            "held-lifecycle-cycle-2-start",
+            "held-lifecycle-cycle-2-routes",
+            "held-lifecycle-cycle-2-parallel",
+            "held-lifecycle-cycle-2-stop",
+            "held-lifecycle-cycle-2-stopped-audit",
+            "held-lifecycle-fd-budget",
+        ])
         held.assert_called_once_with(
             "/app", {}, "/daemon.sock", 41001, node, 5, 9, 403)
         self.assertEqual(parallel.call_args_list, [
@@ -814,6 +853,114 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                             5, 9, 41001, object())
                     command.assert_not_called()
                     fds.assert_not_called()
+
+
+    def test_native_failure_codes_are_strict_allow_list_without_secrets(self):
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("Daemon FD count drifted during short lifecycle smoke")),
+            "daemon-fd-drift")
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("managed Core ports stayed open after stop")),
+            "proxy-listener-open")
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("stopped Core still relayed data on a held SOCKS5 connection")),
+            "held-stream-not-closed")
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("held crash tunnel crossed Selected or skipped its node")),
+            "crash-held-route-bypass")
+        for unsafe in (
+            RuntimeError("token=secret-danger HTTP://upstream/private"),
+            RuntimeError("held-session secret \n malicious-looking-label"),
+            ValueError("managed Core ports stayed open after stop"),
+            OSError("Daemon FD count drifted during short lifecycle smoke"),
+            RuntimeError(""),
+        ):
+            with self.subTest(exception=type(unsafe).__name__):
+                self.assertEqual(
+                    applied.safe_airgap_failure_code(unsafe), "unclassified")
+        self.assertTrue(all(
+            isinstance(code, str) and code.isascii() and
+            code.replace("-", "").islower()
+            for code in applied.AIRGAP_FAILURE_CODES.values()))
+
+
+    def test_run_daemon_waits_for_stable_stopped_status_not_just_configured(self):
+        stable = {
+            "api_version": "v1", "core_configured": True,
+            "core_desired_state": "stopped", "core_state": "stopped",
+            "core_pid": 0, "recovery_required": False,
+            "core_circuit_open": False, "active_operation": "",
+        }
+        transient = [
+            dict(stable, core_state="starting"),
+            dict(stable, core_pid=31337),
+            dict(stable, recovery_required=True),
+            dict(stable, active_operation="declaration-apply"),
+            stable,
+        ]
+        with tempfile.TemporaryDirectory() as dirname:
+            root = Path(dirname)
+            env = {"XDG_RUNTIME_DIR": dirname}
+            proc = mock.Mock(pid=100)
+            proc.poll.return_value = None
+            proc.wait.return_value = 0
+            seen = []
+            def work(process, sock, initial):
+                self.assertIs(process, proc)
+                self.assertEqual(sock, root / "karing-tui-v2" / "daemon.sock")
+                seen.append(initial)
+                return "ready"
+            with mock.patch.object(applied.subprocess, "Popen",
+                                   return_value=proc) as popen:
+                with mock.patch.object(applied.boot, "checked",
+                                       side_effect=[json.dumps(s) for s in transient]) as cli:
+                    with mock.patch.object(applied.time, "sleep") as sleep:
+                        self.assertEqual(applied.run_daemon(
+                            "/app", "/core", root, env, work), "ready")
+            self.assertEqual(seen, [stable])
+            self.assertEqual(cli.call_count, 5)
+            self.assertEqual(sleep.call_count, 4)
+            self.assertEqual(popen.call_count, 1)
+            proc.send_signal.assert_called_once_with(applied.signal.SIGTERM)
+            proc.wait.assert_called_once_with(timeout=15)
+
+    def test_run_daemon_never_accepts_implicit_running_core(self):
+        bad = {
+            "api_version": "v1", "core_configured": True,
+            "core_desired_state": "running", "core_state": "running",
+            "core_pid": 31337, "recovery_required": False,
+            "core_circuit_open": False, "active_operation": "",
+        }
+        with tempfile.TemporaryDirectory() as dirname:
+            root = Path(dirname)
+            env = {"XDG_RUNTIME_DIR": dirname}
+            proc = mock.Mock(pid=100)
+            proc.poll.return_value = None
+            proc.wait.return_value = 0
+            with mock.patch.object(applied.subprocess, "Popen", return_value=proc):
+                with mock.patch.object(applied.boot, "checked",
+                                       return_value=json.dumps(bad)) as cli:
+                    with mock.patch.object(applied.time, "sleep") as sleep:
+                        with self.assertRaises(RuntimeError):
+                            applied.run_daemon(
+                                "/app", "/core", root, env,
+                                lambda *_args: self.fail("unexpected callback"))
+            cli.assert_called_once()
+            sleep.assert_not_called()
+            proc.send_signal.assert_called_once_with(applied.signal.SIGTERM)
+            self.assertEqual(applied.safe_airgap_failure_code(
+                RuntimeError("managed Daemon reopened Core without stopped intent")),
+                "daemon-implicit-core-start")
+
+    def test_short_lifecycle_rejects_invalid_diagnostic_hook_without_start(self):
+        with mock.patch.object(applied, "unix_json") as api:
+            with mock.patch.object(applied.boot, "checked") as cli:
+                with self.assertRaises(RuntimeError):
+                    applied.probe_bounded_lifecycle_cycles(
+                        "/app", {}, "/daemon.sock", 100, "/approved-core",
+                        5, 9, 41001, object(), stage_hook="unsafe")
+                api.assert_not_called()
+                cli.assert_not_called()
 
     def test_six_parallel_workers_prove_selected_only_and_distinct_echoes(self):
         class Node:
@@ -1309,7 +1456,9 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                                side_effect=routes) as probe:
                             with mock.patch.object(applied, "probe_isolated_failure",
                                                    side_effect=refusal) as denied:
-                                with mock.patch.object(applied, "verify_stopped_ports") as closed:
+                                with (mock.patch.object(applied, "verify_stopped_ports") as closed,
+                                      mock.patch.object(applied, "probe_bounded_reconnect_churn",
+                                                        return_value=72) as churn):
                                     pid = applied.probe_restart_after_held_stop(
                                         "/app", {}, "/daemon.sock", 100,
                                         "/approved-core", 5, 9,
@@ -1318,6 +1467,9 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         self.assertEqual(commands, ["start", "stop"])
         self.assertEqual(cli.call_count, 2)
         verify.assert_called_once_with(222, 100, "/approved-core")
+        churn.assert_called_once_with(
+            "/daemon.sock", 100, "/approved-core", 5, 9,
+            222, 41001, node)
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
         self.assertEqual(payloads, [
@@ -1401,6 +1553,118 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         self.assertEqual(actions, ["start", "stop"])
         self.assertFalse(state["running"])
         self.assertEqual(closed.call_count, 2)
+
+
+    def test_bounded_reconnect_three_inbounds_and_owned_fd_settle(self):
+        class Node:
+            calls = 5
+            rejections = 2
+            parallel_payloads = []
+            failed = False
+            reject_connections = False
+
+        node = Node()
+        payloads = []
+        def routes(echo_port, prefix, target):
+            self.assertEqual((echo_port, target), (41001, node))
+            payloads.append(prefix)
+            node.calls += 1
+
+        with mock.patch.object(applied, "unix_json",
+                               return_value=self.promoted_status(pid=222)) as api:
+            with mock.patch.object(applied, "verify_child") as child:
+                # Daemon before, pinned Core before, Daemon after, Core after.
+                with mock.patch.object(applied, "daemon_fd_count",
+                                       side_effect=[12, 18, 15, 20]) as fd:
+                    with mock.patch.object(applied, "probe_isolated_routes",
+                                           side_effect=routes) as probe:
+                        total = applied.probe_bounded_reconnect_churn(
+                            "/daemon.sock", 100, "/approved-core",
+                            5, 9, 222, 41001, node, cycles=3)
+        self.assertEqual(total, 9)
+        self.assertEqual(payloads,
+                         [b"reconnect-00-", b"reconnect-01-", b"reconnect-02-"])
+        self.assertEqual((node.calls, node.rejections), (8, 2))
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(probe.call_count, 3)
+        self.assertEqual(fd.call_args_list, [
+            mock.call(100), mock.call(222), mock.call(100), mock.call(222)])
+        self.assertEqual(child.call_args_list, [
+            mock.call(222, 100, "/approved-core"),
+            mock.call(222, 100, "/approved-core")])
+
+    def test_reconnect_fd_budget_requires_bounded_numeric_samples(self):
+        self.assertTrue(applied.reconnect_fd_budget(12, 20, 28, 44))
+        self.assertTrue(applied.reconnect_fd_budget(12, 20, 8, 19))
+        self.assertFalse(applied.reconnect_fd_budget(12, 20, 29, 44))
+        self.assertFalse(applied.reconnect_fd_budget(12, 20, 28, 45))
+        for samples in ((True, 20, 28, 44), (0, 20, 28, 44),
+                        (12, -1, 28, 44), (12, 20, 1024, 44),
+                        (12, 20, 28, 2.3)):
+            with self.subTest(samples=samples):
+                with self.assertRaises(RuntimeError):
+                    applied.reconnect_fd_budget(*samples)
+
+    def test_reconnect_churn_refuses_pid_drift_selected_bypass_and_fd_leak(self):
+        class Node:
+            calls = 0
+            rejections = 0
+            parallel_payloads = []
+            failed = False
+            reject_connections = False
+
+        arguments = ("/daemon.sock", 100, "/approved-core",
+                     5, 9, 222, 41001)
+        for cycles in (0, -1, 25, True, 1.5):
+            with self.subTest(invalid_cycles=cycles):
+                with mock.patch.object(applied, "unix_json") as api:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_bounded_reconnect_churn(
+                            *arguments, Node(), cycles=cycles)
+                    api.assert_not_called()
+
+        for unhealthy in ("failed", "reject_connections"):
+            node = Node()
+            setattr(node, unhealthy, True)
+            with mock.patch.object(applied, "unix_json") as api:
+                with self.assertRaises(RuntimeError):
+                    applied.probe_bounded_reconnect_churn(
+                        *arguments, node, cycles=1)
+                api.assert_not_called()
+
+        good = self.promoted_status(pid=222)
+        drifted = self.promoted_status(pid=333)
+        for defect in ("stale-start", "mid-churn-pid", "selected-bypass",
+                       "unexpected-refusal", "core-fd-leak"):
+            with self.subTest(defect=defect):
+                node = Node()
+                def routes(_echo, _prefix, target):
+                    self.assertIs(target, node)
+                    if defect != "selected-bypass":
+                        node.calls += 1
+                    if defect == "unexpected-refusal":
+                        node.rejections += 1
+                statuses = ([drifted] if defect == "stale-start"
+                            else [good, drifted] if defect == "mid-churn-pid"
+                            else [good, good])
+                with mock.patch.object(applied, "unix_json",
+                                       side_effect=statuses):
+                    with mock.patch.object(applied, "verify_child"):
+                        fd_counts = ([12, 20, 50, 60]
+                                     if defect == "core-fd-leak"
+                                     else [12, 20, 12, 20])
+                        with mock.patch.object(applied, "daemon_fd_count",
+                                               side_effect=fd_counts) as fd:
+                            with mock.patch.object(applied, "probe_isolated_routes",
+                                                   side_effect=routes) as probe:
+                                with mock.patch.object(applied.time, "monotonic",
+                                                       side_effect=[0, 5]):
+                                    with self.assertRaises(RuntimeError):
+                                        applied.probe_bounded_reconnect_churn(
+                                            *arguments, node, cycles=1)
+                if defect == "stale-start":
+                    fd.assert_not_called()
+                    probe.assert_not_called()
 
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):

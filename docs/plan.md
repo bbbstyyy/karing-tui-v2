@@ -1728,3 +1728,10 @@ docs/
 - 用原有同 UID、直接子进程、`/proc` 可执行文件及 pidfd 的验证杀死**当前批准的 Core**，等待现有 supervisor 从同一 Applied/LKG 恢复新的真实 PID，再复测三入口健康、Selected fail-closed 和恢复。即便新监听端口已经健康，仍要求**三个旧 socket 分别在有限时间内 EOF/abort/reset**；失败时通过 ExitStack 无条件关闭所有测试 socket，不允许将持续转发的旧连接误算成成功。独立 Python 模拟回归覆盖错误 PID、建立过程中 PID 漂移、Rule→Selected 旁路、Core 恢复失败和旧 socket 未断开。
 - 全成功增加 `T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok`，永远保留 `T25_72H_7D_30D_SOAK_VERIFIED=false`；无新镜像、网络权限、TUN、CN 规则包或外网资源。**只验证单次同机禁网 localhost Core 崩溃和客户端断开，不是用户端的无损连接恢复、真实 DNS/远端代理、离线规则许可证、VM 物理断电、两次故障回滚、72h/7d/30d soak 或正式发行验收。** T15/T23/T24/T25、`core_distribution=false`、`cn_preset_offline_bundle=false`、Restore/GC、稳定 `main` 和外层 Draft PR #1 仍 OPEN。
 
+
+### 2026-10-26 — M5 ADR 0161 原生受控三入口重连与双进程 FD 回落前置试验（T20/T25 未验收）
+
+- 在 ADR 0160 的同一第四个双架构 `docker --network none` 隔离容器中，等待第六次 Daemon 显式启动且原有 Selected 故障/恢复通过后，固定新 Core PID、config/declaration revision 2 与 Applied=LKG generation 2。以完整 SOCKS5 CONNECT+本地 echo+关闭的 Rule/Direct/Selected 三入口为一组执行 **24 组、共 72 条新 TCP 连接**，每组仅 Selected 增加一次真实合成上游 CONNECT，不能旁路；每八组重查 Daemon 真实状态/PID。
+- 在重连前和结束后读取**已核准同 UID Core 子进程**和 Daemon 自身 `/proc/<pid>/fd` 数量，允许至多 4 秒有限回落，限制 Daemon ≤ 基线+16、Core ≤ 基线+24、计数有效且均小于 1024；这是短时 FD 粗粒度漂移预警，不等同无泄漏证明、真实用户吞吐或延迟 SLA。任一回显、路由、PID、代际或 FD 校验失败，仍由现有 `finally` 显式 stop 并核查无监听/持久停止意图。Python 无网络回归覆盖计数非法值、状态漂移、Selected 旁路与回落失败。
+- 双原生通过才额外打印 `T20_AIRGAP_BOUNDED_RECONNECT_FD=ok`，永远明确 `T20_1000_RECONNECTS_VERIFIED=false` 及 `T25_72H_7D_30D_SOAK_VERIFIED=false`。未实现全量 T20 千次重连、长时 goroutine/内存曲线、真实 DNS/远端节点、CN 五层及 28 组、完整合法离线包、掉电/双回滚或 72h/7d/30d。T15/T23/T24/T25/Restore/GC/正式发行门槛保持 OPEN，不引入 TUN/订阅-ISP 分流层或改变 stable `main`。
+
