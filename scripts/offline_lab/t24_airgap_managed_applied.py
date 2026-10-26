@@ -309,6 +309,83 @@ def promote_staged_generation(sock, app, env, daemon_pid, core_path,
     return generation, pid
 
 
+def wait_restarted_promoted_core(sock, generation, promoted_generation,
+                                 dead_pid, timeout=25):
+    """Watch a single recorded crash; never treat a transient old PID as recovery."""
+    require(type(dead_pid) is int and dead_pid > 0 and
+            type(timeout) is int and 0 < timeout <= 30,
+            "unbounded or invalid managed crash-restart wait")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        current = unix_json(sock, "GET", "/v1/status", timeout=5)
+        require(current.get("core_circuit_open") is False and
+                current.get("recovery_required") is False,
+                "managed Core opened circuit or required recovery after one crash")
+        require(current.get("config_revision") == 2 and
+                current.get("declaration_revision") == 2 and
+                current.get("applied_generation_id") == promoted_generation and
+                current.get("last_known_good_generation_id") == promoted_generation and
+                current.get("core_desired_state") == "running",
+                "crash reset applied generation/LKG/revision or running intent")
+        pid = current.get("core_pid")
+        if (current.get("core_state") == "running" and
+                type(pid) is int and pid > 0 and pid != dead_pid):
+            recovered = assert_promoted_core(
+                current, generation, promoted_generation, dead_pid, True)
+            require(recovered == pid and
+                    type(current.get("core_consecutive_failures")) is int and
+                    current["core_consecutive_failures"] >= 1,
+                    "new Core PID lacks supervised failure accounting")
+            return pid
+        time.sleep(0.15)
+    raise RuntimeError("promoted managed Core failed to restart after one crash")
+
+
+def probe_supervised_crash_recovery(sock, daemon_pid, core_path,
+                                    old_generation, promoted_generation,
+                                    running_pid, echo_port, node):
+    """SIGKILL only the exact pinned same-UID daemon child, using a pidfd."""
+    require(type(running_pid) is int and running_pid > 1 and
+            type(daemon_pid) is int and daemon_pid > 1 and
+            running_pid != daemon_pid,
+            "unsafe Core crash injection PID")
+    before_pid = assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True)
+    require(before_pid == running_pid,
+            "stale Core PID before fault injection; refuse signal")
+    require(hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"),
+            "kernel/Python pidfd signaling unavailable; refuse unsafe PID kill")
+    pidfd = os.pidfd_open(running_pid)
+    try:
+        verify_child(running_pid, daemon_pid, core_path)
+        # A pidfd prevents PID reuse, but must still be bound to the *current*
+        # managed generation. Recheck the actual daemon status after opening.
+        sampled_pid = assert_promoted_core(
+            unix_json(sock, "GET", "/v1/status"),
+            old_generation, promoted_generation, None, True)
+        require(sampled_pid == running_pid,
+                "managed Core PID changed after pidfd open; refuse signal")
+        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+    finally:
+        os.close(pidfd)
+    restarted_pid = wait_restarted_promoted_core(
+        sock, old_generation, promoted_generation, running_pid)
+    verify_child(restarted_pid, daemon_pid, core_path)
+    probe_isolated_routes(echo_port, b"promoted-crash-recovered-", node)
+    probe_isolated_failure(echo_port, b"failed-after-crash-", node)
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, running_pid, True) == restarted_pid,
+        "recovered promoted Core restarted after Selected failure")
+    probe_isolated_routes(echo_port, b"restored-after-crash-", node)
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, running_pid, True) == restarted_pid,
+        "recovered Core PID changed during healthy forwarding")
+    return restarted_pid
+
+
 def exact_read(sock, n):
     return loopback.exact_read(sock, n)
 
@@ -702,16 +779,41 @@ def main(argv=None):
                                 "persisted promoted Core restarted unexpectedly")
                             probe_isolated_routes(echo.server_address[1],
                                                   b"restored-promoted-restart-", node)
+                            probe_supervised_crash_recovery(
+                                sock, daemon.pid, args.core,
+                                generation, promoted_generation, new_pid,
+                                echo.server_address[1], node)
                             boot.checked([args.app, "core", "stop"], env, timeout=20)
                             stopped = wait_status(args.app, env, "stopped")
                             assert_promoted_core(
                                 stopped, generation, promoted_generation, None, False)
                             verify_stopped_ports()
+                            # A stopped desired state must win over any pending
+                            # retry after the one deliberately injected crash.
+                            time.sleep(2.2)
+                            assert_promoted_core(
+                                unix_json(sock, "GET", "/v1/status"),
+                                generation, promoted_generation, None, False)
+                            verify_stopped_ports()
 
                         run_daemon(args.app, args.core, root, env, promoted_restart)
-                        require(node.calls == 9 and node.rejections >= 4 and
+
+                        def after_crash_stop(daemon, sock, initial):
+                            assert_promoted_core(
+                                initial, generation, promoted_generation, None, False)
+                            require(unix_json(
+                                sock, "GET", "/v1/declaration/current").get("sha256")
+                                == staged_sha,
+                                "post-crash stop lost promoted declaration digest")
+                            verify_stopped_ports()
+                            return True
+
+                        require(run_daemon(args.app, args.core, root, env,
+                                           after_crash_stop) is True,
+                                "post-crash stopped Daemon restart failed")
+                        require(node.calls == 11 and node.rejections >= 5 and
                                 not node.reject_connections and not node.failed,
-                                "real generation handoff or three-entry routes drifted")
+                                "crash/restart recovery crossed or bypassed routes")
                         cold.hash_pinned_core(core, args.core_sha256)
                     finally:
                         node.shutdown()
@@ -722,6 +824,7 @@ def main(argv=None):
         print("T24_AIRGAP_SELECTED_NODE_FAILURE_ISOLATED=ok")
         print("T24_AIRGAP_STAGED_REVISION_CAS_ISOLATED=ok")
         print("T24_AIRGAP_LIVE_GENERATION_HANDOFF=ok")
+        print("T24_AIRGAP_PROMOTED_CRASH_RECOVERY=ok")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
         return 0

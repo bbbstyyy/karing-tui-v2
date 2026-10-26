@@ -282,6 +282,20 @@ func TestManagedCoreRealIntegration(t *testing.T) {
 	if restarted.ConsecutiveFails == 0 {
 		t.Fatalf("unexpected restart snapshot without recorded failure: %+v", restarted)
 	}
+	// A supervisor process restart must not modify the durable applied
+	// generation, LKG, running intent, or start an uncommitted apply attempt.
+	snapshot, err = store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != 1 || snapshot.AppliedGenerationID == nil ||
+		*snapshot.AppliedGenerationID != firstAttempt.GenerationID ||
+		snapshot.LastKnownGoodGenerationID == nil ||
+		*snapshot.LastKnownGoodGenerationID != firstAttempt.GenerationID ||
+		snapshot.CoreDesiredState != storage.CoreDesiredRunning ||
+		snapshot.RecoveryRequired || snapshot.ActiveAttemptID != nil {
+		t.Fatalf("supervised crash restart changed durable confirmed generation: %+v", snapshot)
+	}
 
 	badConfig := []byte(`{"inbounds":[{"type":"definitely-invalid"}]}`)
 	badCtx, badCancel := context.WithTimeout(context.Background(), 20*time.Second)

@@ -389,6 +389,175 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                 5, 123, stage_sha, config_sha, 41001, object())
                         wait.assert_not_called()
 
+    def promoted_status(self, pid=222, failures=0):
+        status = self.status("running", True)
+        status.update({
+            "config_revision": 2, "declaration_revision": 2,
+            "applied_generation_id": 9, "last_known_good_generation_id": 9,
+            "core_pid": pid, "active_operation": "",
+            "core_consecutive_failures": failures,
+        })
+        return status
+
+    def test_crash_watch_rejects_old_pid_and_requires_supervised_new_child(self):
+        backoff = self.promoted_status(pid=0)
+        backoff["core_state"] = "backoff"
+        old_running = self.promoted_status(pid=222)
+        recovered = self.promoted_status(pid=333, failures=1)
+        with mock.patch.object(applied, "unix_json",
+                               side_effect=[backoff, old_running, recovered]) as api:
+            with mock.patch.object(applied.time, "sleep") as sleep:
+                self.assertEqual(
+                    applied.wait_restarted_promoted_core(
+                        "/daemon.sock", 5, 9, 222, timeout=5), 333)
+        self.assertEqual(api.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+        for field, change in (
+            ("same-pid", {"core_pid": 222}),
+            ("unrecorded-failure", {"core_consecutive_failures": 0}),
+            ("old-declaration", {"declaration_revision": 1}),
+            ("old-config", {"config_revision": 1}),
+            ("wrong-LKG", {"last_known_good_generation_id": 5}),
+            ("wrong-applied", {"applied_generation_id": 5}),
+            ("operator-stopped", {"core_desired_state": "stopped"}),
+            ("recovery-required", {"recovery_required": True}),
+            ("circuit-open", {"core_circuit_open": True}),
+        ):
+            with self.subTest(field=field):
+                bad = dict(recovered)
+                bad.update(change)
+                with mock.patch.object(applied, "unix_json", return_value=bad):
+                    with mock.patch.object(applied.time, "monotonic",
+                                           side_effect=[0, 0, 99]):
+                        with mock.patch.object(applied.time, "sleep"):
+                            with self.assertRaises(RuntimeError):
+                                applied.wait_restarted_promoted_core(
+                                    "/daemon.sock", 5, 9, 222, timeout=1)
+
+        with mock.patch.object(applied.time, "monotonic",
+                               side_effect=[0, 2]):
+            with self.assertRaises(RuntimeError):
+                applied.wait_restarted_promoted_core(
+                    "/daemon.sock", 5, 9, 222, timeout=1)
+        for invalid in (0, -1, 33.0, True):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(RuntimeError):
+                    applied.wait_restarted_promoted_core(
+                        "/daemon.sock", 5, 9, invalid, timeout=3)
+
+    def test_pidfd_crash_injection_is_bound_to_owned_core(self):
+        first = self.promoted_status(pid=222)
+        recovered = self.promoted_status(pid=333, failures=1)
+        events = []
+        class Node:
+            pass
+        node = Node()
+
+        def verify(pid, daemon, path):
+            events.append(("verify", pid, daemon, path))
+        def signal_pidfd(fd, sig):
+            events.append(("signal", fd, sig))
+
+        with mock.patch.object(applied, "unix_json",
+                               side_effect=[first, first, recovered, recovered]):
+            with mock.patch.object(applied.os, "pidfd_open", return_value=71) as opened:
+                with mock.patch.object(applied.signal, "pidfd_send_signal",
+                                       side_effect=signal_pidfd) as sent:
+                    with mock.patch.object(applied.os, "close") as closed:
+                        with mock.patch.object(applied, "verify_child",
+                                               side_effect=verify):
+                            with mock.patch.object(applied, "wait_restarted_promoted_core",
+                                                   return_value=333) as waited:
+                                with mock.patch.object(applied, "probe_isolated_routes") as probes:
+                                    with mock.patch.object(applied, "probe_isolated_failure") as denial:
+                                        result = applied.probe_supervised_crash_recovery(
+                                            "/daemon.sock", 100, "/approved-core",
+                                            5, 9, 222, 41001, node)
+        self.assertEqual(result, 333)
+        self.assertEqual(events, [
+            ("verify", 222, 100, "/approved-core"),
+            ("signal", 71, applied.signal.SIGKILL),
+            ("verify", 333, 100, "/approved-core"),
+        ])
+        opened.assert_called_once_with(222)
+        sent.assert_called_once_with(71, applied.signal.SIGKILL)
+        closed.assert_called_once_with(71)
+        waited.assert_called_once_with("/daemon.sock", 5, 9, 222)
+        self.assertEqual(probes.call_args_list, [
+            mock.call(41001, b"promoted-crash-recovered-", node),
+            mock.call(41001, b"restored-after-crash-", node),
+        ])
+        denial.assert_called_once_with(41001, b"failed-after-crash-", node)
+
+    def test_crash_injection_never_signals_unverified_process(self):
+        for bad_pid, daemon_pid in ((0, 100), (1, 100), (100, 100),
+                                    (-3, 100), (True, 100), (222, 1)):
+            with self.subTest(pid=bad_pid, daemon=daemon_pid):
+                with mock.patch.object(applied, "unix_json") as api:
+                    with mock.patch.object(applied.os, "pidfd_open") as opened:
+                        with self.assertRaises(RuntimeError):
+                            applied.probe_supervised_crash_recovery(
+                                "/sock", daemon_pid, "/approved-core",
+                                5, 9, bad_pid, 41001, object())
+                        api.assert_not_called()
+                        opened.assert_not_called()
+
+        valid = self.promoted_status(pid=222)
+        drifted = self.promoted_status(pid=333)
+        # Reject an already-replaced live PID *before* acquiring a pidfd.
+        with mock.patch.object(applied, "unix_json", return_value=drifted):
+            with mock.patch.object(applied.os, "pidfd_open") as opened:
+                with mock.patch.object(applied.signal, "pidfd_send_signal") as sent:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_supervised_crash_recovery(
+                            "/sock", 100, "/approved-core",
+                            5, 9, 222, 41001, object())
+                    opened.assert_not_called()
+                    sent.assert_not_called()
+
+        # An apparently valid pidfd must still be checked against a *fresh*
+        # daemon snapshot; changed child identity refuses SIGKILL and closes fd.
+        with mock.patch.object(applied, "unix_json", side_effect=[valid, drifted]):
+            with mock.patch.object(applied.os, "pidfd_open", return_value=71):
+                with mock.patch.object(applied.os, "close") as closed:
+                    with mock.patch.object(applied, "verify_child") as verify:
+                        with mock.patch.object(applied.signal,
+                                               "pidfd_send_signal") as sent:
+                            with self.assertRaises(RuntimeError):
+                                applied.probe_supervised_crash_recovery(
+                                    "/sock", 100, "/approved-core",
+                                    5, 9, 222, 41001, object())
+                            verify.assert_called_once_with(
+                                222, 100, "/approved-core")
+                            sent.assert_not_called()
+                    closed.assert_called_once_with(71)
+
+        with mock.patch.object(applied, "unix_json", return_value=valid):
+            with mock.patch.object(applied.os, "pidfd_open", return_value=71):
+                with mock.patch.object(applied.os, "close") as closed:
+                    with mock.patch.object(applied, "verify_child",
+                                           side_effect=RuntimeError("unowned Core")):
+                        with mock.patch.object(applied.signal,
+                                               "pidfd_send_signal") as sent:
+                            with self.assertRaises(RuntimeError):
+                                applied.probe_supervised_crash_recovery(
+                                    "/sock", 100, "/approved-core",
+                                    5, 9, 222, 41001, object())
+                            sent.assert_not_called()
+                    closed.assert_called_once_with(71)
+
+        with mock.patch.object(applied, "unix_json", return_value=valid):
+            with mock.patch.object(applied.os, "pidfd_open",
+                                   side_effect=OSError("pidfd not permitted")):
+                with mock.patch.object(applied.signal,
+                                       "pidfd_send_signal") as sent:
+                    with self.assertRaises(OSError):
+                        applied.probe_supervised_crash_recovery(
+                            "/sock", 100, "/approved-core",
+                            5, 9, 222, 41001, object())
+                    sent.assert_not_called()
+
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):
             with self.subTest(port=port):
