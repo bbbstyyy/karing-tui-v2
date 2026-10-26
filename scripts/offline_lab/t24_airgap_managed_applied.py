@@ -542,6 +542,48 @@ def probe_bounded_parallel_routes(echo_port, node):
     return len(completed) * 2
 
 
+
+def probe_parallel_selected_denials(echo_port, node):
+    """Six simultaneous clients: Direct/Rule succeed; Selected fails closed."""
+    require(type(echo_port) is int and 0 < echo_port < 65536,
+            "invalid parallel failure-probe echo port")
+    require(type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            type(node.parallel_payloads) is list and
+            not node.failed and not node.reject_connections,
+            "synthetic selected node was unhealthy before parallel refusal")
+    accepted, rejected, tags = node.calls, node.rejections, len(node.parallel_payloads)
+    barrier = threading.Barrier(6)
+    node.reject_connections = True
+    try:
+        def worker(index):
+            port = MANAGED_PORTS[index % len(MANAGED_PORTS)]
+            barrier.wait(timeout=8)
+            for iteration in range(2):
+                if port == 2082:
+                    probe_selected_refusal(echo_port)
+                else:
+                    payload = ("parallel-denied-" + str(index) + "-" +
+                               str(iteration) + "-" + str(port)).encode("ascii")
+                    probe_port(port, echo_port, payload)
+            return port
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = [executor.submit(worker, i) for i in range(6)]
+            completed = [future.result(timeout=40) for future in futures]
+        require(all(completed.count(port) == 2 for port in MANAGED_PORTS),
+                "parallel refusal did not complete all expected inbounds")
+        # The managed Core may retry a refused upstream, but repeated
+        # unbounded retries are not accepted as healthy isolated behavior.
+        denial_delta = node.rejections - rejected
+        require(node.calls == accepted and len(node.parallel_payloads) == tags
+                and 4 <= denial_delta <= 16 and not node.failed,
+                "Selected failure bypassed upstream or impaired Rule/Direct")
+        return len(completed) * 2
+    finally:
+        node.reject_connections = False
+
+
 def probe_isolated_routes(echo_port, prefix, node):
     """Require exactly one local-node dial, from Selected only, per cycle."""
     require(node.calls >= 0 and not node.failed,
@@ -675,6 +717,14 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
         if cycle == 2:
             require(probe_bounded_parallel_routes(echo_port, node) == 12,
                     "bounded parallel workload did not finish all 12 echoes")
+            require(probe_parallel_selected_denials(echo_port, node) == 12,
+                    "parallel Selected refusal lost healthy Rule/Direct traffic")
+            require(assert_promoted_core(
+                unix_json(sock, "GET", "/v1/status"),
+                old_generation, promoted_generation, None, True) == pid,
+                "parallel Selected refusal unexpectedly restarted Core")
+            require(probe_bounded_parallel_routes(echo_port, node) == 12,
+                    "parallel Selected upstream did not recover in same Core")
         require(assert_promoted_core(
             unix_json(sock, "GET", "/v1/status"),
             old_generation, promoted_generation, None, True) == pid,
@@ -971,7 +1021,7 @@ def main(argv=None):
                             verify_stopped_ports()
 
                         run_daemon(args.app, args.core, root, env, after_cycles)
-                        require(node.calls == 19 and node.rejections >= 6 and
+                        require(node.calls == 23 and node.rejections >= 10 and
                                 not node.reject_connections and not node.failed,
                                 "short lifecycle drifted or bypassed selected route")
                         cold.hash_pinned_core(core, args.core_sha256)
@@ -987,6 +1037,7 @@ def main(argv=None):
         print("T24_AIRGAP_PROMOTED_CRASH_RECOVERY=ok")
         print("T25_AIRGAP_SHORT_LIFECYCLE_SMOKE=ok")
         print("T25_AIRGAP_PARALLEL_LOOPBACK=ok")
+        print("T25_AIRGAP_PARALLEL_REFUSAL_ISOLATED=ok")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")

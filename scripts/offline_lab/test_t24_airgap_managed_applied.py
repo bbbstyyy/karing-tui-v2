@@ -633,10 +633,16 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                         with mock.patch.object(
                                             applied, "probe_bounded_parallel_routes",
                                             return_value=12) as parallel:
-                                            samples = applied.probe_bounded_lifecycle_cycles(
-                                                "/app", {}, "/daemon.sock", 100,
-                                                "/approved-core", 5, 9, 41001, node)
-        parallel.assert_called_once_with(41001, node)
+                                            with mock.patch.object(
+                                                applied, "probe_parallel_selected_denials",
+                                                return_value=12) as denied_parallel:
+                                                samples = applied.probe_bounded_lifecycle_cycles(
+                                                    "/app", {}, "/daemon.sock", 100,
+                                                    "/approved-core", 5, 9, 41001, node)
+        self.assertEqual(parallel.call_args_list, [
+            mock.call(41001, node), mock.call(41001, node),
+        ])
+        denied_parallel.assert_called_once_with(41001, node)
         self.assertEqual(samples, [13, 14, 13])
         self.assertEqual(transitions, ["start", "stop"] * 3)
         self.assertEqual(fds.call_count, 4)
@@ -773,6 +779,111 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 with mock.patch.object(applied, "probe_port") as probe:
                     with self.assertRaises(RuntimeError):
                         applied.probe_bounded_parallel_routes(41001, node)
+                    probe.assert_not_called()
+
+    def test_parallel_selected_denials_isolate_other_inbounds_then_reset(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.parallel_payloads = [b"prior"]
+                self.failed = False
+                self.reject_connections = False
+
+        node = Node()
+        lock = threading.Lock()
+        routed = []
+        rejected_ports = []
+
+        def healthy(port, echo_port, payload):
+            self.assertEqual(echo_port, 41001)
+            self.assertIn(port, (2080, 2081))
+            self.assertTrue(payload.startswith(b"parallel-denied-"))
+            self.assertTrue(payload.endswith(str(port).encode()))
+            self.assertTrue(node.reject_connections)
+            with lock:
+                routed.append((port, payload))
+
+        def refused(echo_port):
+            self.assertEqual(echo_port, 41001)
+            self.assertTrue(node.reject_connections)
+            with lock:
+                node.rejections += 1
+                rejected_ports.append(echo_port)
+
+        with mock.patch.object(applied, "probe_port", side_effect=healthy) as probes:
+            with mock.patch.object(applied, "probe_selected_refusal",
+                                   side_effect=refused) as denied:
+                self.assertEqual(applied.probe_parallel_selected_denials(
+                    41001, node), 12)
+        self.assertEqual(probes.call_count, 8)
+        self.assertEqual(denied.call_count, 4)
+        self.assertEqual([sum(p == port for p, _ in routed)
+                          for port in (2080, 2081)], [4, 4])
+        self.assertEqual(len({payload for _, payload in routed}), 8)
+        self.assertEqual(rejected_ports, [41001] * 4)
+        self.assertEqual((node.calls, node.rejections), (8, 7))
+        self.assertEqual(node.parallel_payloads, [b"prior"])
+        self.assertFalse(node.reject_connections)
+
+    def test_parallel_refusal_rejects_bypass_cross_routes_and_bad_upstream(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.parallel_payloads = [b"prior"]
+                self.failed = False
+                self.reject_connections = False
+
+        for bad_port in (0, -1, True, 65536, 40000.0):
+            with self.subTest(port=bad_port):
+                node = Node()
+                with mock.patch.object(applied, "probe_port") as probe:
+                    with mock.patch.object(applied, "probe_selected_refusal") as refusal:
+                        with self.assertRaises(RuntimeError):
+                            applied.probe_parallel_selected_denials(bad_port, node)
+                    probe.assert_not_called()
+                    refusal.assert_not_called()
+                self.assertFalse(node.reject_connections)
+
+        for name in ("selected-bypass", "rule-crossed", "denial-storm",
+                     "synthetic-node-failed", "healthy-inbound-failed",
+                     "reported-success"):
+            with self.subTest(name=name):
+                node = Node()
+                lock = threading.Lock()
+                def healthy(port, _echo_port, _payload):
+                    if name == "healthy-inbound-failed" and port == 2080:
+                        raise RuntimeError("direct socket failed")
+                    with lock:
+                        if name == "rule-crossed" and port == 2080:
+                            node.calls += 1
+                def refusal(_echo_port):
+                    if name == "reported-success":
+                        raise RuntimeError("Selected returned SOCKS success")
+                    with lock:
+                        if name != "selected-bypass":
+                            node.rejections += 5 if name == "denial-storm" else 1
+                        if name == "synthetic-node-failed":
+                            node.failed = True
+                with mock.patch.object(applied, "probe_port", side_effect=healthy):
+                    with mock.patch.object(applied, "probe_selected_refusal",
+                                           side_effect=refusal):
+                        with self.assertRaises(RuntimeError):
+                            applied.probe_parallel_selected_denials(41001, node)
+                self.assertFalse(node.reject_connections)
+
+        for attr, value in (
+            ("calls", True), ("calls", -1), ("rejections", None),
+            ("rejections", -1), ("parallel_payloads", None),
+            ("failed", True), ("reject_connections", True),
+        ):
+            with self.subTest(attribute=attr):
+                node = Node()
+                setattr(node, attr, value)
+                with mock.patch.object(applied, "probe_port") as probe:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_parallel_selected_denials(41001, node)
                     probe.assert_not_called()
 
     def test_managed_proxy_port_and_payload_guards(self):
