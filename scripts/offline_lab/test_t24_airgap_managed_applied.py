@@ -1116,6 +1116,163 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                         5, 9, 222)
                 dial.assert_not_called()
 
+    def test_explicit_restart_after_held_stop_retains_generation_and_routes(self):
+        class Node:
+            calls = 6
+            rejections = 3
+            failed = False
+            reject_connections = False
+
+        node = Node()
+        state = {"running": False, "pid": 0}
+        commands, payloads = [], []
+
+        def current_status():
+            doc = self.promoted_status(pid=state["pid"])
+            if not state["running"]:
+                doc.update({
+                    "core_state": "stopped",
+                    "core_desired_state": "stopped",
+                    "core_pid": 0,
+                })
+            return doc
+
+        def api(_sock, method, route, payload=None, expected=200, timeout=85):
+            self.assertEqual(method, "GET")
+            if route == "/v1/status":
+                return current_status()
+            if route == "/v1/declaration/current":
+                return {"revision": 2, "sha256": "b" * 64}
+            self.fail("unapproved endpoint")
+
+        def command(argv, env, timeout=22):
+            self.assertEqual((argv[:2], env), (["/app", "core"], {}))
+            self.assertIn(argv[2], ("start", "stop"))
+            commands.append(argv[2])
+            if argv[2] == "start":
+                self.assertFalse(state["running"])
+                state.update({"running": True, "pid": 222})
+            else:
+                self.assertTrue(state["running"])
+                state.update({"running": False, "pid": 0})
+            return b""
+
+        def wait(_app, _env, expected):
+            self.assertEqual(expected, "running" if state["running"] else "stopped")
+            return current_status()
+
+        def routes(echo_port, payload, target):
+            self.assertEqual((echo_port, target), (41001, node))
+            node.calls += 1
+            payloads.append(payload)
+
+        def refusal(echo_port, payload, target):
+            self.assertEqual((echo_port, target), (41001, node))
+            self.assertEqual(payload, b"after-held-stop-failed-")
+            node.rejections += 1
+
+        with mock.patch.object(applied, "unix_json", side_effect=api):
+            with mock.patch.object(applied.boot, "checked",
+                                   side_effect=command) as cli:
+                with mock.patch.object(applied, "wait_status", side_effect=wait):
+                    with mock.patch.object(applied, "verify_child") as verify:
+                        with mock.patch.object(applied, "probe_isolated_routes",
+                                               side_effect=routes) as probe:
+                            with mock.patch.object(applied, "probe_isolated_failure",
+                                                   side_effect=refusal) as denied:
+                                with mock.patch.object(applied, "verify_stopped_ports") as closed:
+                                    pid = applied.probe_restart_after_held_stop(
+                                        "/app", {}, "/daemon.sock", 100,
+                                        "/approved-core", 5, 9,
+                                        41001, node, "b" * 64)
+        self.assertEqual(pid, 222)
+        self.assertEqual(commands, ["start", "stop"])
+        self.assertEqual(cli.call_count, 2)
+        verify.assert_called_once_with(222, 100, "/approved-core")
+        self.assertEqual(probe.call_count, 2)
+        denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
+        self.assertEqual(payloads, [
+            b"after-held-stop-start-", b"after-held-stop-restored-",
+        ])
+        self.assertEqual((node.calls, node.rejections), (8, 4))
+        self.assertEqual(closed.call_count, 2)
+        self.assertFalse(state["running"])
+
+    def test_held_stop_restart_refuses_implicit_start_or_wrong_declaration(self):
+        stopped = self.promoted_status(pid=0)
+        stopped.update({"core_state": "stopped", "core_desired_state": "stopped"})
+        running = self.promoted_status(pid=222)
+        for name, first, sha in (
+            ("implicitly-running", running, "b" * 64),
+            ("wrong-config", dict(stopped, config_revision=1), "b" * 64),
+            ("wrong-LKG", dict(stopped, last_known_good_generation_id=5),
+             "b" * 64),
+            ("wrong-declaration", stopped, "c" * 64),
+        ):
+            with self.subTest(name=name):
+                def api(_sock, _method, route, payload=None,
+                        expected=200, timeout=85):
+                    if route == "/v1/status":
+                        return first
+                    if route == "/v1/declaration/current":
+                        return {"revision": 2, "sha256": sha}
+                    raise AssertionError("unapproved request")
+                with mock.patch.object(applied, "unix_json", side_effect=api):
+                    with mock.patch.object(applied.boot, "checked") as cli:
+                        with mock.patch.object(applied, "verify_stopped_ports"):
+                            with self.assertRaises(RuntimeError):
+                                applied.probe_restart_after_held_stop(
+                                    "/app", {}, "/daemon.sock", 100,
+                                    "/approved-core", 5, 9,
+                                    41001, type('Node', (), {'calls': 1, 'rejections': 1, 'failed': False, 'reject_connections': False})(), "b" * 64)
+                        cli.assert_not_called()
+
+    def test_held_stop_restart_still_stops_on_reprobe_failure(self):
+        class Node:
+            calls = 1
+            rejections = 1
+            failed = False
+            reject_connections = False
+        node = Node()
+        state = {"running": False}
+        actions = []
+
+        def status():
+            doc = self.promoted_status(pid=222 if state["running"] else 0)
+            if not state["running"]:
+                doc.update({"core_state": "stopped",
+                            "core_desired_state": "stopped"})
+            return doc
+
+        def api(_sock, method, route, payload=None, expected=200, timeout=85):
+            if route == "/v1/status":
+                return status()
+            if route == "/v1/declaration/current":
+                return {"sha256": "b" * 64}
+            raise AssertionError("unapproved API")
+        def cli(argv, env, timeout=22):
+            actions.append(argv[2])
+            state["running"] = argv[2] == "start"
+            return b""
+        def wait(_app, _env, _expected):
+            return status()
+
+        with mock.patch.object(applied, "unix_json", side_effect=api):
+            with mock.patch.object(applied.boot, "checked", side_effect=cli):
+                with mock.patch.object(applied, "wait_status", side_effect=wait):
+                    with mock.patch.object(applied, "verify_child"):
+                        with mock.patch.object(applied, "verify_stopped_ports") as closed:
+                            with mock.patch.object(applied, "probe_isolated_routes",
+                                                   side_effect=RuntimeError("echo failed")):
+                                with self.assertRaises(RuntimeError):
+                                    applied.probe_restart_after_held_stop(
+                                        "/app", {}, "/daemon.sock", 100,
+                                        "/approved-core", 5, 9,
+                                        41001, node, "b" * 64)
+        self.assertEqual(actions, ["start", "stop"])
+        self.assertFalse(state["running"])
+        self.assertEqual(closed.call_count, 2)
+
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):
             with self.subTest(port=port):
@@ -1252,6 +1409,64 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     applied.probe_isolated_failure(41001, b"fault-", node)
         self.assertFalse(node.reject_connections)
+
+
+    def test_synthetic_relay_distinguishes_post_echo_reset_from_early_failure(self):
+        # No Core, Docker, external network, or arbitrary retry required.
+        # The real local handler is exercised with deterministic socket I/O.
+        for exception in (ConnectionResetError("reset"),
+                          ConnectionAbortedError("aborted"),
+                          BrokenPipeError("pipe")):
+            self.assertTrue(applied.is_post_echo_peer_reset(exception, True))
+            self.assertFalse(applied.is_post_echo_peer_reset(exception, False))
+        for exception in (OSError("unexpected I/O"), RuntimeError("bad CONNECT"),
+                          socket.timeout("timeout")):
+            self.assertFalse(applied.is_post_echo_peer_reset(exception, True))
+        self.assertFalse(applied.is_post_echo_peer_reset(
+            ConnectionResetError("reset"), 1))
+
+        def run_handler(disconnect, after_reply):
+            incoming = mock.Mock()
+            incoming.recv.side_effect = (
+                [b"local-test-payload", disconnect] if after_reply
+                else [disconnect]
+            )
+            target = mock.MagicMock()
+            target.__enter__.return_value = target
+            target.recv.return_value = loopback.REPLY_PREFIX + b"local-test-payload"
+            server = mock.Mock(echo_port=41001, reject_connections=False,
+                               calls=0, failed=False,
+                               counter_lock=threading.Lock(),
+                               parallel_payloads=[])
+            reads = [b"\x05\x01", b"\x00",
+                     b"\x05\x01\x00\x01",
+                     b"\x7f\x00\x00\x01",
+                     struct.pack("!H", 41001)]
+            ready = ([([incoming], [], []), ([target], [], []),
+                      ([incoming], [], [])] if after_reply
+                     else [([incoming], [], [])])
+            with mock.patch.object(applied, "exact_read", side_effect=reads):
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=target):
+                    with mock.patch.object(applied.select, "select",
+                                           side_effect=ready):
+                        applied.LocalSocksNode(
+                            incoming, ("127.0.0.1", 12345), server)
+            self.assertEqual(server.calls, 1)
+            if after_reply:
+                self.assertIn(
+                    loopback.REPLY_PREFIX + b"local-test-payload",
+                    [call.args[0] for call in incoming.sendall.call_args_list])
+            return server.failed
+
+        for disconnect in (ConnectionResetError("reset"),
+                           ConnectionAbortedError("aborted"),
+                           BrokenPipeError("pipe")):
+            with self.subTest(disconnect=type(disconnect).__name__):
+                self.assertFalse(run_handler(disconnect, True))
+                self.assertTrue(run_handler(disconnect, False))
+        self.assertTrue(run_handler(OSError("other failure"), True))
+        self.assertTrue(run_handler(socket.timeout("timeout"), True))
 
     def test_synthetic_socks_node_refusal_never_forwards_to_echo(self):
         with applied.LocalSocksServer(("127.0.0.1", 0), applied.LocalSocksNode) as srv:
