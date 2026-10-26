@@ -1721,3 +1721,10 @@ docs/
 - 之后只接受**一次明确 CLI `core start`**，要求批准并锁定的同 UID Core 可执行文件为当前 Daemon 的直接子进程，真实 Core PID 正常、同一已应用代际和 LKG；重新通过 Rule:2080、Direct:2081、Selected:2082 三入口不同本机 echo 并核对 Selected 节点只有一次连接。再注入一次合成 Selected SOCKS5 CONNECT 拒绝，Rule/Direct 仍工作、Selected 不得静默 Direct 旁路，管理 Core PID 不能变化；解除拒绝后再成功转发三入口并仅增加一个 Selected 节点连接。
 - 即使三入口或节点负面验证失败，只要明确启动成功，该实验也通过 `finally` 再执行一次真实 `core stop`、核对 stopped/PID=0/端口关闭；随后第**七次打开同一私有 SQLite 的 Daemon**，必须继续 stopped、应用/可信代际与声明 SHA 不变且绝不自动启动。测试总 Selected 成功 CONNECT 计数从 24 增至 26；成功时额外打印 `T25_AIRGAP_HELD_STOP_RESTART=ok`，始终保留 `T25_72H_7D_30D_SOAK_VERIFIED=false`。Python 独立回归覆盖未经授权自动启动、代际/声明漂移、成功重启/中途回显失败都必须清理等分支。
 - 这仍是**刻意断开旧会话后、由操作员重新启动的纯 localhost 功能验证**，绝不承诺原 TCP 会话零丢失、实际 CN 五层/28 组规则分发、真实代理/DNS、完整 offline tar、VM 掉电/双回滚、T15/T23/T24/T25 验收或 72h/7d/30d 长稳。Linux 无 TUN、订阅/ISP 分流层排除、CN 许可证审核、Restore/GC、`core_distribution=false`、`cn_preset_offline_bundle=false`、稳定 `main`/外层 Draft PR #1 均不变。
+
+### 2026-10-26 — M5 ADR 0160 Core 异常崩溃时三个已建立 TCP 隧道断开及监督恢复（T25 长稳仍 OPEN）
+
+- 在现有第三次真实 Daemon 中只使用 **ADR 0154 已有的一次 pidfd 定向 SIGKILL**，不添加第二次杀进程或可写生产数据：先通过 2080 Rule、2081 Direct、2082 Selected 完成三条 SOCKS5 CONNECT + 精确 localhost 回显，并保留三个仍打开的客户端 socket。要求只有 Selected 的上游本地节点计数增加 1；建立前后分别读取实际 daemon 的 PID、Applied/LKG generation 2 和 config/declaration revision 2，不一致则不允许故障注入。
+- 用原有同 UID、直接子进程、`/proc` 可执行文件及 pidfd 的验证杀死**当前批准的 Core**，等待现有 supervisor 从同一 Applied/LKG 恢复新的真实 PID，再复测三入口健康、Selected fail-closed 和恢复。即便新监听端口已经健康，仍要求**三个旧 socket 分别在有限时间内 EOF/abort/reset**；失败时通过 ExitStack 无条件关闭所有测试 socket，不允许将持续转发的旧连接误算成成功。独立 Python 模拟回归覆盖错误 PID、建立过程中 PID 漂移、Rule→Selected 旁路、Core 恢复失败和旧 socket 未断开。
+- 全成功增加 `T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok`，永远保留 `T25_72H_7D_30D_SOAK_VERIFIED=false`；无新镜像、网络权限、TUN、CN 规则包或外网资源。**只验证单次同机禁网 localhost Core 崩溃和客户端断开，不是用户端的无损连接恢复、真实 DNS/远端代理、离线规则许可证、VM 物理断电、两次故障回滚、72h/7d/30d soak 或正式发行验收。** T15/T23/T24/T25、`core_distribution=false`、`cn_preset_offline_bundle=false`、Restore/GC、稳定 `main` 和外层 Draft PR #1 仍 OPEN。
+
