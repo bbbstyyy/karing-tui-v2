@@ -392,12 +392,25 @@ def exact_read(sock, n):
     return loopback.exact_read(sock, n)
 
 
+def is_post_echo_peer_reset(exc, forwarded_reply):
+    """Only completed local test relays may end with an ordinary TCP reset.
+
+    A failed handshake, failed CONNECT, no returned echo bytes, timeout or
+    other I/O error is never excused. The client independently checks the
+    entire expected echo before a successful test is recorded.
+    """
+    return (type(forwarded_reply) is bool and forwarded_reply
+            and type(exc) in (ConnectionResetError, ConnectionAbortedError,
+                              BrokenPipeError))
+
+
 class LocalSocksNode(socketserver.BaseRequestHandler):
     """Only relay CONNECT for one synthetic echo endpoint inside namespace."""
 
     def handle(self):
         incoming = self.request
         incoming.settimeout(4)
+        forwarded_reply = False
         try:
             version, count = exact_read(incoming, 2)
             require(version == 5 and 0 < count <= 8, "bad local-node greeting")
@@ -444,9 +457,17 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
                                     self.server.parallel_payloads.append(
                                         bytes(audit_prefix))
                                 audited = True
-                        (target if source is incoming else incoming).sendall(chunk)
-        except (OSError, RuntimeError, ValueError):
-            self.server.failed = True
+                        if source is incoming:
+                            target.sendall(chunk)
+                        else:
+                            incoming.sendall(chunk)
+                            # Only after a successful application reply has
+                            # crossed the synthetic relay can a peer reset be
+                            # treated as a normal completed-session close.
+                            forwarded_reply = True
+        except (OSError, RuntimeError, ValueError) as exc:
+            if not is_post_echo_peer_reset(exc, forwarded_reply):
+                self.server.failed = True
 
 
 class LocalSocksServer(socketserver.ThreadingTCPServer):
@@ -829,6 +850,61 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
     return samples
 
 
+def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
+                                  old_generation, promoted_generation,
+                                  echo_port, node, declaration_sha):
+    """Explicit restart after held-session stop: old generation never reappears."""
+    require(type(echo_port) is int and 0 < echo_port < 65536 and
+            isinstance(declaration_sha, str) and len(declaration_sha) == 64
+            and type(node.calls) is int and node.calls >= 0
+            and type(node.rejections) is int and node.rejections >= 0
+            and not node.failed and not node.reject_connections,
+            "invalid post-held-stop restart fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, False) == 0,
+        "previously stopped Core resumed without an operator request")
+    require(unix_json(sock, "GET", "/v1/declaration/current").get("sha256")
+            == declaration_sha,
+            "held-stop restart changed the committed declaration head")
+    verify_stopped_ports()
+    original_calls, original_denials = node.calls, node.rejections
+    started = False
+    try:
+        boot.checked([app, "core", "start"], env, timeout=22)
+        started = True
+        running = wait_status(app, env, "running")
+        pid = assert_promoted_core(
+            running, old_generation, promoted_generation, None, True)
+        verify_child(pid, daemon_pid, core_path)
+        probe_isolated_routes(echo_port, b"after-held-stop-start-", node)
+        probe_isolated_failure(echo_port, b"after-held-stop-failed-", node)
+        require(assert_promoted_core(
+            unix_json(sock, "GET", "/v1/status"),
+            old_generation, promoted_generation, None, True) == pid,
+            "Selected refusal restarted Core after held-session recovery")
+        probe_isolated_routes(echo_port, b"after-held-stop-restored-", node)
+        require(assert_promoted_core(
+            unix_json(sock, "GET", "/v1/status"),
+            old_generation, promoted_generation, None, True) == pid,
+            "post-held-stop traffic replaced healthy Core")
+        require(node.calls == original_calls + 2 and
+                node.rejections > original_denials and
+                not node.failed and not node.reject_connections,
+                "post-held-stop restart bypassed Selected or failed recovery")
+        return pid
+    finally:
+        if started:
+            # Even an assertion failure must not leave a live test Core behind.
+            boot.checked([app, "core", "stop"], env, timeout=20)
+            stopped = wait_status(app, env, "stopped")
+            require(assert_promoted_core(
+                stopped, old_generation, promoted_generation,
+                None, False) == 0,
+                "post-held-stop Core did not persist explicit stopped intent")
+            verify_stopped_ports()
+
+
 def verify_stopped_ports():
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
@@ -884,6 +960,7 @@ def main(argv=None):
     parser.add_argument("--core", required=True)
     parser.add_argument("--core-sha256", required=True)
     args = parser.parse_args(argv)
+    phase = "bootstrap"
     try:
         boot.ensure_airgap(args.arch)
         require(Path(args.app).is_absolute() and os.access(args.app, os.X_OK),
@@ -969,6 +1046,7 @@ def main(argv=None):
                             verify_stopped_ports()
                             return generation
 
+                        phase = "initial-apply"
                         generation = run_daemon(args.app, args.core, root, env, first)
                         verify_stopped_ports()
                         require(node.calls >= 1 and not node.failed,
@@ -1018,6 +1096,7 @@ def main(argv=None):
                                                  promoted_generation, pid, False)
                             verify_stopped_ports()
 
+                        phase = "staged-promotion"
                         run_daemon(args.app, args.core, root, env, restart)
                         require(type(promoted_generation) is int and
                                 promoted_generation > generation,
@@ -1065,6 +1144,7 @@ def main(argv=None):
                                 generation, promoted_generation, None, False)
                             verify_stopped_ports()
 
+                        phase = "crash-recovery"
                         run_daemon(args.app, args.core, root, env, promoted_restart)
 
                         def after_crash_stop(daemon, sock, initial):
@@ -1077,6 +1157,7 @@ def main(argv=None):
                             verify_stopped_ports()
                             return True
 
+                        phase = "post-crash-stop"
                         require(run_daemon(args.app, args.core, root, env,
                                            after_crash_stop) is True,
                                 "post-crash stopped Daemon restart failed")
@@ -1096,24 +1177,49 @@ def main(argv=None):
                                 generation, promoted_generation,
                                 echo.server_address[1], node)
 
+                        phase = "held-session-lifecycle"
                         counts = run_daemon(args.app, args.core, root, env,
                                             bounded_lifecycle)
                         require(len(counts) == 3, "missing lifecycle FD samples")
-                        # A final independent daemon open confirms stopped
-                        # intent still survives the repeated start/stop cycle.
+                        # The sixth Daemon must start stopped after the
+                        # three held client tunnels were explicitly severed.
+                        # Only a fresh operator request may restart Core.
                         def after_cycles(daemon, sock, initial):
+                            assert_promoted_core(initial, generation,
+                                                 promoted_generation, None, False)
+                            cold.configured_caps(unix_json(
+                                sock, "GET", "/v1/capabilities"))
+                            return probe_restart_after_held_stop(
+                                args.app, env, sock, daemon.pid, args.core,
+                                generation, promoted_generation,
+                                echo.server_address[1], node, staged_sha)
+
+                        phase = "held-stop-explicit-restart"
+                        require(type(run_daemon(
+                            args.app, args.core, root, env, after_cycles)) is int,
+                            "post-held-stop explicit restart was not verified")
+
+                        # After a second explicit stop, another cold Daemon
+                        # open must not resurrect Core or the old TCP streams.
+                        def final_stopped(daemon, sock, initial):
+                            nonlocal phase
+                            phase = "final-stopped-status"
                             assert_promoted_core(initial, generation,
                                                  promoted_generation, None, False)
                             require(unix_json(
                                 sock, "GET", "/v1/declaration/current").get("sha256")
                                 == staged_sha,
-                                "short lifecycle restart lost declaration head")
+                                "final stopped restart lost declaration head")
+                            phase = "final-stopped-listeners"
                             verify_stopped_ports()
 
-                        run_daemon(args.app, args.core, root, env, after_cycles)
-                        require(node.calls == 24 and node.rejections >= 10 and
+                        phase = "final-stopped-open"
+                        run_daemon(args.app, args.core, root, env, final_stopped)
+                        phase = "final-node-accounting"
+                        require(node.calls == 26 and node.rejections >= 11 and
                                 not node.reject_connections and not node.failed,
-                                "short lifecycle drifted or bypassed selected route")
+                                "held-session restart or Selected routing drifted")
+                        phase = "final-core-hash"
                         cold.hash_pinned_core(core, args.core_sha256)
                     finally:
                         node.shutdown()
@@ -1129,12 +1235,17 @@ def main(argv=None):
         print("T25_AIRGAP_PARALLEL_LOOPBACK=ok")
         print("T25_AIRGAP_PARALLEL_REFUSAL_ISOLATED=ok")
         print("T25_AIRGAP_HELD_SESSIONS_STOPPED=ok")
+        print("T25_AIRGAP_HELD_STOP_RESTART=ok")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")
         return 0
     except (OSError, RuntimeError, ValueError, KeyError,
-            subprocess.SubprocessError, http.client.HTTPException):
+            subprocess.SubprocessError, http.client.HTTPException) as exc:
+        # Emit only fixed, non-secret phase and exception class: daemon logs,
+        # arbitrary exception strings, and runtime config must stay private.
+        print("T24_AIRGAP_FAILURE_PHASE=" + phase, file=sys.stderr)
+        print("T24_AIRGAP_FAILURE_CLASS=" + type(exc).__name__, file=sys.stderr)
         print("T24_AIRGAP_DAEMON_COMMITTED_CORE_LOOPBACK=refused",
               file=sys.stderr)
         return 1
