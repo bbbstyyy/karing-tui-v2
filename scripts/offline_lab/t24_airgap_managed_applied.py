@@ -540,12 +540,18 @@ def assert_held_session_closed(conn):
             "stopped Core still relayed data on a held SOCKS5 connection")
 
 
-def stop_core_with_held_tunnels(app, env, echo_port, node):
-    """Stop Core with all 3 inbounds connected; no sessions may survive."""
+def stop_core_with_held_tunnels(app, env, sock, echo_port, node,
+                                old_generation, promoted_generation, expected_pid):
+    """Stop exactly the managed generation owning three held TCP streams."""
     require(type(echo_port) is int and 0 < echo_port < 65536 and
             type(node.calls) is int and node.calls >= 0 and
             not node.failed and not node.reject_connections,
             "invalid or unhealthy held-session fixture")
+    require(type(expected_pid) is int and expected_pid > 0 and
+            assert_promoted_core(unix_json(sock, "GET", "/v1/status"),
+                                 old_generation, promoted_generation,
+                                 None, True) == expected_pid,
+            "held-session stop began on a stale Core PID or generation")
     baseline = node.calls
     with ExitStack() as stack:
         held = []
@@ -556,6 +562,10 @@ def stop_core_with_held_tunnels(app, env, echo_port, node):
             require(node.calls == baseline + (1 if port == 2082 else 0)
                     and not node.failed,
                     "held Rule/Direct used Selected node or Selected bypassed it")
+        require(assert_promoted_core(
+            unix_json(sock, "GET", "/v1/status"),
+            old_generation, promoted_generation, None, True) == expected_pid,
+            "Core changed while test clients were establishing held sessions")
         boot.checked([app, "core", "stop"], env, timeout=20)
         stopped = wait_status(app, env, "stopped")
         for conn in held:
@@ -805,7 +815,9 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
             old_generation, promoted_generation, None, True) == pid,
             "short lifecycle traffic unexpectedly replaced running Core")
         if cycle == 2:
-            stopped = stop_core_with_held_tunnels(app, env, echo_port, node)
+            stopped = stop_core_with_held_tunnels(
+                app, env, sock, echo_port, node,
+                old_generation, promoted_generation, pid)
         else:
             boot.checked([app, "core", "stop"], env, timeout=20)
             stopped = wait_status(app, env, "stopped")
