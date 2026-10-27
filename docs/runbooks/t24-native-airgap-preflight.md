@@ -105,3 +105,13 @@ Native-readiness correction: `core_configured=true` is not sufficient to call a 
 In the same sixth Daemon network-none run after ADR 0161 reconnects, send exactly one HTTP/1.1 CONNECT `127.0.0.1:<ephemeral echo port>` request through each Rule:2080, Direct:2081 and Selected:2082 mixed inbound. Require at most 1,024 bytes of a full HTTP/1.x 200 response header, followed by exact numeric localhost echo bytes; only Selected may increment the local synthetic upstream accepted count. Before and after these three requests, verify the same real pinned Core PID and Applied=LKG generation. Do not add HTTP credentials, external DNS/URLs, hostnames or system proxy changes. On any failure, the existing unconditional explicit stop and stopped-intent audit apply.
 
 Only a fully passing exact-head amd64 **and** arm64 native run may print `T22_AIRGAP_HTTP_CONNECT_IP=ok`; always retain `T22_HOSTNAME_AND_UDP_VERIFIED=false`. This is neither full T22 support nor CN-rules/offline-release/power-loss/long-soak acceptance.
+
+
+### ADR 0163: Selected HTTP CONNECT refusal and same-Core recovery
+
+Temporarily enable only the local synthetic Selected node's reject flag after the ADR 0162 three-inbound HTTP success. Require separate Rule/Direct HTTP CONNECT exact echo with no Selected node activity. Selected HTTP CONNECT must close without data/reset or return a complete bounded HTTP 4xx/5xx header. Some mixed inbounds acknowledge CONNECT 200 before outbound refusal: a 200 alone never passes; send one bounded fixed local payload and require zero returned application bytes and EOF/reset within the original four seconds, plus an independently observed rejected Selected upstream dial and zero accepted dials. Any forwarded byte, stalled 200, other 2xx, redirect, malformed/partial header or timeout is a hard failure. Require an observed upstream rejection. Always restore the node flag, preserve the pinned approved Core PID and Applied/LKG, and repeat three-inbound HTTP CONNECT exact echo with one recovered Selected hop. Final accepted count is 53.
+
+Native pass adds T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok only. Never misreport hostname/UDP, real CN routes/DNS, 1000 reconnects, long soak or restore/release approval.
+
+
+ADR 0163 CI diagnostic: a failed native run may expose fixed `http-restart-*` and `http-failure-*` labels plus the allowlisted `T24_AIRGAP_FAILURE_CODE`. These are emitted only on failure to locate the offending phase, never the exception text, Daemon log, endpoints or tokens. Do not weaken the HTTP Selected failure acceptance criteria, add retries or increase network/DNS privileges to make a red run green. Any new head requires complete amd64/arm64 native provenance and ordinary/Go Race/integration checks before merge.

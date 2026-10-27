@@ -511,3 +511,9 @@ The sixth real native amd64/arm64 network-none Daemon session must begin from th
 - Native amd64/arm64 fourth airgap containers now additionally probe HTTP/1.1 CONNECT with numeric `127.0.0.1:<echo-port>` through Rule/Direct/Selected 2080/2081/2082, bounded 1,024-byte HTTP 200 header and exact application echo. Assert the same approved PID/Applied=LKG, one synthetic Selected upstream and zero Rule/Direct crossing or additional refusal.
 - This is `T22_AIRGAP_HTTP_CONNECT_IP=ok` **only**: no hostname DNS, UDP, HTTP absolute-form, authentic upstreams, credentials, CN SRS bundles or full T22 acceptance. Explicitly preserve `T22_HOSTNAME_AND_UDP_VERIFIED=false`, `T20_1000_RECONNECTS_VERIFIED=false` and `T25_72H_7D_30D_SOAK_VERIFIED=false` until separately proven.
 
+
+
+### M5 / ADR 0163 — fail-closed HTTP CONNECT Selected upstream
+
+- In the existing sixth network-none native Daemon, reject only synthetic Selected SOCKS upstream attempts. Rule/Direct HTTP CONNECT must complete exact numeric 127.0.0.1 echo without touching Selected; Selected must receive an observed upstream refusal and produce a clean empty EOF/reset or complete bounded HTTP 4xx/5xx; a premature CONNECT 200 handshake is permitted only if a bounded subsequent application probe gets zero bytes and the tunnel closes by EOF/reset, with no Selected accepted upstream connection. Other 2xx, payload forwarding, stalled 200, redirect, timeout or Direct fallback remain failures. Restore the node in all paths, verify the same approved Core PID/Applied=LKG and complete three recovered HTTP CONNECT echoes with exactly one Selected hop.
+- T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok is a partial real native protocol smoke only. Domain DNS, UDP, remote and CN resource paths, restore, 1000 reconnects, long soak and release approval remain OPEN.

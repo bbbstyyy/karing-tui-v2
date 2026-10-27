@@ -1742,3 +1742,10 @@ docs/
 - Python 离线负向用例覆盖非 200/截断/超大/非法 HTTP 头、不匹配 echo、无效端口或 payload、错误 PID、跨入口和 Selected 旁路。全部真实双架构前置验证通过才输出 `T22_AIRGAP_HTTP_CONNECT_IP=ok`；仍明确 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。
 - **本切片不包含 SOCKS 域名解析、HTTP absolute-form、UDP、认证、真实 DNS/远端节点、CN 五层及 28 组真实资源、许可证离线分发、物理掉电/双回滚/正式恢复或长时稳定性验收。** T22 整体、T15/T23/T24/T25、Restore/GC、发行权限继续关闭，无 TUN/订阅-ISP 分流层，不更改 stable `main`。
 
+
+
+### 2026-10-26 — M5 ADR 0163 HTTP CONNECT Selected 上游拒绝时严格失败关闭（T22 仍未全部验收）
+
+- 在 ADR 0162 已批准 Core 的同一第六次真实 Daemon 与双架构第四个 network-none 容器中，暂时拒绝合成 Selected SOCKS 节点的上游连接。要求 Rule:2080、Direct:2081 的 HTTP CONNECT 数字 localhost 回显仍成功，且合成 Selected 上游的接受与拒绝计数均不能因这两条流量变化。
+- 通过 Selected:2082 的 HTTP CONNECT 接受空 EOF/reset 或完整受限 HTTP/1.x 4xx/5xx；若 mixed HTTP 入口在上游拨号结果前已返回 CONNECT 200，必须再发送固定的本机应用层探针，并在原有四秒上限内验证零数据与 EOF/reset，否则立即失败。其他 2xx、转发任何应用数据、200 隧道卡住、重定向、超时、畸形/截断头和隐式直连旁路仍严格拒绝；还必须独立观察到 Selected 上游拒绝且成功接入计数不增长。任何失败均在 finally 中清除故障开关，然后再次核对 Core PID/代际并复验全部三个 HTTP CONNECT，Selected 恢复后仅增加一次合成上游连接。
+- 双原生完全通过才输出 T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok。保留 T22_HOSTNAME_AND_UDP_VERIFIED=false、T20_1000_RECONNECTS_VERIFIED=false、T25_72H_7D_30D_SOAK_VERIFIED=false，且 T15/T23/T24/T25、CN 五层/28 组资源、许可证离线分发、Restore/GC、正式发行门槛仍未满足。无 TUN、订阅/ISP 分流层，稳定 main 不修改。
