@@ -129,3 +129,9 @@ After ADR 0164's 12 successful barrier-started HTTP CONNECT echoes, enable only 
 
 The marker `T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok` is legal only on full dual-architecture native success. Keep T20/T22/T24/T25 and all Restore/GC/official release gates OPEN.
 
+
+### ADR 0166: established HTTP CONNECT tunnels close on the existing Core stop
+
+After ADR 0165's concurrent HTTP Selected failure and same-Core recovery, use the sixth real Daemon to establish three **held** HTTP CONNECT localhost exact-echo tunnels, one per Rule/Direct/Selected mixed inbound. Do not close their client sockets before the pre-existing explicit `core stop`. Require exactly one Selected local upstream accept, no new refusals and unchanged approved Core PID/Applied=LKG. Once stopped, audit stopped intent/PID=0, no proxy listeners, and each old HTTP socket EOF/reset/abort within three seconds; continued application data or timeout fails CI. The inner `finally` must close all client sockets on every path. This is the same stop, not another lifecycle transition, crash or network operation.
+
+On real native amd64+arm64 full success only, print `T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok`; keep T20 1000 reconnect, T22 hostname/UDP and T25 long soak as **unverified**, as well as CN licensed resources, recovery/rollback, Restore/GC and release.

@@ -1763,3 +1763,10 @@ docs/
 - 失败期间 Selected 的成功计数及此前 32 字节标签必须不变，拒绝计数有界增加 **4–16**，Rule/Direct 不得使用 Selected，真实 Core PID/Applied=LKG 与声明修订不变。无论成功或失败均在 finally 关闭合成拒绝开关；恢复后原 Core 再跑 6 客户端/12 次 HTTP CONNECT 成功测试，Selected 只多 4 条真实上游及四个正确的唯一标签。异常、错误路由、补偿性绕行、拒绝风暴、PID 漂移均失败关闭；原有 stop、监听关闭及冷启动停止意图验证保持。
 - 原生双架构新提交全绿方可输出 `T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok`；完整 T22 域名、DNS、UDP、HTTP absolute-form、真实 CN 五层/28 组、长期浸泡、真实断电恢复、正式离线发行、T20 千次 UI 重连仍未验收。继续保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`，不启用 TUN/订阅-ISP 分流，不改稳定 `main`。
 
+
+### 2026-10-27 — M5 ADR 0166 已建立 HTTP CONNECT 隧道显式停止后必须断开（T22/T25 部分）
+
+- 在原双原生架构第四个 `docker --network none` 测试容器和第六次真实 Daemon 中，沿用 ADR 0165 并发 Selected 故障恢复后已批准同代际 Core，在原有最终 `core stop` 前分别为 Rule:2080、Direct:2081、Selected:2082 建立一条真实 **HTTP/1.1 CONNECT 数值 localhost** 隧道，严格读取受限完整 HTTP 200、完成精确回显，并刻意保持三条 socket 建立。仅 Selected 增加一个本机 SOCKS 上游连接且无新增拒绝，建连后还须读取真实 Daemon PID/Applied=LKG 以避免意外替换。
+- 复用既有一次显式 Core stop，不新增杀进程、启动或网络权限；停止后必须持久 stopped/PID=0、无代理端口监听、三条旧 HTTP CONNECT 在各三秒内 EOF/reset/abort，不能仍转发应用数据，超时亦不通过。内部 finally 无条件关闭所有测试 socket，错误仍失败关闭。无网络单元回归增加 HTTP 头错误/截断/超长、错误回显、非法参数、旧会话仍活跃、断开超时及安全错误码。
+- 双原生真实 Core 全通过才输出 `T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok`。合成 Selected 生涯接受计数从 61 增为 62；但 T22 完整域名/DNS/UDP、T20 1,000 次重连、T25 72h/7d/30d、CN 五层/28 组真实资源许可与离线打包、断电/恢复/正式发行仍未验收，继续 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。无 TUN/订阅-ISP 分流层，不修改稳定 `main`。
+
