@@ -957,6 +957,150 @@ def probe_selected_http_connect_domain_route(
     return 1
 
 
+def probe_selected_http_connect_domain_refusal(echo_port):
+    """A refused DOMAIN CONNECT must not tunnel application bytes.
+
+    HTTP proxies may acknowledge CONNECT with 200 before their outbound
+    dial has completed. In that case probe application bytes and demand a
+    bounded data-free close, plus the independent upstream denial audit.
+    """
+    require(type(echo_port) is int and 0 < echo_port < 65536,
+            "invalid HTTP CONNECT domain refusal target")
+    authority = SOCKS_DOMAIN_TARGET + b":" + str(echo_port).encode("ascii")
+    request = (b"CONNECT " + authority + b" HTTP/1.1\r\n" +
+               b"Host: " + authority + b"\r\n\r\n")
+    with socket.create_connection(("127.0.0.1", 2082), timeout=4) as conn:
+        conn.settimeout(4)
+        try:
+            conn.sendall(request)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            # Actual upstream receipt is independently required by the caller.
+            return
+        header = bytearray()
+        while len(header) < 1024:
+            try:
+                fragment = conn.recv(1)
+            except (ConnectionResetError, ConnectionAbortedError,
+                    BrokenPipeError):
+                require(not header, "partial HTTP CONNECT domain refusal header")
+                return
+            if not fragment:
+                require(not header, "truncated HTTP CONNECT domain refusal header")
+                return
+            header.extend(fragment)
+            if header.endswith(b"\r\n\r\n"):
+                lines = bytes(header[:-4]).split(b"\r\n")
+                status = lines[0].split(b" ", 2)
+                require(len(status) >= 2 and
+                        status[0] in (b"HTTP/1.0", b"HTTP/1.1") and
+                        len(status[1]) == 3 and status[1].isdigit() and
+                        all(b":" in line and line.split(b":", 1)[0]
+                            for line in lines[1:]),
+                        "HTTP CONNECT domain returned unsafe refusal")
+                if status[1] == b"200":
+                    # An early 200 alone is not successful tunneling.
+                    try:
+                        conn.sendall(b"http-domain-must-not-echo")
+                        result = conn.recv(1)
+                    except (ConnectionResetError, ConnectionAbortedError,
+                            BrokenPipeError):
+                        return
+                    except socket.timeout as exc:
+                        raise RuntimeError(
+                            "HTTP CONNECT domain premature 200 did not close"
+                        ) from exc
+                    require(result == b"",
+                            "HTTP CONNECT domain premature 200 forwarded data")
+                    return
+                require(400 <= int(status[1]) <= 599,
+                        "HTTP CONNECT domain returned unsafe refusal")
+                return
+        raise RuntimeError("HTTP CONNECT domain refusal header exceeded bound")
+
+
+def probe_selected_http_connect_domain_failure_isolation(
+        sock, old_generation, promoted_generation, expected_pid,
+        echo_port, node, stage_hook=None):
+    """Fail-close Selected HTTP hostname, preserve healthy routes and PID."""
+    require(stage_hook is None or callable(stage_hook),
+            "invalid HTTP CONNECT domain failure stage hook")
+
+    def mark(label):
+        if stage_hook is not None:
+            stage_hook(label)
+
+    mark("http-domain-denial-preflight")
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(getattr(node, "calls", None)) is int and
+            node.calls >= 0 and
+            type(getattr(node, "rejections", None)) is int and
+            node.rejections >= 0 and
+            type(getattr(node, "hostname_requests", None)) is list and
+            type(getattr(node, "rejected_hostname_requests", None)) is list and
+            getattr(node, "counter_lock", None) is not None and
+            not node.failed and not node.reject_connections,
+            "invalid HTTP CONNECT domain failure fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "HTTP CONNECT domain refusal began on changed Core")
+    accepted, denied = node.calls, node.rejections
+    with node.counter_lock:
+        success_before = list(node.hostname_requests)
+        refusals_before = list(node.rejected_hostname_requests)
+    node.reject_connections = True
+    try:
+        for port in MANAGED_PORTS[:2]:
+            mark("http-domain-denial-rule" if port == 2080 else
+                 "http-domain-denial-direct")
+            probe_http_connect_ip(
+                port, echo_port,
+                b"http-domain-healthy-" + str(port).encode("ascii"))
+            with node.counter_lock:
+                receipts_ok = (
+                    node.hostname_requests == success_before and
+                    node.rejected_hostname_requests == refusals_before)
+            require(receipts_ok and node.calls == accepted and
+                    node.rejections == denied and not node.failed,
+                    "HTTP CONNECT domain denial crossed healthy inbounds")
+        mark("http-domain-denial-selected")
+        probe_selected_http_connect_domain_refusal(echo_port)
+        mark("http-domain-denial-upstream-audit")
+        delta = node.rejections - denied
+        with node.counter_lock:
+            expected_refusals = refusals_before + [
+                (SOCKS_DOMAIN_TARGET, echo_port)] * max(delta, 0)
+            receipts_ok = (node.hostname_requests == success_before and
+                           node.rejected_hostname_requests == expected_refusals)
+        require(1 <= delta <= 4 and receipts_ok and
+                node.calls == accepted and not node.failed,
+                "HTTP CONNECT domain refusal bypassed exact upstream")
+    finally:
+        node.reject_connections = False
+
+    mark("http-domain-denial-identity-after-restore")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "HTTP CONNECT domain refusal restarted Core")
+    mark("http-domain-denial-recovery")
+    require(probe_selected_http_connect_domain_route(
+        sock, old_generation, promoted_generation, expected_pid,
+        echo_port, node) == 1,
+        "HTTP CONNECT domain refusal failed to recover")
+    mark("http-domain-denial-final-audit")
+    with node.counter_lock:
+        receipts_ok = (node.hostname_requests == success_before +
+                       [(SOCKS_DOMAIN_TARGET, echo_port)] and
+                       node.rejected_hostname_requests == expected_refusals)
+    require(receipts_ok and node.calls == accepted + 1 and
+            node.rejections == denied + delta and
+            not node.failed and not node.reject_connections,
+            "HTTP CONNECT domain refusal recovery drifted")
+    return 1
+
+
 def probe_split_write_http_connect_ip(port, echo_port, payload):
     """Multi-write numeric localhost CONNECT; no TCP segmentation claim."""
     require(type(port) is int and port in MANAGED_PORTS and
@@ -2074,6 +2218,11 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
             sock, old_generation, promoted_generation, pid, echo_port,
             node) == 1,
             "selected HTTP CONNECT domain route probe did not finish")
+        mark("http-restart-selected-http-connect-domain-denial")
+        require(probe_selected_http_connect_domain_failure_isolation(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node, stage_hook=mark) == 1,
+            "selected HTTP CONNECT domain denial stage did not recover")
         mark("http-restart-held-http-open")
         held_before, denied_before = node.calls, node.rejections
         for port in MANAGED_PORTS:
@@ -2325,6 +2474,26 @@ AIRGAP_FAILURE_CODES = {
         "http-domain-core-drift",
     "selected HTTP CONNECT domain route probe did not finish":
         "http-domain-incomplete",
+    "invalid HTTP CONNECT domain refusal target": "http-domain-denial-target",
+    "partial HTTP CONNECT domain refusal header": "http-domain-denial-partial",
+    "truncated HTTP CONNECT domain refusal header": "http-domain-denial-eof",
+    "HTTP CONNECT domain returned unsafe refusal": "http-domain-denial-unsafe",
+    "HTTP CONNECT domain premature 200 did not close": "http-domain-denial-stall",
+    "HTTP CONNECT domain premature 200 forwarded data": "http-domain-denial-leak",
+    "HTTP CONNECT domain refusal header exceeded bound": "http-domain-denial-bound",
+    "invalid HTTP CONNECT domain failure stage hook": "http-domain-denial-hook",
+    "invalid HTTP CONNECT domain failure fixture": "http-domain-denial-invalid",
+    "HTTP CONNECT domain refusal began on changed Core":
+        "http-domain-denial-stale",
+    "HTTP CONNECT domain denial crossed healthy inbounds":
+        "http-domain-denial-route",
+    "HTTP CONNECT domain refusal bypassed exact upstream":
+        "http-domain-denial-bypass",
+    "HTTP CONNECT domain refusal restarted Core": "http-domain-denial-core",
+    "HTTP CONNECT domain refusal failed to recover": "http-domain-denial-recovery",
+    "HTTP CONNECT domain refusal recovery drifted": "http-domain-denial-drift",
+    "selected HTTP CONNECT domain denial stage did not recover":
+        "http-domain-denial-incomplete",
 }
 
 
@@ -2682,7 +2851,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 69 and node.rejections >= 17 and
+                        require(node.calls == 70 and node.rejections >= 18 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -2719,6 +2888,7 @@ def main(argv=None):
         print("T22_AIRGAP_SELECTED_SOCKS_DOMAIN_PASSTHROUGH=ok")
         print("T22_AIRGAP_SELECTED_SOCKS_DOMAIN_FAIL_CLOSED=ok")
         print("T22_AIRGAP_SELECTED_HTTP_CONNECT_DOMAIN=ok")
+        print("T22_AIRGAP_SELECTED_HTTP_CONNECT_DOMAIN_FAIL_CLOSED=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
