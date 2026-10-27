@@ -33,6 +33,8 @@ import t24_airgap_managed_cold_guard as cold
 import t24_airgap_loopback_core as loopback
 
 MANAGED_PORTS = (2080, 2081, 2082)
+# Reserved test-only name. The synthetic Selected SOCKS node maps it locally.
+SOCKS_DOMAIN_TARGET = b"t24-selected.invalid"
 CONTROL_PORT = 3057
 MAX_HTTP_BYTES = 64 << 10
 
@@ -546,15 +548,32 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
             require(b"\x00" in exact_read(incoming, count),
                     "Core did not request no-auth SOCKS")
             incoming.sendall(b"\x05\x00")
-            require(exact_read(incoming, 4) == b"\x05\x01\x00\x01",
+            request = exact_read(incoming, 4)
+            require(request[:3] == b"\x05\x01\x00" and
+                    request[3] in (1, 3),
                     "Core requested nonlocal or unsupported destination")
-            address = socket.inet_ntoa(exact_read(incoming, 4))
+            hostname = None
+            if request[3] == 1:
+                address = socket.inet_ntoa(exact_read(incoming, 4))
+            else:
+                length = exact_read(incoming, 1)[0]
+                require(length == len(SOCKS_DOMAIN_TARGET),
+                        "Core requested unapproved SOCKS domain")
+                hostname = exact_read(incoming, length)
+                require(hostname == SOCKS_DOMAIN_TARGET,
+                        "Core requested unapproved SOCKS domain")
+                # Only the test relay maps this reserved hostname to loopback.
+                # No recursive DNS, public resolver or external connection.
+                address = "127.0.0.1"
             port = struct.unpack("!H", exact_read(incoming, 2))[0]
             http_port = getattr(self.server, "http_port", None)
             require(address == "127.0.0.1" and (
-                    port == self.server.echo_port or
-                    (type(http_port) is int and 0 < http_port < 65536
-                     and port == http_port)),
+                    (hostname is None and
+                     (port == self.server.echo_port or
+                      (type(http_port) is int and 0 < http_port < 65536
+                       and port == http_port))) or
+                    (hostname == SOCKS_DOMAIN_TARGET and
+                     port == self.server.echo_port)),
                     "Core attempted to forward to a nonlocal target")
             if self.server.reject_connections:
                 # A real SOCKS5 CONNECT failure, not a closed test listener:
@@ -569,6 +588,8 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
                                  struct.pack("!H", port))
                 with self.server.counter_lock:
                     self.server.calls += 1
+                    if hostname is not None:
+                        self.server.hostname_requests.append((hostname, port))
                 until = time.monotonic() + 4
                 audit_prefix = bytearray()
                 audited = False
@@ -615,6 +636,7 @@ class LocalSocksServer(socketserver.ThreadingTCPServer):
         self.failed = False
         self.counter_lock = threading.Lock()
         self.parallel_payloads = []
+        self.hostname_requests = []
 
 
 def probe_port(port, echo_port, payload):
@@ -645,6 +667,77 @@ def probe_port(port, echo_port, payload):
 
 
 
+
+
+def probe_selected_socks_domain(echo_port, payload):
+    """Send a selected-only SOCKS5 DOMAIN request without a DNS lookup."""
+    require(type(echo_port) is int and 0 < echo_port < 65536 and
+            type(payload) is bytes and 1 <= len(payload) <= 128,
+            "invalid selected SOCKS domain fixture")
+    request = (b"\x05\x01\x00\x03" +
+               bytes([len(SOCKS_DOMAIN_TARGET)]) + SOCKS_DOMAIN_TARGET +
+               struct.pack("!H", echo_port))
+    with socket.create_connection(("127.0.0.1", 2082), timeout=4) as conn:
+        conn.settimeout(4)
+        conn.sendall(b"\x05\x01\x00")
+        require(exact_read(conn, 2) == b"\x05\x00",
+                "selected SOCKS domain greeting rejected")
+        conn.sendall(request)
+        header = exact_read(conn, 4)
+        require(header[:3] == b"\x05\x00\x00",
+                "selected SOCKS domain request failed")
+        if header[3] == 1:
+            exact_read(conn, 4)
+        elif header[3] == 4:
+            exact_read(conn, 16)
+        elif header[3] == 3:
+            length = exact_read(conn, 1)[0]
+            require(0 < length <= 255,
+                    "selected SOCKS domain reply address invalid")
+            exact_read(conn, length)
+        else:
+            raise RuntimeError("selected SOCKS domain reply address invalid")
+        exact_read(conn, 2)
+        conn.sendall(payload)
+        require(exact_read(conn, len(loopback.REPLY_PREFIX) + len(payload)) ==
+                loopback.REPLY_PREFIX + payload,
+                "selected SOCKS domain echo did not match")
+
+
+def probe_selected_socks_domain_route(sock, old_generation,
+                                      promoted_generation, expected_pid,
+                                      echo_port, node):
+    """Prove the Selected Core forwards the exact DOMAIN to its local SOCKS."""
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(getattr(node, "calls", None)) is int and
+            node.calls >= 0 and
+            type(getattr(node, "rejections", None)) is int and
+            node.rejections >= 0 and
+            type(getattr(node, "hostname_requests", None)) is list and
+            getattr(node, "counter_lock", None) is not None and
+            not node.failed and not node.reject_connections,
+            "invalid selected SOCKS domain route fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "selected SOCKS domain began on changed Core")
+    before_calls, before_denied = node.calls, node.rejections
+    with node.counter_lock:
+        old_receipts = list(node.hostname_requests)
+    probe_selected_socks_domain(echo_port, b"selected-domain-only-echo")
+    with node.counter_lock:
+        new_receipts = list(node.hostname_requests)
+    require(new_receipts == old_receipts + [(SOCKS_DOMAIN_TARGET, echo_port)] and
+            node.calls == before_calls + 1 and
+            node.rejections == before_denied and
+            not node.failed and not node.reject_connections,
+            "selected SOCKS domain bypassed exact upstream hostname")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "selected SOCKS domain replaced approved Core")
+    return 1
 
 
 def probe_http_connect_ip(port, echo_port, payload):
@@ -1780,6 +1873,11 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
             sock, old_generation, promoted_generation, pid,
             http_origin, node, stage_hook=mark) == 3,
             "HTTP absolute-form Selected failure isolation did not recover")
+        mark("http-restart-selected-socks-domain")
+        require(probe_selected_socks_domain_route(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node) == 1,
+            "selected SOCKS domain route probe did not finish")
         mark("http-restart-held-http-open")
         held_before, denied_before = node.calls, node.rejections
         for port in MANAGED_PORTS:
@@ -1986,6 +2084,17 @@ AIRGAP_FAILURE_CODES = {
         "http-absolute-denial-final",
     "HTTP absolute-form Selected failure isolation did not recover":
         "http-absolute-denial-incomplete",
+    "invalid selected SOCKS domain fixture": "socks-domain-invalid",
+    "selected SOCKS domain greeting rejected": "socks-domain-greeting",
+    "selected SOCKS domain request failed": "socks-domain-not-success",
+    "selected SOCKS domain reply address invalid": "socks-domain-reply-atyp",
+    "selected SOCKS domain echo did not match": "socks-domain-echo",
+    "invalid selected SOCKS domain route fixture": "socks-domain-route-invalid",
+    "selected SOCKS domain began on changed Core": "socks-domain-stale",
+    "selected SOCKS domain bypassed exact upstream hostname":
+        "socks-domain-bypass",
+    "selected SOCKS domain replaced approved Core": "socks-domain-core-drift",
+    "selected SOCKS domain route probe did not finish": "socks-domain-incomplete",
 }
 
 
@@ -2343,7 +2452,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 66 and node.rejections >= 16 and
+                        require(node.calls == 67 and node.rejections >= 16 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -2377,6 +2486,7 @@ def main(argv=None):
         print("T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok")
         print("T22_AIRGAP_HTTP_ABSOLUTE_FORM_IP=ok")
         print("T22_AIRGAP_HTTP_ABSOLUTE_SELECTED_FAIL_CLOSED=ok")
+        print("T22_AIRGAP_SELECTED_SOCKS_DOMAIN_PASSTHROUGH=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
