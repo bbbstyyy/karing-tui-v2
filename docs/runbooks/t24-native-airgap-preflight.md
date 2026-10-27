@@ -122,3 +122,10 @@ After the Selected HTTP refusal/recovery step, keep the same sixth Daemon and ap
 
 Only a passing exact-head native run can print `T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok`. This is short bounded concurrency, not 1,000 reconnects, hostname DNS, UDP, CN resource licensing, restore or long soak.
 
+
+### ADR 0165: concurrent Selected HTTP CONNECT failure and recovery
+
+After ADR 0164's 12 successful barrier-started HTTP CONNECT echoes, enable only the synthetic Selected SOCKS node's refusal flag and run six clients / 12 fresh HTTP requests (two per Rule, Direct, Selected). Rule/Direct must complete eight exact local echoes with **no** Selected upstream activity; Selected must fail closed for four requests with bounded zero-data EOF/reset (an early HTTP CONNECT 200 is not enough) and trigger 4–16 synthetic upstream rejection observations. Require unchanged Selected accepted count/tags and same approved Core PID/Applied=LKG. Reset the flag unconditionally, then repeat 12 successful HTTP CONNECTs and verify precisely four new unique Selected tags. Final accepted lifetime count is 61; do not infer throughput, real WAN DNS, CN licensed rules or long-term soak from this smoke.
+
+The marker `T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok` is legal only on full dual-architecture native success. Keep T20/T22/T24/T25 and all Restore/GC/official release gates OPEN.
+

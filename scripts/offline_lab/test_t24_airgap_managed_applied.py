@@ -1464,7 +1464,9 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                       mock.patch.object(applied, "probe_http_selected_failure_isolation",
                                                         return_value=3) as http_failure,
                                       mock.patch.object(applied, "probe_parallel_http_connects",
-                                                        return_value=12) as parallel_http):
+                                                        return_value=12) as parallel_http,
+                                      mock.patch.object(applied, "probe_parallel_http_selected_denials",
+                                                        return_value=12) as parallel_denials):
                                     stages = []
                                     pid = applied.probe_restart_after_held_stop(
                                         "/app", {}, "/daemon.sock", 100,
@@ -1476,7 +1478,10 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "http-restart-socks-routes", "http-restart-socks-refusal",
             "http-restart-socks-restored", "http-restart-reconnect-fd",
             "http-restart-connect-ip", "http-restart-selected-failure",
-            "http-restart-concurrent-connect", "http-restart-final-stop",
+            "http-restart-concurrent-connect",
+            "http-restart-parallel-selected-refusal",
+            "http-restart-parallel-selected-restored",
+            "http-restart-final-stop",
         ])
         self.assertEqual(pid, 222)
         self.assertEqual(commands, ["start", "stop"])
@@ -1492,7 +1497,11 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                          ("/daemon.sock", 5, 9, 222, 41001, node))
         self.assertTrue(callable(
             http_failure.call_args.kwargs["stage_hook"]))
-        parallel_http.assert_called_once_with(
+        self.assertEqual(parallel_http.call_count, 2)
+        self.assertEqual(parallel_http.call_args_list, [
+            mock.call("/daemon.sock", 5, 9, 222, 41001, node),
+            mock.call("/daemon.sock", 5, 9, 222, 41001, node)])
+        parallel_denials.assert_called_once_with(
             "/daemon.sock", 5, 9, 222, 41001, node)
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
@@ -1938,6 +1947,149 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         self.assertEqual(applied.safe_airgap_failure_code(RuntimeError(
             "parallel HTTP CONNECT changed approved Core PID or generation")),
             "http-parallel-core-replaced")
+
+
+    def test_parallel_http_selected_refusal_keeps_rule_direct_healthy(self):
+        class Node:
+            def __init__(self):
+                self.calls = 15
+                self.rejections = 5
+                self.parallel_payloads = [b"earlier-selected"]
+                self.reject_connections = False
+                self.failed = False
+
+        node = Node()
+        routed, denied = [], []
+        lock = threading.Lock()
+        def healthy(port, echo_port, payload):
+            self.assertEqual(echo_port, 41001)
+            self.assertTrue(node.reject_connections)
+            self.assertIn(port, (2080, 2081))
+            self.assertTrue(payload.startswith(b"http-parallel-denied-"))
+            self.assertTrue(payload.endswith(str(port).encode("ascii")))
+            with lock:
+                routed.append((port, payload))
+
+        def refuse(echo_port):
+            self.assertEqual(echo_port, 41001)
+            self.assertTrue(node.reject_connections)
+            with lock:
+                node.rejections += 1
+                denied.append(echo_port)
+
+        with mock.patch.object(applied, "unix_json",
+                               return_value=self.promoted_status(pid=222)) as api:
+            with mock.patch.object(applied, "probe_http_connect_ip",
+                                   side_effect=healthy) as http:
+                with mock.patch.object(applied, "probe_http_selected_refusal",
+                                       side_effect=refuse) as selected:
+                    completed = applied.probe_parallel_http_selected_denials(
+                        "/sock", 5, 9, 222, 41001, node)
+        self.assertEqual(completed, 12)
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(http.call_count, 8)
+        self.assertEqual(selected.call_count, 4)
+        self.assertEqual([sum(port == p for port, _ in routed)
+                          for p in (2080, 2081)], [4, 4])
+        self.assertEqual(len(set(payload for _, payload in routed)), 8)
+        self.assertEqual(denied, [41001] * 4)
+        self.assertEqual((node.calls, node.rejections), (15, 9))
+        self.assertEqual(node.parallel_payloads, [b"earlier-selected"])
+        self.assertFalse(node.reject_connections)
+        self.assertFalse(node.failed)
+
+    def test_parallel_http_selected_refusal_rejects_invalid_fixture_without_io(self):
+        class Node:
+            def __init__(self):
+                self.calls = 15
+                self.rejections = 5
+                self.parallel_payloads = []
+                self.reject_connections = False
+                self.failed = False
+
+        for defect in ("bad-pid", "bad-port", "bad-calls", "bad-rejections",
+                       "bad-tags", "failed", "already-rejecting"):
+            with self.subTest(defect=defect):
+                node = Node()
+                pid, port = 222, 41001
+                if defect == "bad-pid":
+                    pid = True
+                if defect == "bad-port":
+                    port = 0
+                if defect == "bad-calls":
+                    node.calls = True
+                if defect == "bad-rejections":
+                    node.rejections = -1
+                if defect == "bad-tags":
+                    node.parallel_payloads = None
+                if defect == "failed":
+                    node.failed = True
+                if defect == "already-rejecting":
+                    node.reject_connections = True
+                with mock.patch.object(applied, "unix_json") as api:
+                    with mock.patch.object(applied, "probe_http_connect_ip") as http:
+                        with self.assertRaises(RuntimeError):
+                            applied.probe_parallel_http_selected_denials(
+                                "/sock", 5, 9, pid, port, node)
+                        api.assert_not_called()
+                        http.assert_not_called()
+
+    def test_parallel_http_selected_refusal_is_fail_closed_even_with_bad_counts(self):
+        class Node:
+            def __init__(self):
+                self.calls = 15
+                self.rejections = 5
+                self.parallel_payloads = [b"earlier-selected"]
+                self.reject_connections = False
+                self.failed = False
+
+        good = self.promoted_status(pid=222)
+        drift = self.promoted_status(pid=333)
+        for defect in ("stale-start", "changed-pid", "rule-cross",
+                       "selected-bypass", "rejection-storm", "tag-cross",
+                       "upstream-failed", "worker-failed"):
+            with self.subTest(defect=defect):
+                node = Node()
+                lock = threading.Lock()
+                def healthy(port, _echo, _payload):
+                    with lock:
+                        if defect == "worker-failed" and port == 2080:
+                            raise RuntimeError("synthetic HTTP worker error")
+                        if defect == "rule-cross" and port == 2080:
+                            node.calls += 1
+                        if defect == "tag-cross" and port == 2081:
+                            node.parallel_payloads.append(b"invalid-selected")
+                def refused(_echo):
+                    with lock:
+                        if defect != "selected-bypass":
+                            node.rejections += (
+                                5 if defect == "rejection-storm" else 1)
+                        if defect == "upstream-failed":
+                            node.failed = True
+                statuses = ([drift] if defect == "stale-start" else
+                            [good, drift] if defect == "changed-pid" else
+                            [good, good])
+                with mock.patch.object(applied, "unix_json",
+                                       side_effect=statuses):
+                    with mock.patch.object(applied, "probe_http_connect_ip",
+                                           side_effect=healthy) as http:
+                        with mock.patch.object(applied, "probe_http_selected_refusal",
+                                               side_effect=refused):
+                            with self.assertRaises(RuntimeError):
+                                applied.probe_parallel_http_selected_denials(
+                                    "/sock", 5, 9, 222, 41001, node)
+                        if defect == "stale-start":
+                            http.assert_not_called()
+                self.assertFalse(node.reject_connections)
+
+        self.assertEqual(applied.safe_airgap_failure_code(RuntimeError(
+            "parallel HTTP Selected refusal bypassed or harmed Rule/Direct")),
+            "http-parallel-refusal-bypass")
+        self.assertEqual(applied.safe_airgap_failure_code(RuntimeError(
+            "parallel HTTP Selected refusal unexpectedly restarted Core")),
+            "http-parallel-refusal-core-changed")
+        self.assertEqual(applied.safe_airgap_failure_code(RuntimeError(
+            "private Selected URL and credentials")), "unclassified")
 
     def test_http_selected_refusal_accepts_only_complete_error_or_empty_close(self):
         class Conn:

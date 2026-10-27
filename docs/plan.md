@@ -1756,3 +1756,10 @@ docs/
 - 复用已有 32 字节唯一 `parallel_probe_payload` 标签。合成 Selected 上游必须只看到 **四条成功新连接与四个正确、不重复的 Selected 负载标签**；Rule/Direct 严禁通过 Selected，拒绝计数不能增加。测试前后核对 Core 原 PID、declaration/config revision 2 与 Applied=LKG，错误仍触发现有显式停止及冷启动不复活检查。Python 无网络负向用例覆盖错误 PID、失效节点、并发工作器错误、错误路由与恰好抵消的跨路由、标签重复及拒绝计数漂移。
 - 原生全绿后方能输出 `T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok`；明确保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。完整 T22、CN 五层/28 组真实资源、真实 DNS/远端、长时测试、恢复/发行安全门槛保持未完成；不引入 TUN 或订阅/ISP 分流层，稳定 `main` 不变。
 
+
+### 2026-10-27 — M5 ADR 0165 并发 HTTP Selected 上游拒绝与原 Core 恢复（T22 部分）
+
+- 复用 ADR 0164 双原生架构第四个 `network none` 容器和已批准的第六次真实 Daemon。完成六客户端/12 次全部成功 HTTP CONNECT 后，仅令合成 Selected SOCKS 节点拒绝上游：再同步释放 6 个 HTTP 客户端，两条线程分别由 Rule 2080、Direct 2081、Selected 2082 发起，每客户端两次全新 CONNECT，共 8 次 Rule/Direct 本地 HTTP 回显成功及 4 次 Selected 严格拒绝；任何早发 HTTP 200 均须继续证明应用数据零转发及有界 EOF/reset，不能静默直连。
+- 失败期间 Selected 的成功计数及此前 32 字节标签必须不变，拒绝计数有界增加 **4–16**，Rule/Direct 不得使用 Selected，真实 Core PID/Applied=LKG 与声明修订不变。无论成功或失败均在 finally 关闭合成拒绝开关；恢复后原 Core 再跑 6 客户端/12 次 HTTP CONNECT 成功测试，Selected 只多 4 条真实上游及四个正确的唯一标签。异常、错误路由、补偿性绕行、拒绝风暴、PID 漂移均失败关闭；原有 stop、监听关闭及冷启动停止意图验证保持。
+- 原生双架构新提交全绿方可输出 `T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok`；完整 T22 域名、DNS、UDP、HTTP absolute-form、真实 CN 五层/28 组、长期浸泡、真实断电恢复、正式离线发行、T20 千次 UI 重连仍未验收。继续保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`，不启用 TUN/订阅-ISP 分流，不改稳定 `main`。
+
