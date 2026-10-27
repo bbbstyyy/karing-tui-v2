@@ -2,6 +2,7 @@
 """Fast fail-closed ADR 0149 policy tests; no Core/Docker/remote sockets."""
 from __future__ import annotations
 
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import socket
@@ -1560,54 +1561,66 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 node.calls += 1
             return conn
 
-        with mock.patch.object(applied, "unix_json", side_effect=api):
-            with mock.patch.object(applied.boot, "checked",
-                                   side_effect=command) as cli:
-                with mock.patch.object(applied, "wait_status", side_effect=wait):
-                    with mock.patch.object(applied, "verify_child") as verify:
-                        with mock.patch.object(applied, "probe_isolated_routes",
-                                               side_effect=routes) as probe:
-                            with mock.patch.object(applied, "probe_isolated_failure",
-                                                   side_effect=refusal) as denied:
-                                with (mock.patch.object(applied, "verify_stopped_ports") as closed,
-                                      mock.patch.object(applied, "probe_bounded_reconnect_churn",
-                                                        return_value=72) as churn,
-                                      mock.patch.object(applied, "probe_http_route_isolation",
-                                                        return_value=3) as http_route,
-                                      mock.patch.object(applied, "probe_http_selected_failure_isolation",
-                                                        return_value=3) as http_failure,
-                                      mock.patch.object(applied, "probe_parallel_http_connects",
-                                                        return_value=12) as parallel_http,
-                                      mock.patch.object(applied, "probe_parallel_http_selected_denials",
-                                                        return_value=12) as parallel_denials,
-                                      mock.patch.object(applied, "probe_split_write_http_route_isolation",
-                                                        return_value=3) as split_http,
-                                      mock.patch.object(applied, "probe_http_absolute_route_isolation",
-                                                        return_value=3) as absolute_http,
-                                      mock.patch.object(
-                                          applied, "probe_http_absolute_selected_failure_isolation",
-                                          return_value=3) as absolute_denial,
-                                      mock.patch.object(applied, "probe_selected_socks_domain_route",
-                                                        return_value=1) as domain_probe,
-                                      mock.patch.object(
-                                          applied, "probe_selected_socks_domain_failure_isolation",
-                                          return_value=1) as domain_denial,
-                                      mock.patch.object(
-                                          applied, "probe_selected_http_connect_domain_route",
-                                          return_value=1) as http_domain,
-                                      mock.patch.object(
-                                          applied, "probe_selected_http_connect_domain_failure_isolation",
-                                          return_value=1) as http_domain_denial,
-                                      mock.patch.object(applied, "open_held_http_echo",
-                                                        side_effect=held_http_open) as held_dial,
-                                      mock.patch.object(applied, "assert_held_http_closed") as held_eof):
-                                    stages = []
-                                    pid = applied.probe_restart_after_held_stop(
-                                        "/app", {}, "/daemon.sock", 100,
-                                        "/approved-core", 5, 9,
-                                        41001, node, "b" * 64,
-                                        http_origin=origin,
-                                        stage_hook=stages.append)
+        # Flatten the shared patch scope: Python limits statically nested
+        # blocks, while each added real-Core audit needs an extra mock.
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(
+                applied, "unix_json", side_effect=api))
+            cli = stack.enter_context(mock.patch.object(
+                applied.boot, "checked", side_effect=command))
+            stack.enter_context(mock.patch.object(
+                applied, "wait_status", side_effect=wait))
+            verify = stack.enter_context(mock.patch.object(
+                applied, "verify_child"))
+            probe = stack.enter_context(mock.patch.object(
+                applied, "probe_isolated_routes", side_effect=routes))
+            denied = stack.enter_context(mock.patch.object(
+                applied, "probe_isolated_failure", side_effect=refusal))
+            closed = stack.enter_context(mock.patch.object(
+                applied, "verify_stopped_ports"))
+            churn = stack.enter_context(mock.patch.object(
+                applied, "probe_bounded_reconnect_churn", return_value=72))
+            http_route = stack.enter_context(mock.patch.object(
+                applied, "probe_http_route_isolation", return_value=3))
+            http_failure = stack.enter_context(mock.patch.object(
+                applied, "probe_http_selected_failure_isolation",
+                return_value=3))
+            parallel_http = stack.enter_context(mock.patch.object(
+                applied, "probe_parallel_http_connects", return_value=12))
+            parallel_denials = stack.enter_context(mock.patch.object(
+                applied, "probe_parallel_http_selected_denials",
+                return_value=12))
+            split_http = stack.enter_context(mock.patch.object(
+                applied, "probe_split_write_http_route_isolation",
+                return_value=3))
+            absolute_http = stack.enter_context(mock.patch.object(
+                applied, "probe_http_absolute_route_isolation",
+                return_value=3))
+            absolute_denial = stack.enter_context(mock.patch.object(
+                applied, "probe_http_absolute_selected_failure_isolation",
+                return_value=3))
+            domain_probe = stack.enter_context(mock.patch.object(
+                applied, "probe_selected_socks_domain_route",
+                return_value=1))
+            domain_denial = stack.enter_context(mock.patch.object(
+                applied, "probe_selected_socks_domain_failure_isolation",
+                return_value=1))
+            http_domain = stack.enter_context(mock.patch.object(
+                applied, "probe_selected_http_connect_domain_route",
+                return_value=1))
+            http_domain_denial = stack.enter_context(mock.patch.object(
+                applied, "probe_selected_http_connect_domain_failure_isolation",
+                return_value=1))
+            held_dial = stack.enter_context(mock.patch.object(
+                applied, "open_held_http_echo",
+                side_effect=held_http_open))
+            held_eof = stack.enter_context(mock.patch.object(
+                applied, "assert_held_http_closed"))
+            stages = []
+            pid = applied.probe_restart_after_held_stop(
+                "/app", {}, "/daemon.sock", 100,
+                "/approved-core", 5, 9, 41001, node, "b" * 64,
+                http_origin=origin, stage_hook=stages.append)
         self.assertEqual(stages, [
             "http-restart-preflight", "http-restart-core-start",
             "http-restart-socks-routes", "http-restart-socks-refusal",
