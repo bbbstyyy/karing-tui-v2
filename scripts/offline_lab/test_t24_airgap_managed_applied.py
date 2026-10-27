@@ -1592,6 +1592,9 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                       mock.patch.object(
                                           applied, "probe_selected_socks_domain_failure_isolation",
                                           return_value=1) as domain_denial,
+                                      mock.patch.object(
+                                          applied, "probe_selected_http_connect_domain_route",
+                                          return_value=1) as http_domain,
                                       mock.patch.object(applied, "open_held_http_echo",
                                                         side_effect=held_http_open) as held_dial,
                                       mock.patch.object(applied, "assert_held_http_closed") as held_eof):
@@ -1615,6 +1618,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "http-restart-absolute-selected-refusal",
             "http-restart-selected-socks-domain",
             "http-restart-selected-socks-domain-denial",
+            "http-restart-selected-http-connect-domain",
             "http-restart-held-http-open", "http-restart-final-stop",
             "http-restart-held-http-close",
         ])
@@ -1654,6 +1658,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                          ("/daemon.sock", 5, 9, 222, 41001, node))
         self.assertTrue(callable(
             domain_denial.call_args.kwargs["stage_hook"]))
+        http_domain.assert_called_once_with(
+            "/daemon.sock", 5, 9, 222, 41001, node)
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
         self.assertEqual(payloads, [
@@ -2947,6 +2953,181 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 RuntimeError(message)), expected)
         self.assertEqual(applied.safe_airgap_failure_code(
             RuntimeError("private token in origin header")), "unclassified")
+
+    def test_selected_http_connect_domain_exact_authority_response_and_echo(self):
+        class Conn:
+            def __init__(self, response):
+                self.buffer = bytearray(response)
+                self.writes = []
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+            def settimeout(self, timeout):
+                self.timeout = timeout
+            def sendall(self, data):
+                self.writes.append(data)
+            def recv(self, size):
+                amount = min(size, len(self.buffer))
+                result = bytes(self.buffer[:amount])
+                del self.buffer[:amount]
+                return result
+
+        payload = b"connect-domain-test"
+        response = (b"HTTP/1.1 200 Connection established\r\n"
+                    b"Proxy-Agent: t24\r\n\r\n" +
+                    loopback.REPLY_PREFIX + payload)
+        conn = Conn(response)
+        with mock.patch.object(applied.socket, "create_connection",
+                               return_value=conn) as dial:
+            applied.probe_selected_http_connect_domain(41001, payload)
+        dial.assert_called_once_with(("127.0.0.1", 2082), timeout=4)
+        authority = applied.SOCKS_DOMAIN_TARGET + b":41001"
+        self.assertEqual(conn.writes, [
+            b"CONNECT " + authority + b" HTTP/1.1\r\n"
+            b"Host: " + authority + b"\r\n\r\n",
+            payload,
+        ])
+        self.assertEqual(conn.timeout, 4)
+        self.assertTrue(conn.closed)
+
+        for response in (
+            b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n",
+            b"HTTP/1.0 202 Accepted\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n",
+            b"HTTP/1.1 200 OK\r\nX: " + b"x" * 1100,
+            b"WRONG 200 OK\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n\r\nincorrect-echo",
+            b"HTTP/1.1 200 OK\r\n\r\n" + loopback.REPLY_PREFIX,
+        ):
+            with self.subTest(bad_response=response[:38]):
+                conn = Conn(response)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_http_connect_domain(
+                            41001, payload)
+                self.assertTrue(conn.closed)
+
+        for echo_port, data in (
+            (0, payload), (True, payload), (65536, payload),
+            (41001, b""), (41001, b"x" * 129),
+            (41001, "not-bytes"),
+        ):
+            with self.subTest(port=echo_port, type=type(data).__name__):
+                with mock.patch.object(applied.socket, "create_connection") as dial:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_http_connect_domain(
+                            echo_port, data)
+                    dial.assert_not_called()
+
+    def test_selected_http_connect_domain_route_must_audit_actual_hostname(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.failed = False
+                self.reject_connections = False
+                self.hostname_requests = []
+                self.rejected_hostname_requests = []
+                self.counter_lock = threading.Lock()
+
+        good = self.promoted_status(pid=222)
+        changed = self.promoted_status(pid=333)
+        node = Node()
+        def successful(port, payload):
+            self.assertEqual((port, payload),
+                             (41001, b"http-connect-domain-echo"))
+            with node.counter_lock:
+                node.hostname_requests.append(
+                    (applied.SOCKS_DOMAIN_TARGET, port))
+                node.calls += 1
+
+        with (mock.patch.object(applied, "unix_json", return_value=good) as api,
+              mock.patch.object(applied, "probe_selected_http_connect_domain",
+                                side_effect=successful) as dial):
+            self.assertEqual(applied.probe_selected_http_connect_domain_route(
+                "/sock", 5, 9, 222, 41001, node), 1)
+        self.assertEqual(api.call_count, 2)
+        dial.assert_called_once_with(41001, b"http-connect-domain-echo")
+        self.assertEqual(node.calls, 9)
+        self.assertEqual(node.rejections, 3)
+        self.assertEqual(node.hostname_requests,
+                         [(applied.SOCKS_DOMAIN_TARGET, 41001)])
+
+        for defect in ("stale-core", "missing-receipt", "wrong-domain",
+                       "wrong-port", "duplicate-receipt", "silent-direct",
+                       "new-rejection", "new-rejection-receipt",
+                       "upstream-failed", "core-replaced"):
+            with self.subTest(defect=defect):
+                node = Node()
+                statuses = ([changed] if defect == "stale-core" else
+                            [good, changed] if defect == "core-replaced" else
+                            [good, good])
+                def corrupted(port, payload):
+                    self.assertEqual(port, 41001)
+                    self.assertEqual(payload, b"http-connect-domain-echo")
+                    if defect != "silent-direct":
+                        node.calls += 1
+                    if defect == "new-rejection":
+                        node.rejections += 1
+                    if defect == "new-rejection-receipt":
+                        node.rejected_hostname_requests.append(
+                            (applied.SOCKS_DOMAIN_TARGET, port))
+                    if defect == "upstream-failed":
+                        node.failed = True
+                    if defect != "missing-receipt":
+                        domain = (b"unapproved.invalid" if
+                                  defect == "wrong-domain" else
+                                  applied.SOCKS_DOMAIN_TARGET)
+                        actual_port = 41002 if defect == "wrong-port" else port
+                        with node.counter_lock:
+                            node.hostname_requests.append(
+                                (domain, actual_port))
+                            if defect == "duplicate-receipt":
+                                node.hostname_requests.append((domain, actual_port))
+                with (mock.patch.object(applied, "unix_json",
+                                        side_effect=statuses),
+                      mock.patch.object(
+                          applied, "probe_selected_http_connect_domain",
+                          side_effect=corrupted) as call):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_http_connect_domain_route(
+                            "/sock", 5, 9, 222, 41001, node)
+                    if defect == "stale-core":
+                        call.assert_not_called()
+
+        for defect in ("bad-port", "missing-receipts", "upstream-still-blocked"):
+            with self.subTest(fixture=defect):
+                node = Node()
+                echo_port = 41001
+                if defect == "bad-port":
+                    echo_port = True
+                elif defect == "missing-receipts":
+                    node.hostname_requests = None
+                else:
+                    node.reject_connections = True
+                with mock.patch.object(applied, "unix_json") as api:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_http_connect_domain_route(
+                            "/sock", 5, 9, 222, echo_port, node)
+                    api.assert_not_called()
+
+        for message, expected in (
+            ("invalid selected HTTP CONNECT domain fixture",
+             "http-domain-invalid"),
+            ("selected HTTP CONNECT domain header ended early",
+             "http-domain-header-eof"),
+            ("selected HTTP CONNECT domain bypassed raw upstream hostname",
+             "http-domain-bypass"),
+            ("selected HTTP CONNECT domain replaced approved Core",
+             "http-domain-core-drift"),
+        ):
+            self.assertEqual(
+                applied.safe_airgap_failure_code(RuntimeError(message)), expected)
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("untrusted hostname token leaked")), "unclassified")
 
     def test_http_connect_ip_request_and_exact_echo_on_three_mixed_inbounds(self):
         class Conn:
