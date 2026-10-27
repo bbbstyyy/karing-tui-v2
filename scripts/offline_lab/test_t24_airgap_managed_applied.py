@@ -1460,11 +1460,22 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                       mock.patch.object(applied, "probe_bounded_reconnect_churn",
                                                         return_value=72) as churn,
                                       mock.patch.object(applied, "probe_http_route_isolation",
-                                                        return_value=3) as http_route):
+                                                        return_value=3) as http_route,
+                                      mock.patch.object(applied, "probe_http_selected_failure_isolation",
+                                                        return_value=3) as http_failure):
+                                    stages = []
                                     pid = applied.probe_restart_after_held_stop(
                                         "/app", {}, "/daemon.sock", 100,
                                         "/approved-core", 5, 9,
-                                        41001, node, "b" * 64)
+                                        41001, node, "b" * 64,
+                                        stage_hook=stages.append)
+        self.assertEqual(stages, [
+            "http-restart-preflight", "http-restart-core-start",
+            "http-restart-socks-routes", "http-restart-socks-refusal",
+            "http-restart-socks-restored", "http-restart-reconnect-fd",
+            "http-restart-connect-ip", "http-restart-selected-failure",
+            "http-restart-final-stop",
+        ])
         self.assertEqual(pid, 222)
         self.assertEqual(commands, ["start", "stop"])
         self.assertEqual(cli.call_count, 2)
@@ -1474,6 +1485,11 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             222, 41001, node)
         http_route.assert_called_once_with(
             "/daemon.sock", 5, 9, 222, 41001, node)
+        http_failure.assert_called_once()
+        self.assertEqual(http_failure.call_args.args,
+                         ("/daemon.sock", 5, 9, 222, 41001, node))
+        self.assertTrue(callable(
+            http_failure.call_args.kwargs["stage_hook"]))
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
         self.assertEqual(payloads, [
@@ -1788,6 +1804,215 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                 "/daemon.sock", 5, 9, 222, 41001, node)
                         if defect == "wrong-pid":
                             dial.assert_not_called()
+
+
+    def test_http_selected_refusal_accepts_only_complete_error_or_empty_close(self):
+        class Conn:
+            def __init__(self, data=b"", error=None):
+                self.chunks = bytearray(data)
+                self.error = error
+                self.writes = []
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+            def settimeout(self, n):
+                self.timeout = n
+            def sendall(self, data):
+                self.writes.append(data)
+            def recv(self, n):
+                if self.chunks:
+                    result = bytes(self.chunks[:n])
+                    del self.chunks[:n]
+                    return result
+                if self.error is not None:
+                    raise self.error
+                return b""
+
+        valid = [
+            (b"", None), (b"", ConnectionResetError("reset")),
+            (b"", ConnectionAbortedError("abort")),
+            (b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n", None),
+            (b"HTTP/1.0 403 Forbidden\r\n\r\n", None),
+            # A premature 200 is only accepted after an application probe
+            # sees no payload bytes and the tunnel immediately closes.
+            (b"HTTP/1.1 200 Connection established\r\n\r\n", None),
+            (b"HTTP/1.1 200 Connection established\r\n\r\n",
+             ConnectionResetError("upstream-refused")),
+        ]
+        request = (b"CONNECT 127.0.0.1:41001 HTTP/1.1\r\n"
+                   b"Host: 127.0.0.1:41001\r\n\r\n")
+        for response, error in valid:
+            with self.subTest(valid=response[:15], error=type(error).__name__):
+                conn = Conn(response, error)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as dial:
+                    applied.probe_http_selected_refusal(41001)
+                dial.assert_called_once_with(("127.0.0.1", 2082), timeout=4)
+                if b" 200 " in response:
+                    self.assertEqual(conn.writes,
+                                     [request, b"http-selected-must-not-echo"])
+                else:
+                    self.assertEqual(conn.writes, [request])
+                self.assertEqual(conn.timeout, 4)
+                self.assertTrue(conn.closed)
+        invalid = [
+            (b"HTTP/1.1 200 Connection established\r\n\r\n" +
+             loopback.REPLY_PREFIX + b"http-selected-must-not-echo", None),
+            (b"HTTP/1.1 200 Connection established\r\n\r\n",
+             socket.timeout("leaked-stall")),
+            (b"HTTP/1.1 204 No Content\r\n\r\n", None),
+            (b"HTTP/1.1 302 Found\r\n\r\n", None),
+            (b"HTTP/1.1 502 Bad Gateway\r\n", None),
+            (b"HTTP/1.1 502 Bad Gateway\r\n", ConnectionResetError()),
+            (b"HTTP/1.1 502\r\nX: " + b"x" * 1100, None),
+            (b"BROKEN 502 Bad Gateway\r\n\r\n", None),
+        ]
+        for response, error in invalid:
+            with self.subTest(invalid=response[:25]):
+                conn = Conn(response, error)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_http_selected_refusal(41001)
+                self.assertTrue(conn.closed)
+        for echo in (0, -1, 65536, True, "41001", 41001.5):
+            with mock.patch.object(applied.socket, "create_connection") as dial:
+                with self.assertRaises(RuntimeError):
+                    applied.probe_http_selected_refusal(echo)
+                dial.assert_not_called()
+        with mock.patch.object(applied.socket, "create_connection",
+                               return_value=Conn(error=socket.timeout("hang"))):
+            with self.assertRaises(socket.timeout):
+                applied.probe_http_selected_refusal(41001)
+
+    def test_http_selected_upstream_failure_isolates_rule_and_recovers(self):
+        class Node:
+            calls = 8
+            rejections = 3
+            failed = False
+            reject_connections = False
+
+        node = Node()
+        ports = []
+        def route(port, target, payload):
+            self.assertTrue(node.reject_connections)
+            self.assertEqual(target, 41001)
+            self.assertEqual(payload, b"http-denied-" + str(port).encode())
+            ports.append(port)
+        def selected(_target):
+            self.assertTrue(node.reject_connections)
+            node.rejections += 1
+        def recovery(*_args):
+            self.assertFalse(node.reject_connections)
+            node.calls += 1
+            return 3
+        with mock.patch.object(applied, "unix_json",
+                               return_value=self.promoted_status(pid=222)) as api:
+            with mock.patch.object(applied, "probe_http_connect_ip",
+                                   side_effect=route) as proxy:
+                with mock.patch.object(applied, "probe_http_selected_refusal",
+                                       side_effect=selected) as denied:
+                    with mock.patch.object(applied, "probe_http_route_isolation",
+                                           side_effect=recovery) as recovered:
+                        stages = []
+                        result = applied.probe_http_selected_failure_isolation(
+                            "/daemon.sock", 5, 9, 222, 41001, node,
+                            stage_hook=stages.append)
+        self.assertEqual(stages, [
+            "http-failure-preflight", "http-failure-rule",
+            "http-failure-direct", "http-failure-selected-response",
+            "http-failure-node-audit", "http-failure-pid-after-restore",
+            "http-failure-three-inbound-recovery",
+            "http-failure-final-audit",
+        ])
+        self.assertEqual(result, 3)
+        self.assertEqual(ports, [2080, 2081])
+        self.assertEqual((node.calls, node.rejections), (9, 4))
+        self.assertFalse(node.reject_connections)
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(proxy.call_count, 2)
+        denied.assert_called_once_with(41001)
+        recovered.assert_called_once()
+
+    def test_http_failure_diagnostics_fail_before_any_core_contact(self):
+        with mock.patch.object(applied, "unix_json") as api:
+            with mock.patch.object(applied, "probe_http_connect_ip") as dial:
+                with self.assertRaises(RuntimeError):
+                    applied.probe_http_selected_failure_isolation(
+                        "/sock", 5, 9, 222, 41001, object(),
+                        stage_hook="not-callable")
+                with self.assertRaises(RuntimeError):
+                    applied.probe_restart_after_held_stop(
+                        "/app", {}, "/sock", 100, "/core", 5, 9,
+                        41001, object(), "b" * 64, stage_hook="unsafe")
+                api.assert_not_called()
+                dial.assert_not_called()
+        for reason, expected in (
+            ("HTTP Selected failure bypassed or did not reach upstream",
+             "http-selected-refusal-not-observed"),
+            ("HTTP Selected sent success or malformed refusal",
+             "http-selected-unsafe-response"),
+            ("HTTP Selected recovery bypassed or changed route audit",
+             "http-selected-recovery-bypass"),
+            ("HTTP Selected premature 200 tunnel forwarded data",
+             "http-selected-200-forwarded"),
+            ("HTTP Selected premature 200 tunnel did not close",
+             "http-selected-200-stalled"),
+        ):
+            self.assertEqual(
+                applied.safe_airgap_failure_code(RuntimeError(reason)),
+                expected)
+        self.assertEqual(
+            applied.safe_airgap_failure_code(
+                RuntimeError("HTTP secret path and token")),
+            "unclassified")
+
+    def test_http_selected_failure_rejects_pid_drift_and_any_bypass(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.failed = False
+                self.reject_connections = False
+        good = self.promoted_status(pid=222)
+        stale = self.promoted_status(pid=333)
+        for defect in ("stale", "rule-cross", "not-rejected",
+                       "selected-success", "pid-replaced", "recovery-bypass"):
+            with self.subTest(defect=defect):
+                node = Node()
+                def proxy(port, _echo, _data):
+                    if defect == "rule-cross" and port == 2080:
+                        node.calls += 1
+                def refusal(_echo):
+                    if defect == "selected-success":
+                        raise RuntimeError("unexpected HTTP 200")
+                    if defect != "not-rejected":
+                        node.rejections += 1
+                def recover(*_args):
+                    if defect != "recovery-bypass":
+                        node.calls += 1
+                    return 3
+                statuses = ([stale] if defect == "stale" else
+                            [good, stale] if defect == "pid-replaced" else
+                            [good, good])
+                with mock.patch.object(applied, "unix_json",
+                                       side_effect=statuses):
+                    with mock.patch.object(applied, "probe_http_connect_ip",
+                                           side_effect=proxy) as called:
+                        with mock.patch.object(applied, "probe_http_selected_refusal",
+                                               side_effect=refusal):
+                            with mock.patch.object(applied, "probe_http_route_isolation",
+                                                   side_effect=recover) as recovery:
+                                with self.assertRaises(RuntimeError):
+                                    applied.probe_http_selected_failure_isolation(
+                                        "/daemon.sock", 5, 9, 222, 41001, node)
+                self.assertFalse(node.reject_connections)
+                if defect == "stale":
+                    called.assert_not_called()
+                if defect != "recovery-bypass":
+                    recovery.assert_not_called()
 
     def test_managed_proxy_port_and_payload_guards(self):
         for port in (0, 9999, 28080):

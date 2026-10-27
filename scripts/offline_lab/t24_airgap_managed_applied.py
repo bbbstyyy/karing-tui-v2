@@ -634,6 +634,120 @@ def probe_http_route_isolation(sock, old_generation, promoted_generation,
     return len(MANAGED_PORTS)
 
 
+
+def probe_http_selected_refusal(echo_port):
+    """Fail closed even if the mixed HTTP inbound acknowledges CONNECT early.
+
+    Some CONNECT servers emit HTTP 200 before dialing the outbound. A 200
+    response alone does not prove that application data was routed. Require
+    an observed upstream refusal in the caller and bounded, data-free close.
+    """
+    require(type(echo_port) is int and 0 < echo_port < 65536,
+            "invalid HTTP Selected refusal target")
+    authority = b"127.0.0.1:" + str(echo_port).encode("ascii")
+    request = (b"CONNECT " + authority + b" HTTP/1.1\r\n" +
+               b"Host: " + authority + b"\r\n\r\n")
+    with socket.create_connection(("127.0.0.1", 2082), timeout=4) as conn:
+        conn.settimeout(4)
+        conn.sendall(request)
+        header = bytearray()
+        while len(header) < 1024:
+            try:
+                chunk = conn.recv(1)
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                require(not header, "partial HTTP Selected refusal header")
+                return
+            if not chunk:
+                require(not header, "truncated HTTP Selected refusal header")
+                return
+            header.extend(chunk)
+            if header.endswith(b"\r\n\r\n"):
+                tokens = bytes(header).split(b"\r\n", 1)[0].split()
+                require(len(tokens) >= 2 and
+                        tokens[0] in (b"HTTP/1.0", b"HTTP/1.1") and
+                        len(tokens[1]) == 3 and tokens[1].isdigit(),
+                        "HTTP Selected sent success or malformed refusal")
+                if tokens[1] == b"200":
+                    # HTTP 200 can acknowledge the CONNECT before outbound
+                    # dialing has finished. It is NOT counted as a success:
+                    # send a fixed local-only application probe and require
+                    # EOF/reset before even one application byte arrives.
+                    # The outer test separately requires a real Selected
+                    # upstream refusal and zero accepted node connections.
+                    try:
+                        conn.sendall(b"http-selected-must-not-echo")
+                        response = conn.recv(1)
+                    except (ConnectionResetError, ConnectionAbortedError,
+                            BrokenPipeError):
+                        return
+                    except socket.timeout as exc:
+                        raise RuntimeError(
+                            "HTTP Selected premature 200 tunnel did not close"
+                        ) from exc
+                    require(response == b"",
+                            "HTTP Selected premature 200 tunnel forwarded data")
+                    return
+                require(400 <= int(tokens[1]) <= 599,
+                        "HTTP Selected sent success or malformed refusal")
+                return
+        raise RuntimeError("HTTP Selected refusal header exceeds bound")
+
+
+def probe_http_selected_failure_isolation(sock, old_generation,
+                                          promoted_generation, pid,
+                                          echo_port, node, stage_hook=None):
+    """One Selected refusal, Rule/Direct continuity, same-Core recovery."""
+    require(stage_hook is None or callable(stage_hook),
+            "invalid HTTP Selected failure diagnostic hook")
+    def mark(label):
+        if stage_hook is not None:
+            stage_hook(label)
+    mark("http-failure-preflight")
+    require(type(pid) is int and pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            not node.failed and not node.reject_connections,
+            "unhealthy HTTP Selected failure fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == pid,
+        "HTTP Selected failure began on changed Core")
+    accepted, denied = node.calls, node.rejections
+    node.reject_connections = True
+    try:
+        for port in MANAGED_PORTS[:2]:
+            mark("http-failure-rule" if port == 2080 else
+                 "http-failure-direct")
+            probe_http_connect_ip(
+                port, echo_port, b"http-denied-" + str(port).encode("ascii"))
+            require(node.calls == accepted and node.rejections == denied and
+                    not node.failed,
+                    "HTTP Rule/Direct unexpectedly used failed Selected")
+        mark("http-failure-selected-response")
+        probe_http_selected_refusal(echo_port)
+        mark("http-failure-node-audit")
+        require(node.calls == accepted and node.rejections > denied and
+                not node.failed,
+                "HTTP Selected failure bypassed or did not reach upstream")
+    finally:
+        node.reject_connections = False
+    mark("http-failure-pid-after-restore")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == pid,
+        "HTTP Selected failure restarted approved Core")
+    mark("http-failure-three-inbound-recovery")
+    recovered = probe_http_route_isolation(
+        sock, old_generation, promoted_generation, pid, echo_port, node)
+    mark("http-failure-final-audit")
+    require(recovered == 3 and node.calls == accepted + 1
+            and node.rejections > denied and not node.failed
+            and not node.reject_connections,
+            "HTTP Selected recovery bypassed or changed route audit")
+    return 3
+
+
 def open_held_socks_echo(port, echo_port, payload):
     """Open one *live* local SOCKS5 echo stream; caller owns socket closure."""
     require(type(port) is int and port in MANAGED_PORTS and
@@ -1052,8 +1166,15 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
 
 def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
                                   old_generation, promoted_generation,
-                                  echo_port, node, declaration_sha):
+                                  echo_port, node, declaration_sha,
+                                  stage_hook=None):
     """Explicit restart after held-session stop: old generation never reappears."""
+    require(stage_hook is None or callable(stage_hook),
+            "invalid HTTP restart diagnostic stage hook")
+    def mark(label):
+        if stage_hook is not None:
+            stage_hook(label)
+    mark("http-restart-preflight")
     require(type(echo_port) is int and 0 < echo_port < 65536 and
             isinstance(declaration_sha, str) and len(declaration_sha) == 64
             and type(node.calls) is int and node.calls >= 0
@@ -1071,18 +1192,22 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
     original_calls, original_denials = node.calls, node.rejections
     started = False
     try:
+        mark("http-restart-core-start")
         boot.checked([app, "core", "start"], env, timeout=22)
         started = True
         running = wait_status(app, env, "running")
         pid = assert_promoted_core(
             running, old_generation, promoted_generation, None, True)
         verify_child(pid, daemon_pid, core_path)
+        mark("http-restart-socks-routes")
         probe_isolated_routes(echo_port, b"after-held-stop-start-", node)
+        mark("http-restart-socks-refusal")
         probe_isolated_failure(echo_port, b"after-held-stop-failed-", node)
         require(assert_promoted_core(
             unix_json(sock, "GET", "/v1/status"),
             old_generation, promoted_generation, None, True) == pid,
             "Selected refusal restarted Core after held-session recovery")
+        mark("http-restart-socks-restored")
         probe_isolated_routes(echo_port, b"after-held-stop-restored-", node)
         require(assert_promoted_core(
             unix_json(sock, "GET", "/v1/status"),
@@ -1093,16 +1218,26 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
                 not node.failed and not node.reject_connections,
                 "post-held-stop restart bypassed Selected or failed recovery")
         # This remains inside the same explicit start/stop and finally guard.
+        mark("http-restart-reconnect-fd")
         require(probe_bounded_reconnect_churn(
             sock, daemon_pid, core_path, old_generation, promoted_generation,
             pid, echo_port, node) == 72,
             "bounded reconnect smoke did not complete all three inbounds")
+        mark("http-restart-connect-ip")
         require(probe_http_route_isolation(
             sock, old_generation, promoted_generation, pid, echo_port,
             node) == 3, "HTTP CONNECT three-inbound smoke failed")
+        mark("http-restart-selected-failure")
+        require(probe_http_selected_failure_isolation(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node, stage_hook=mark) == 3,
+            "HTTP Selected failure isolation did not recover")
         return pid
     finally:
         if started:
+            # Do not overwrite the failing stage during mandatory cleanup.
+            if sys.exc_info()[0] is None:
+                mark("http-restart-final-stop")
             # Even an assertion failure must not leave a live test Core behind.
             boot.checked([app, "core", "stop"], env, timeout=20)
             stopped = wait_status(app, env, "stopped")
@@ -1166,6 +1301,21 @@ AIRGAP_FAILURE_CODES = {
         "crash-pidfd-drift-refused",
     "recovered promoted Core restarted after Selected failure":
         "crash-selected-restarted",
+    "invalid HTTP restart diagnostic stage hook": "http-invalid-restart-hook",
+    "invalid HTTP Selected failure diagnostic hook": "http-invalid-failure-hook",
+    "HTTP CONNECT response not an approved success": "http-connect-not-200",
+    "HTTP CONNECT numeric-local exact echo mismatch": "http-echo-mismatch",
+    "HTTP Selected sent success or malformed refusal": "http-selected-unsafe-response",
+    "HTTP Selected premature 200 tunnel did not close": "http-selected-200-stalled",
+    "HTTP Selected premature 200 tunnel forwarded data": "http-selected-200-forwarded",
+    "HTTP Selected refusal header exceeds bound": "http-selected-header-too-large",
+    "partial HTTP Selected refusal header": "http-selected-partial-header",
+    "truncated HTTP Selected refusal header": "http-selected-truncated-header",
+    "HTTP Rule/Direct unexpectedly used failed Selected": "http-rule-crossed-selected",
+    "HTTP Selected failure bypassed or did not reach upstream": "http-selected-refusal-not-observed",
+    "HTTP Selected failure restarted approved Core": "http-selected-restarted-core",
+    "HTTP Selected recovery bypassed or changed route audit": "http-selected-recovery-bypass",
+    "HTTP Selected failure isolation did not recover": "http-selected-no-recovery",
 }
 
 
@@ -1481,14 +1631,21 @@ def main(argv=None):
                         # three held client tunnels were explicitly severed.
                         # Only a fresh operator request may restart Core.
                         def after_cycles(daemon, sock, initial):
+                            nonlocal phase
+                            phase = "http-restart-entry"
                             assert_promoted_core(initial, generation,
                                                  promoted_generation, None, False)
                             cold.configured_caps(unix_json(
                                 sock, "GET", "/v1/capabilities"))
+                            def http_stage(label):
+                                nonlocal phase
+                                # Fixed test-generated labels only, never logs.
+                                phase = label
                             return probe_restart_after_held_stop(
                                 args.app, env, sock, daemon.pid, args.core,
                                 generation, promoted_generation,
-                                echo.server_address[1], node, staged_sha)
+                                echo.server_address[1], node, staged_sha,
+                                stage_hook=http_stage)
 
                         phase = "held-stop-explicit-restart"
                         require(type(run_daemon(
@@ -1512,7 +1669,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 52 and node.rejections >= 11 and
+                        require(node.calls == 53 and node.rejections >= 11 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -1536,6 +1693,7 @@ def main(argv=None):
         print("T20_AIRGAP_BOUNDED_RECONNECT_FD=ok")
         print("T20_1000_RECONNECTS_VERIFIED=false")
         print("T22_AIRGAP_HTTP_CONNECT_IP=ok")
+        print("T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
