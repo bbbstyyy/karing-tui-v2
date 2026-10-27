@@ -115,3 +115,10 @@ Native pass adds T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok only. Never misreport h
 
 
 ADR 0163 CI diagnostic: a failed native run may expose fixed `http-restart-*` and `http-failure-*` labels plus the allowlisted `T24_AIRGAP_FAILURE_CODE`. These are emitted only on failure to locate the offending phase, never the exception text, Daemon log, endpoints or tokens. Do not weaken the HTTP Selected failure acceptance criteria, add retries or increase network/DNS privileges to make a red run green. Any new head requires complete amd64/arm64 native provenance and ordinary/Go Race/integration checks before merge.
+
+### ADR 0164: simultaneous HTTP CONNECT mixed-inbound audit
+
+After the Selected HTTP refusal/recovery step, keep the same sixth Daemon and approved Core and barrier-release six HTTP CONNECT clients (two per Rule/Direct/Selected). Each completes two numeric-localhost HTTP/1.1 CONNECT requests and exact 32-byte payload echoes; the Selected synthetic node must observe exactly four new accepts and **four distinct, expected Selected-only payload tags** even when TCP fragments bytes. Reject any Rule/Direct Selected traversal, compensated route swap, duplicate tag, new rejection or changed Core PID/Applied=LKG. The original concurrent barrier/future/per-socket time limits and explicit Core stop are unchanged. Final Selected accepted count becomes 57.
+
+Only a passing exact-head native run can print `T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok`. This is short bounded concurrency, not 1,000 reconnects, hostname DNS, UDP, CN resource licensing, restore or long soak.
+
