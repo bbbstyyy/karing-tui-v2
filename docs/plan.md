@@ -1749,3 +1749,10 @@ docs/
 - 在 ADR 0162 已批准 Core 的同一第六次真实 Daemon 与双架构第四个 network-none 容器中，暂时拒绝合成 Selected SOCKS 节点的上游连接。要求 Rule:2080、Direct:2081 的 HTTP CONNECT 数字 localhost 回显仍成功，且合成 Selected 上游的接受与拒绝计数均不能因这两条流量变化。
 - 通过 Selected:2082 的 HTTP CONNECT 接受空 EOF/reset 或完整受限 HTTP/1.x 4xx/5xx；若 mixed HTTP 入口在上游拨号结果前已返回 CONNECT 200，必须再发送固定的本机应用层探针，并在原有四秒上限内验证零数据与 EOF/reset，否则立即失败。其他 2xx、转发任何应用数据、200 隧道卡住、重定向、超时、畸形/截断头和隐式直连旁路仍严格拒绝；还必须独立观察到 Selected 上游拒绝且成功接入计数不增长。任何失败均在 finally 中清除故障开关，然后再次核对 Core PID/代际并复验全部三个 HTTP CONNECT，Selected 恢复后仅增加一次合成上游连接。
 - 双原生完全通过才输出 T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok。保留 T22_HOSTNAME_AND_UDP_VERIFIED=false、T20_1000_RECONNECTS_VERIFIED=false、T25_72H_7D_30D_SOAK_VERIFIED=false，且 T15/T23/T24/T25、CN 五层/28 组资源、许可证离线分发、Restore/GC、正式发行门槛仍未满足。无 TUN、订阅/ISP 分流层，稳定 main 不修改。
+
+### 2026-10-27 — M5 ADR 0164 六客户端并发 HTTP CONNECT 路由隔离（T22 部分，未验收）
+
+- 复用 ADR 0163 故障恢复后的第六次真实 Daemon、已批准 Core PID、Applied=LKG generation 2 与同一个双架构隔离 `docker --network none` 容器，使用 barrier 同步释放六个 HTTP CONNECT 客户端，Rule:2080 / Direct:2081 / Selected:2082 各两个；每个客户端顺序新建两条 HTTP/1.1 数字本机连接并完成精确回显，总计 **12 条真实 HTTP CONNECT**，不涉及网络 DNS。
+- 复用已有 32 字节唯一 `parallel_probe_payload` 标签。合成 Selected 上游必须只看到 **四条成功新连接与四个正确、不重复的 Selected 负载标签**；Rule/Direct 严禁通过 Selected，拒绝计数不能增加。测试前后核对 Core 原 PID、declaration/config revision 2 与 Applied=LKG，错误仍触发现有显式停止及冷启动不复活检查。Python 无网络负向用例覆盖错误 PID、失效节点、并发工作器错误、错误路由与恰好抵消的跨路由、标签重复及拒绝计数漂移。
+- 原生全绿后方能输出 `T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok`；明确保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。完整 T22、CN 五层/28 组真实资源、真实 DNS/远端、长时测试、恢复/发行安全门槛保持未完成；不引入 TUN 或订阅/ISP 分流层，稳定 `main` 不变。
+
