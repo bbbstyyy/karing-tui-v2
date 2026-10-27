@@ -886,6 +886,77 @@ def probe_http_connect_ip(port, echo_port, payload):
 
 
 
+def probe_selected_http_connect_domain(echo_port, payload):
+    """Actual HTTP CONNECT hostname over Selected, without client-side DNS."""
+    require(type(echo_port) is int and 0 < echo_port < 65536 and
+            type(payload) is bytes and 1 <= len(payload) <= 128,
+            "invalid selected HTTP CONNECT domain fixture")
+    authority = SOCKS_DOMAIN_TARGET + b":" + str(echo_port).encode("ascii")
+    request = (b"CONNECT " + authority + b" HTTP/1.1\r\n" +
+               b"Host: " + authority + b"\r\n\r\n")
+    with socket.create_connection(("127.0.0.1", 2082), timeout=4) as conn:
+        conn.settimeout(4)
+        conn.sendall(request)
+        header = bytearray()
+        while not header.endswith(b"\r\n\r\n") and len(header) < 1024:
+            fragment = conn.recv(1)
+            require(bool(fragment),
+                    "selected HTTP CONNECT domain header ended early")
+            header.extend(fragment)
+        require(header.endswith(b"\r\n\r\n"),
+                "selected HTTP CONNECT domain header exceeded bound")
+        status = bytes(header).split(b"\r\n", 1)[0].split(b" ", 2)
+        require(len(status) >= 2 and
+                status[0] in (b"HTTP/1.0", b"HTTP/1.1") and
+                status[1] == b"200",
+                "selected HTTP CONNECT domain returned non-200")
+        conn.sendall(payload)
+        require(exact_read(conn, len(loopback.REPLY_PREFIX) + len(payload)) ==
+                loopback.REPLY_PREFIX + payload,
+                "selected HTTP CONNECT domain echo mismatch")
+
+
+def probe_selected_http_connect_domain_route(
+        sock, old_generation, promoted_generation, expected_pid,
+        echo_port, node):
+    """Audit real HTTP authority -> exact raw upstream SOCKS DOMAIN receipt."""
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(getattr(node, "calls", None)) is int and
+            node.calls >= 0 and
+            type(getattr(node, "rejections", None)) is int and
+            node.rejections >= 0 and
+            type(getattr(node, "hostname_requests", None)) is list and
+            type(getattr(node, "rejected_hostname_requests", None)) is list and
+            getattr(node, "counter_lock", None) is not None and
+            not node.failed and not node.reject_connections,
+            "invalid selected HTTP CONNECT domain route fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "selected HTTP CONNECT domain began on changed Core")
+    before_calls, before_denied = node.calls, node.rejections
+    with node.counter_lock:
+        original_success = list(node.hostname_requests)
+        original_denied = list(node.rejected_hostname_requests)
+    probe_selected_http_connect_domain(echo_port, b"http-connect-domain-echo")
+    with node.counter_lock:
+        recorded_success = list(node.hostname_requests)
+        recorded_denied = list(node.rejected_hostname_requests)
+    require(recorded_success == original_success +
+            [(SOCKS_DOMAIN_TARGET, echo_port)] and
+            recorded_denied == original_denied and
+            node.calls == before_calls + 1 and
+            node.rejections == before_denied and
+            not node.failed and not node.reject_connections,
+            "selected HTTP CONNECT domain bypassed raw upstream hostname")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "selected HTTP CONNECT domain replaced approved Core")
+    return 1
+
+
 def probe_split_write_http_connect_ip(port, echo_port, payload):
     """Multi-write numeric localhost CONNECT; no TCP segmentation claim."""
     require(type(port) is int and port in MANAGED_PORTS and
@@ -1998,6 +2069,11 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
             sock, old_generation, promoted_generation, pid, echo_port,
             node, stage_hook=mark) == 1,
             "selected SOCKS domain denial stage did not recover")
+        mark("http-restart-selected-http-connect-domain")
+        require(probe_selected_http_connect_domain_route(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node) == 1,
+            "selected HTTP CONNECT domain route probe did not finish")
         mark("http-restart-held-http-open")
         held_before, denied_before = node.calls, node.rejections
         for port in MANAGED_PORTS:
@@ -2234,6 +2310,21 @@ AIRGAP_FAILURE_CODES = {
     "Selected SOCKS domain denial recovery drifted": "socks-domain-denial-drift",
     "selected SOCKS domain denial stage did not recover":
         "socks-domain-denial-incomplete",
+    "invalid selected HTTP CONNECT domain fixture": "http-domain-invalid",
+    "selected HTTP CONNECT domain header ended early": "http-domain-header-eof",
+    "selected HTTP CONNECT domain header exceeded bound":
+        "http-domain-header-bound",
+    "selected HTTP CONNECT domain returned non-200": "http-domain-not-200",
+    "selected HTTP CONNECT domain echo mismatch": "http-domain-echo",
+    "invalid selected HTTP CONNECT domain route fixture":
+        "http-domain-route-invalid",
+    "selected HTTP CONNECT domain began on changed Core": "http-domain-stale",
+    "selected HTTP CONNECT domain bypassed raw upstream hostname":
+        "http-domain-bypass",
+    "selected HTTP CONNECT domain replaced approved Core":
+        "http-domain-core-drift",
+    "selected HTTP CONNECT domain route probe did not finish":
+        "http-domain-incomplete",
 }
 
 
@@ -2591,7 +2682,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 68 and node.rejections >= 17 and
+                        require(node.calls == 69 and node.rejections >= 17 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -2627,6 +2718,7 @@ def main(argv=None):
         print("T22_AIRGAP_HTTP_ABSOLUTE_SELECTED_FAIL_CLOSED=ok")
         print("T22_AIRGAP_SELECTED_SOCKS_DOMAIN_PASSTHROUGH=ok")
         print("T22_AIRGAP_SELECTED_SOCKS_DOMAIN_FAIL_CLOSED=ok")
+        print("T22_AIRGAP_SELECTED_HTTP_CONNECT_DOMAIN=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
