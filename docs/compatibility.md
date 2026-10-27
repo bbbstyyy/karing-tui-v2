@@ -529,3 +529,9 @@ The sixth real native amd64/arm64 network-none Daemon session must begin from th
 - In the existing sixth native Daemon, six barrier-released clients issue twelve mixed-inbound HTTP CONNECT operations while only the synthetic Selected upstream rejects: eight Rule/Direct exact localhost echoes must succeed, four Selected attempts must terminate without tunneled application data, and the synthetic Selected successful accept/tag arrays must not change. Demand 4–16 measured upstream failures with no fallback, failed node, unauthorized PID or generation drift. Restore the failure flag in `finally` and rerun twelve concurrent successful HTTP CONNECTs with four exact unique Selected tags.
 - Only a full native check may emit `T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok`; this is a short airgap failure isolation smoke, not DNS/UDP, real CN routing, long-duration resource budgets, user restore or release approval.
 
+
+### M5 / ADR 0166 — held HTTP CONNECT sessions terminate after explicit Core stop
+
+- Retain three full HTTP CONNECT+echo TCP sessions on the already approved Core (Rule/Direct/Selected numeric localhost) until the existing final explicit `core stop`. Verify only Selected traverses its synthetic upstream, the same Core PID and Applied=LKG before stopping, persisted stopped intent and no listeners after stop, and bounded EOF/reset for all three old HTTP sessions. Unconditionally close sockets on every failure; no additional Core restart, SIGKILL, external network or privilege is allowed.
+- Emit `T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok` only after a passing native experiment; hostname/DNS/UDP, production CN routing, T20 1,000 reconnects, 72h/7d/30d soak, Restore/GC, legal offline bundle and release approval remain OPEN.
+

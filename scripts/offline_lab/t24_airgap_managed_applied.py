@@ -854,6 +854,57 @@ def probe_http_selected_failure_isolation(sock, old_generation,
     return 3
 
 
+
+def open_held_http_echo(port, echo_port, payload):
+    """Leave a verified HTTP CONNECT echo tunnel open until Core is stopped.
+
+    The caller owns the live socket on success. Any partial handshake/echo
+    closes the socket before returning an error; no external hostnames.
+    """
+    require(type(port) is int and port in MANAGED_PORTS and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(payload) is bytes and 1 <= len(payload) <= 128,
+            "invalid held HTTP CONNECT fixture")
+    authority = b"127.0.0.1:" + str(echo_port).encode("ascii")
+    request = (b"CONNECT " + authority + b" HTTP/1.1\r\n" +
+               b"Host: " + authority + b"\r\n\r\n")
+    conn = socket.create_connection(("127.0.0.1", port), timeout=4)
+    try:
+        conn.settimeout(4)
+        conn.sendall(request)
+        response = bytearray()
+        while not response.endswith(b"\r\n\r\n") and len(response) < 1024:
+            chunk = conn.recv(1)
+            require(chunk != b"", "held HTTP CONNECT ended before full header")
+            response.extend(chunk)
+        require(response.endswith(b"\r\n\r\n"),
+                "held HTTP CONNECT response header exceeded bound")
+        status = bytes(response).split(b"\r\n", 1)[0].split(b" ")
+        require(len(status) >= 2 and
+                status[0] in (b"HTTP/1.0", b"HTTP/1.1") and
+                status[1] == b"200",
+                "held HTTP CONNECT did not establish tunnel")
+        conn.sendall(payload)
+        require(exact_read(conn, len(loopback.REPLY_PREFIX) + len(payload)) ==
+                loopback.REPLY_PREFIX + payload,
+                "held HTTP CONNECT initial echo mismatch")
+        return conn
+    except BaseException:
+        conn.close()
+        raise
+
+
+def assert_held_http_closed(conn):
+    """A stopped Core must not retain the already-established HTTP tunnel."""
+    conn.settimeout(3)
+    try:
+        data = conn.recv(1)
+    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+        return
+    require(data == b"",
+            "stopped Core forwarded data on held HTTP CONNECT tunnel")
+
+
 def open_held_socks_echo(port, echo_port, payload):
     """Open one *live* local SOCKS5 echo stream; caller owns socket closure."""
     require(type(port) is int and port in MANAGED_PORTS and
@@ -1297,6 +1348,9 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
     verify_stopped_ports()
     original_calls, original_denials = node.calls, node.rejections
     started = False
+    held_http = []
+    held_before = None
+    denied_before = None
     try:
         mark("http-restart-core-start")
         boot.checked([app, "core", "start"], env, timeout=22)
@@ -1350,20 +1404,50 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
         require(probe_parallel_http_connects(
             sock, old_generation, promoted_generation, pid, echo_port,
             node) == 12, "parallel HTTP Selected did not recover")
+        mark("http-restart-held-http-open")
+        held_before, denied_before = node.calls, node.rejections
+        for port in MANAGED_PORTS:
+            payload = b"held-http-stop-" + str(port).encode("ascii")
+            held_http.append(open_held_http_echo(port, echo_port, payload))
+            require(node.calls == held_before + (1 if port == 2082 else 0)
+                    and node.rejections == denied_before and
+                    not node.failed and not node.reject_connections,
+                    "held HTTP CONNECT crossed Selected or bypassed its node")
+        require(assert_promoted_core(
+            unix_json(sock, "GET", "/v1/status"),
+            old_generation, promoted_generation, None, True) == pid,
+            "held HTTP CONNECT changed approved Core before stop")
         return pid
     finally:
-        if started:
-            # Do not overwrite the failing stage during mandatory cleanup.
-            if sys.exc_info()[0] is None:
-                mark("http-restart-final-stop")
-            # Even an assertion failure must not leave a live test Core behind.
-            boot.checked([app, "core", "stop"], env, timeout=20)
-            stopped = wait_status(app, env, "stopped")
-            require(assert_promoted_core(
-                stopped, old_generation, promoted_generation,
-                None, False) == 0,
-                "post-held-stop Core did not persist explicit stopped intent")
-            verify_stopped_ports()
+        try:
+            if started:
+                # Do not overwrite an earlier failing phase during cleanup.
+                if sys.exc_info()[0] is None:
+                    mark("http-restart-final-stop")
+                # The same preexisting explicit stop must sever all already
+                # established HTTP tunnels, even on an upstream error.
+                boot.checked([app, "core", "stop"], env, timeout=20)
+                stopped = wait_status(app, env, "stopped")
+                require(assert_promoted_core(
+                    stopped, old_generation, promoted_generation,
+                    None, False) == 0,
+                    "post-held-stop Core did not persist explicit stopped intent")
+                if held_http:
+                    if sys.exc_info()[0] is None:
+                        mark("http-restart-held-http-close")
+                    for conn in held_http:
+                        assert_held_http_closed(conn)
+                if len(held_http) == len(MANAGED_PORTS):
+                    require(node.calls == held_before + 1 and
+                            node.rejections == denied_before and
+                            not node.failed and not node.reject_connections,
+                            "held HTTP CONNECT routing drifted during stop")
+                verify_stopped_ports()
+        finally:
+            # Failure during open, stop, EOF audit, or stopped-state audit
+            # must never leak a localhost test socket.
+            for conn in held_http:
+                conn.close()
 
 
 def verify_stopped_ports():
@@ -1458,6 +1542,19 @@ AIRGAP_FAILURE_CODES = {
         "http-parallel-refusal-incomplete",
     "parallel HTTP Selected did not recover":
         "http-parallel-refusal-no-recovery",
+    "invalid held HTTP CONNECT fixture": "held-http-invalid",
+    "held HTTP CONNECT ended before full header": "held-http-header-eof",
+    "held HTTP CONNECT response header exceeded bound": "held-http-header-bound",
+    "held HTTP CONNECT did not establish tunnel": "held-http-non-200",
+    "held HTTP CONNECT initial echo mismatch": "held-http-bad-echo",
+    "stopped Core forwarded data on held HTTP CONNECT tunnel":
+        "held-http-still-forwarding",
+    "held HTTP CONNECT crossed Selected or bypassed its node":
+        "held-http-route-bypass",
+    "held HTTP CONNECT changed approved Core before stop":
+        "held-http-pid-drift",
+    "held HTTP CONNECT routing drifted during stop":
+        "held-http-stop-route-drift",
 }
 
 
@@ -1811,7 +1908,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 61 and node.rejections >= 15 and
+                        require(node.calls == 62 and node.rejections >= 15 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -1838,6 +1935,7 @@ def main(argv=None):
         print("T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok")
         print("T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok")
         print("T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok")
+        print("T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")

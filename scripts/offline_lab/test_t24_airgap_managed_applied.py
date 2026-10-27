@@ -1447,6 +1447,17 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             self.assertEqual(payload, b"after-held-stop-failed-")
             node.rejections += 1
 
+        opened_http = []
+        def held_http_open(port, echo_port, payload):
+            self.assertEqual(echo_port, 41001)
+            self.assertEqual(payload,
+                             b"held-http-stop-" + str(port).encode())
+            conn = mock.Mock()
+            opened_http.append(conn)
+            if port == 2082:
+                node.calls += 1
+            return conn
+
         with mock.patch.object(applied, "unix_json", side_effect=api):
             with mock.patch.object(applied.boot, "checked",
                                    side_effect=command) as cli:
@@ -1466,7 +1477,10 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                       mock.patch.object(applied, "probe_parallel_http_connects",
                                                         return_value=12) as parallel_http,
                                       mock.patch.object(applied, "probe_parallel_http_selected_denials",
-                                                        return_value=12) as parallel_denials):
+                                                        return_value=12) as parallel_denials,
+                                      mock.patch.object(applied, "open_held_http_echo",
+                                                        side_effect=held_http_open) as held_dial,
+                                      mock.patch.object(applied, "assert_held_http_closed") as held_eof):
                                     stages = []
                                     pid = applied.probe_restart_after_held_stop(
                                         "/app", {}, "/daemon.sock", 100,
@@ -1481,7 +1495,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "http-restart-concurrent-connect",
             "http-restart-parallel-selected-refusal",
             "http-restart-parallel-selected-restored",
-            "http-restart-final-stop",
+            "http-restart-held-http-open", "http-restart-final-stop",
+            "http-restart-held-http-close",
         ])
         self.assertEqual(pid, 222)
         self.assertEqual(commands, ["start", "stop"])
@@ -1508,7 +1523,12 @@ class AppliedManagedPolicyTests(unittest.TestCase):
         self.assertEqual(payloads, [
             b"after-held-stop-start-", b"after-held-stop-restored-",
         ])
-        self.assertEqual((node.calls, node.rejections), (8, 4))
+        self.assertEqual((node.calls, node.rejections), (9, 4))
+        self.assertEqual(held_dial.call_count, 3)
+        self.assertEqual(held_eof.call_args_list,
+                         [mock.call(conn) for conn in opened_http])
+        self.assertTrue(all(conn.close.call_count == 1
+                            for conn in opened_http))
         self.assertEqual(closed.call_count, 2)
         self.assertFalse(state["running"])
 
@@ -1698,6 +1718,101 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 if defect == "stale-start":
                     fd.assert_not_called()
                     probe.assert_not_called()
+
+
+    def test_open_held_http_echo_retains_live_socket_and_cleans_failures(self):
+        class Conn:
+            def __init__(self, response):
+                self.pending = bytearray(response)
+                self.closed = False
+                self.writes = []
+                self.timeouts = []
+            def settimeout(self, value):
+                self.timeouts.append(value)
+            def sendall(self, payload):
+                self.writes.append(payload)
+            def recv(self, size):
+                n = min(size, len(self.pending))
+                chunk = bytes(self.pending[:n])
+                del self.pending[:n]
+                return chunk
+            def close(self):
+                self.closed = True
+
+        payload = b"held-http-stop-2082"
+        for port in applied.MANAGED_PORTS:
+            with self.subTest(port=port):
+                response = (b"HTTP/1.1 200 Connection established\r\n"
+                            b"Via: local-test\r\n\r\n" +
+                            loopback.REPLY_PREFIX + payload)
+                conn = Conn(response)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as dial:
+                    self.assertIs(
+                        applied.open_held_http_echo(port, 41001, payload), conn)
+                dial.assert_called_once_with(("127.0.0.1", port), timeout=4)
+                self.assertFalse(conn.closed)
+                self.assertEqual(conn.timeouts, [4])
+                self.assertEqual(conn.writes, [
+                    b"CONNECT 127.0.0.1:41001 HTTP/1.1\r\n"
+                    b"Host: 127.0.0.1:41001\r\n\r\n", payload
+                ])
+                conn.close()
+                self.assertTrue(conn.closed)
+
+        for reply in (
+            b"HTTP/1.1 503 Service Unavailable\r\n\r\n",
+            b"HTTP/1.1 200 Connection established\r\n",
+            b"HTTP/1.1 200 OK\r\nX: " + b"x" * 1050,
+            b"INVALID 200 OK\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n\r\nbad-echo",
+        ):
+            with self.subTest(reply=reply[:30]):
+                conn = Conn(reply)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises(RuntimeError):
+                        applied.open_held_http_echo(2082, 41001, payload)
+                self.assertTrue(conn.closed)
+        for port, echo, message in (
+            (2089, 41001, payload), (True, 41001, payload),
+            (2082, True, payload), (2082, 65536, payload),
+            (2082, 41001, b""), (2082, 41001, "not-bytes"),
+            (2082, 41001, b"x" * 129),
+        ):
+            with self.subTest(bad_port=port, bad_echo=echo):
+                with mock.patch.object(applied.socket, "create_connection") as dial:
+                    with self.assertRaises(RuntimeError):
+                        applied.open_held_http_echo(port, echo, message)
+                    dial.assert_not_called()
+
+    def test_held_http_must_eof_or_reset_after_explicit_core_stop(self):
+        for observed in (b"", ConnectionResetError("reset"),
+                         ConnectionAbortedError("abort"), BrokenPipeError("pipe")):
+            conn = mock.Mock()
+            if isinstance(observed, bytes):
+                conn.recv.return_value = observed
+            else:
+                conn.recv.side_effect = observed
+            applied.assert_held_http_closed(conn)
+            conn.settimeout.assert_called_once_with(3)
+            conn.recv.assert_called_once_with(1)
+        for observed in (b"private data", socket.timeout("still alive")):
+            conn = mock.Mock()
+            if isinstance(observed, bytes):
+                conn.recv.return_value = observed
+            else:
+                conn.recv.side_effect = observed
+            with self.assertRaises((RuntimeError, socket.timeout)):
+                applied.assert_held_http_closed(conn)
+        self.assertEqual(applied.safe_airgap_failure_code(RuntimeError(
+            "stopped Core forwarded data on held HTTP CONNECT tunnel")),
+            "held-http-still-forwarding")
+        self.assertEqual(applied.safe_airgap_failure_code(RuntimeError(
+            "held HTTP CONNECT crossed Selected or bypassed its node")),
+            "held-http-route-bypass")
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("HTTP CONNECT private token abc")), "unclassified")
 
     def test_http_connect_ip_request_and_exact_echo_on_three_mixed_inbounds(self):
         class Conn:
