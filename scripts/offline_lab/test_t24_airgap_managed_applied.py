@@ -1584,6 +1584,9 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                                         return_value=3) as split_http,
                                       mock.patch.object(applied, "probe_http_absolute_route_isolation",
                                                         return_value=3) as absolute_http,
+                                      mock.patch.object(
+                                          applied, "probe_http_absolute_selected_failure_isolation",
+                                          return_value=3) as absolute_denial,
                                       mock.patch.object(applied, "open_held_http_echo",
                                                         side_effect=held_http_open) as held_dial,
                                       mock.patch.object(applied, "assert_held_http_closed") as held_eof):
@@ -1604,6 +1607,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "http-restart-parallel-selected-restored",
             "http-restart-split-header-writes",
             "http-restart-absolute-form",
+            "http-restart-absolute-selected-refusal",
             "http-restart-held-http-open", "http-restart-final-stop",
             "http-restart-held-http-close",
         ])
@@ -1631,6 +1635,11 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "/daemon.sock", 5, 9, 222, 41001, node)
         absolute_http.assert_called_once_with(
             "/daemon.sock", 5, 9, 222, origin, node)
+        absolute_denial.assert_called_once()
+        self.assertEqual(absolute_denial.call_args.args,
+                         ("/daemon.sock", 5, 9, 222, origin, node))
+        self.assertTrue(callable(
+            absolute_denial.call_args.kwargs["stage_hook"]))
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
         self.assertEqual(payloads, [
@@ -2063,6 +2072,260 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             applied.safe_airgap_failure_code(RuntimeError(
                 "private DNS or secret should not be logged")),
             "unclassified")
+
+    def test_http_absolute_selected_refusal_only_accepts_bounded_failure(self):
+        class Conn:
+            def __init__(self, response=b"", error=None, send_error=None):
+                self.buffer = bytearray(response)
+                self.error = error
+                self.send_error = send_error
+                self.writes = []
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+            def settimeout(self, n):
+                self.timeout = n
+            def sendall(self, data):
+                self.writes.append(data)
+                if self.send_error is not None:
+                    raise self.send_error
+            def recv(self, n):
+                if self.buffer:
+                    chunk = bytes(self.buffer[:n])
+                    del self.buffer[:n]
+                    return chunk
+                if self.error is not None:
+                    raise self.error
+                return b""
+
+        request = (
+            b"GET http://127.0.0.1:41002/t24-http-absolute-2082 HTTP/1.1\r\n"
+            b"Host: 127.0.0.1:41002\r\nConnection: close\r\n\r\n")
+        valid = (
+            (b"", None, None),
+            (b"", ConnectionResetError("reset"), None),
+            (b"", ConnectionAbortedError("abort"), None),
+            (b"", None, BrokenPipeError("early-close")),
+            (b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n", None, None),
+            (b"HTTP/1.0 403 Forbidden\r\n\r\n", None, None),
+            (b"HTTP/1.1 500 Internal Server Error\r\n"
+             b"Connection: close\r\n\r\n", None, None),
+        )
+        for response, error, send_error in valid:
+            with self.subTest(valid=response[:20], error=type(error).__name__):
+                conn = Conn(response, error, send_error)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as dial:
+                    applied.probe_http_absolute_selected_refusal(41002)
+                dial.assert_called_once_with(("127.0.0.1", 2082), timeout=4)
+                self.assertEqual(conn.timeout, 4)
+                self.assertEqual(conn.writes, [request])
+                self.assertTrue(conn.closed)
+        invalid = (
+            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+            b"HTTP/1.1 204 No Content\r\n\r\n",
+            b"HTTP/1.1 302 Found\r\n\r\n",
+            b"HTTP/1.1 600 Bad\r\n\r\n",
+            b"HTTP/1.1 502 Bad Gateway\r\n",
+            b"HTTP/1.1 502 Bad Gateway\r\nX: " + b"x" * 1100,
+            b"BROKEN 502 Bad Gateway\r\n\r\n",
+            b"HTTP/1.1 502 Bad Gateway\r\nMalformed\r\n\r\n",
+        )
+        for response in invalid:
+            with self.subTest(invalid=response[:25]):
+                conn = Conn(response)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_http_absolute_selected_refusal(41002)
+                self.assertTrue(conn.closed)
+        for error in (ConnectionResetError("partial"), socket.timeout("hang")):
+            with self.subTest(error=type(error).__name__):
+                conn = Conn(b"HTTP/1.1 502", error=error)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises((RuntimeError, socket.timeout)):
+                        applied.probe_http_absolute_selected_refusal(41002)
+                self.assertTrue(conn.closed)
+        with mock.patch.object(applied.socket, "create_connection",
+                               return_value=Conn(error=socket.timeout("hang"))):
+            with self.assertRaises(socket.timeout):
+                applied.probe_http_absolute_selected_refusal(41002)
+        for bad in (0, True, 65536, "41002", 41002.5):
+            with mock.patch.object(applied.socket, "create_connection") as dial:
+                with self.assertRaises(RuntimeError):
+                    applied.probe_http_absolute_selected_refusal(bad)
+                dial.assert_not_called()
+
+    def test_http_absolute_selected_refusal_isolates_origin_and_recovers(self):
+        class Node:
+            calls = 8
+            rejections = 3
+            failed = False
+            reject_connections = False
+
+        node = Node()
+        origin = self.synthetic_http_origin()
+        visited = []
+        def origin_get(port, origin_port):
+            self.assertEqual(origin_port, 41002)
+            visited.append((port, node.reject_connections))
+            path = "/t24-http-absolute-" + str(port)
+            with origin.counter_lock:
+                origin.receipts.append((
+                    path, "127.0.0.1:41002", "GET " + path + " HTTP/1.1"))
+            if port == 2082:
+                self.assertFalse(node.reject_connections)
+                node.calls += 1
+        def refused(port):
+            self.assertEqual(port, 41002)
+            self.assertTrue(node.reject_connections)
+            self.assertEqual(visited, [(2080, True), (2081, True)])
+            node.rejections += 1
+        def restored(_sock, _old, _new, _pid, observed_origin, observed_node):
+            self.assertFalse(node.reject_connections)
+            self.assertIs(observed_origin, origin)
+            self.assertIs(observed_node, node)
+            for port in applied.MANAGED_PORTS:
+                origin_get(port, 41002)
+            return 3
+        with (mock.patch.object(applied, "unix_json",
+                                return_value=self.promoted_status(pid=222)) as api,
+              mock.patch.object(applied, "probe_http_absolute_form_get",
+                                side_effect=origin_get) as get,
+              mock.patch.object(applied, "probe_http_absolute_selected_refusal",
+                                side_effect=refused) as selected,
+              mock.patch.object(applied, "probe_http_absolute_route_isolation",
+                                side_effect=restored) as recovery):
+            stages = []
+            result = applied.probe_http_absolute_selected_failure_isolation(
+                "/sock", 5, 9, 222, origin, node, stage_hook=stages.append)
+        self.assertEqual(result, 3)
+        self.assertEqual(stages, [
+            "absolute-failure-preflight", "absolute-failure-rule",
+            "absolute-failure-direct", "absolute-failure-selected",
+            "absolute-failure-denial-audit", "absolute-failure-pid-after-restore",
+            "absolute-failure-recovery", "absolute-failure-final-audit",
+        ])
+        self.assertEqual(visited, [
+            (2080, True), (2081, True),
+            (2080, False), (2081, False), (2082, False),
+        ])
+        self.assertEqual((node.calls, node.rejections), (9, 4))
+        self.assertFalse(node.failed)
+        self.assertFalse(node.reject_connections)
+        self.assertEqual(len(origin.receipts), 5)
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(get.call_count, 2)
+        selected.assert_called_once_with(41002)
+        recovery.assert_called_once_with("/sock", 5, 9, 222, origin, node)
+
+    def test_http_absolute_selected_failure_rejects_bypass_and_resets_toggle(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.failed = False
+                self.reject_connections = False
+
+        good = self.promoted_status(pid=222)
+        wrong = self.promoted_status(pid=333)
+        for defect in (
+            "stale-core", "rule-cross", "missing-origin", "duplicate-origin",
+            "selected-origin-leak", "selected-bypass", "denial-storm",
+            "selected-accepted", "bad-selected-response", "changed-core",
+            "missing-recovery", "extra-recovery-node", "extra-recovery-origin",
+        ):
+            with self.subTest(defect=defect):
+                node = Node()
+                origin = self.synthetic_http_origin()
+                def append_receipt(port):
+                    path = "/t24-http-absolute-" + str(port)
+                    with origin.counter_lock:
+                        origin.receipts.append((
+                            path, "127.0.0.1:41002",
+                            "GET " + path + " HTTP/1.1"))
+                def healthy(port, origin_port):
+                    self.assertEqual(origin_port, 41002)
+                    if defect != "missing-origin" or port != 2080:
+                        append_receipt(port)
+                    if defect == "duplicate-origin" and port == 2080:
+                        append_receipt(port)
+                    if defect == "rule-cross" and port == 2080:
+                        node.calls += 1
+                def refusal(_origin_port):
+                    self.assertTrue(node.reject_connections)
+                    if defect == "selected-origin-leak":
+                        append_receipt(2082)
+                    if defect == "selected-accepted":
+                        node.calls += 1
+                    if defect not in ("selected-bypass",):
+                        node.rejections += 5 if defect == "denial-storm" else 1
+                    if defect == "bad-selected-response":
+                        raise RuntimeError(
+                            "HTTP absolute-form Selected returned unsafe response")
+                def recovery(*_args):
+                    self.assertFalse(node.reject_connections)
+                    for port in applied.MANAGED_PORTS:
+                        append_receipt(port)
+                    node.calls += 2 if defect == "extra-recovery-node" else 1
+                    if defect == "extra-recovery-origin":
+                        append_receipt(2082)
+                    return 2 if defect == "missing-recovery" else 3
+                statuses = ([wrong] if defect == "stale-core" else
+                            [good, wrong] if defect == "changed-core" else
+                            [good, good])
+                with (mock.patch.object(applied, "unix_json",
+                                        side_effect=statuses),
+                      mock.patch.object(applied, "probe_http_absolute_form_get",
+                                        side_effect=healthy) as get,
+                      mock.patch.object(applied, "probe_http_absolute_selected_refusal",
+                                        side_effect=refusal),
+                      mock.patch.object(applied, "probe_http_absolute_route_isolation",
+                                        side_effect=recovery)):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_http_absolute_selected_failure_isolation(
+                            "/sock", 5, 9, 222, origin, node)
+                self.assertFalse(node.reject_connections)
+                if defect == "stale-core":
+                    get.assert_not_called()
+
+        for defect in ("invalid-origin", "invalid-node", "bad-hook"):
+            with self.subTest(fixture=defect):
+                origin = self.synthetic_http_origin()
+                node = Node()
+                hook = None
+                if defect == "invalid-origin":
+                    origin.server_address = ("8.8.8.8", 53)
+                elif defect == "invalid-node":
+                    node.failed = True
+                else:
+                    hook = "untrusted callback"
+                with mock.patch.object(applied, "unix_json") as api:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_http_absolute_selected_failure_isolation(
+                            "/sock", 5, 9, 222, origin, node, stage_hook=hook)
+                    api.assert_not_called()
+                self.assertFalse(node.reject_connections)
+
+        for reason, code in (
+            ("HTTP absolute-form Selected returned unsafe response",
+             "http-absolute-denial-unsafe"),
+            ("HTTP absolute-form rejected Selected reached origin",
+             "http-absolute-leak"),
+            ("HTTP absolute-form Rule/Direct reached Selected",
+             "http-absolute-healthy-route"),
+            ("HTTP absolute-form Selected denial unobserved or bypassed",
+             "http-absolute-denial-bypass"),
+            ("HTTP absolute-form failure recovered routes drifted",
+             "http-absolute-denial-final"),
+        ):
+            self.assertEqual(
+                applied.safe_airgap_failure_code(RuntimeError(reason)), code)
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("private URL token not for logging")), "unclassified")
 
     def test_http_absolute_form_client_exact_request_response_and_fail_close(self):
         class Conn:
