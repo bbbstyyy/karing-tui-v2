@@ -535,3 +535,9 @@ The sixth real native amd64/arm64 network-none Daemon session must begin from th
 - Retain three full HTTP CONNECT+echo TCP sessions on the already approved Core (Rule/Direct/Selected numeric localhost) until the existing final explicit `core stop`. Verify only Selected traverses its synthetic upstream, the same Core PID and Applied=LKG before stopping, persisted stopped intent and no listeners after stop, and bounded EOF/reset for all three old HTTP sessions. Unconditionally close sockets on every failure; no additional Core restart, SIGKILL, external network or privilege is allowed.
 - Emit `T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok` only after a passing native experiment; hostname/DNS/UDP, production CN routing, T20 1,000 reconnects, 72h/7d/30d soak, Restore/GC, legal offline bundle and release approval remain OPEN.
 
+
+### M5 / ADR 0167 — held HTTP CONNECT and SOCKS5 closure on one supervised Core crash
+
+- Extend the existing single pidfd-verified native Core crash with three already-established localhost HTTP CONNECT echo tunnels in addition to three held SOCKS5 tunnels, with no second signal or new container/permission. Only Selected may add two real synthetic SOCKS upstream accepts for the six held sessions; after one supervised restart, all six old sockets must EOF/reset within the bounded closure window, while the new Core must remain correctly routed with its earlier two recovery probes. Use ExitStack for unconditional socket cleanup.
+- The native success marker `T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok` is not T15/T23 power-loss recovery, real DNS/UDP/CN routes or T25 long soak acceptance; full T22, Restore/GC and release gates remain OPEN.
+

@@ -508,11 +508,21 @@ class AppliedManagedPolicyTests(unittest.TestCase):
 
         node = Node()
         opened = []
+        opened_http = []
         def open_tunnel(port, target, payload):
             self.assertEqual(target, 41001)
             self.assertEqual(payload, b"held-crash-" + str(port).encode())
             held = Held()
             opened.append(held)
+            if port == 2082:
+                node.calls += 1
+            return held
+        def open_http(port, target, payload):
+            self.assertEqual(target, 41001)
+            self.assertEqual(payload,
+                             b"held-http-crash-" + str(port).encode())
+            held = Held()
+            opened_http.append(held)
             if port == 2082:
                 node.calls += 1
             return held
@@ -527,27 +537,37 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                return_value=self.promoted_status(pid=222)) as api:
             with mock.patch.object(applied, "open_held_socks_echo",
                                    side_effect=open_tunnel) as opened_call:
-                with mock.patch.object(applied, "probe_supervised_crash_recovery",
-                                       side_effect=crash) as kill:
-                    with mock.patch.object(applied, "assert_held_session_closed") as eof:
-                        stages = []
-                        result = applied.probe_held_crash_recovery(
-                            "/daemon.sock", 100, "/approved-core",
-                            5, 9, 222, 41001, node, stage_hook=stages.append)
+                with mock.patch.object(applied, "open_held_http_echo",
+                                       side_effect=open_http) as opened_http_call:
+                    with mock.patch.object(applied, "probe_supervised_crash_recovery",
+                                           side_effect=crash) as kill:
+                        with mock.patch.object(applied, "assert_held_session_closed") as eof:
+                            with mock.patch.object(applied, "assert_held_http_closed") as http_eof:
+                                stages = []
+                                result = applied.probe_held_crash_recovery(
+                                    "/daemon.sock", 100, "/approved-core",
+                                    5, 9, 222, 41001, node,
+                                    stage_hook=stages.append)
         self.assertEqual(stages, [
             "crash-held-preflight", "crash-held-open-2080",
             "crash-held-open-2081", "crash-held-open-2082",
+            "crash-held-http-open-2080", "crash-held-http-open-2081",
+            "crash-held-http-open-2082",
             "crash-held-pid-check", "crash-held-supervised-recovery",
-            "crash-held-sockets-closed", "crash-held-node-audit",
+            "crash-held-sockets-closed", "crash-held-http-sockets-closed",
+            "crash-held-node-audit",
         ])
         self.assertEqual(result, 333)
         self.assertEqual(api.call_count, 2)
         self.assertEqual(opened_call.call_count, 3)
+        self.assertEqual(opened_http_call.call_count, 3)
         kill.assert_called_once()
         self.assertEqual(eof.call_args_list,
                          [mock.call(conn) for conn in opened])
-        self.assertTrue(all(conn.closed for conn in opened))
-        self.assertEqual((node.calls, node.rejections), (8, 4))
+        self.assertEqual(http_eof.call_args_list,
+                         [mock.call(conn) for conn in opened_http])
+        self.assertTrue(all(conn.closed for conn in opened + opened_http))
+        self.assertEqual((node.calls, node.rejections), (9, 4))
 
     def test_invalid_crash_diagnostic_hook_never_contacts_core(self):
         with mock.patch.object(applied, "unix_json") as api:
@@ -597,8 +617,10 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                     api.assert_not_called()
                     dial.assert_not_called()
 
-        for defect in ("pid-drift", "Rule-crosses-Selected", "crash-error",
-                       "old-tunnel-still-live"):
+        for defect in ("pid-drift", "Rule-crosses-Selected",
+                       "HTTP-Rule-crosses-Selected", "HTTP-open-fails",
+                       "crash-error", "old-tunnel-still-live",
+                       "old-HTTP-tunnel-still-live"):
             with self.subTest(defect=defect):
                 node = Node()
                 opened = []
@@ -607,6 +629,16 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                     opened.append(held)
                     if port == 2082 or (defect == "Rule-crosses-Selected" and
                                         port == 2080):
+                        node.calls += 1
+                    return held
+                def http_connect(port, _echo, _payload):
+                    if defect == "HTTP-open-fails" and port == 2081:
+                        raise RuntimeError("injected HTTP tunnel open failure")
+                    held = Held()
+                    opened.append(held)
+                    if (port == 2082 or
+                            (defect == "HTTP-Rule-crosses-Selected"
+                             and port == 2080)):
                         node.calls += 1
                     return held
                 def crashed(*_args):
@@ -621,22 +653,81 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                        side_effect=statuses):
                     with mock.patch.object(applied, "open_held_socks_echo",
                                            side_effect=connect):
-                        with mock.patch.object(
-                                applied, "probe_supervised_crash_recovery",
-                                side_effect=crashed) as kill:
+                        with mock.patch.object(applied, "open_held_http_echo",
+                                               side_effect=http_connect):
                             with mock.patch.object(
-                                    applied, "assert_held_session_closed",
-                                    side_effect=(RuntimeError("old socket alive")
-                                                 if defect == "old-tunnel-still-live"
-                                                 else None)):
-                                with self.assertRaises(RuntimeError):
-                                    applied.probe_held_crash_recovery(
-                                        *args, node)
-                            if defect in ("pid-drift", "Rule-crosses-Selected"):
-                                kill.assert_not_called()
-                            else:
-                                kill.assert_called_once()
+                                    applied, "probe_supervised_crash_recovery",
+                                    side_effect=crashed) as kill:
+                                with mock.patch.object(
+                                        applied, "assert_held_session_closed",
+                                        side_effect=(RuntimeError("old socket alive")
+                                                     if defect == "old-tunnel-still-live"
+                                                     else None)):
+                                    with mock.patch.object(
+                                            applied, "assert_held_http_closed",
+                                            side_effect=(RuntimeError("old HTTP tunnel alive")
+                                                         if defect == "old-HTTP-tunnel-still-live"
+                                                         else None)):
+                                        with self.assertRaises(RuntimeError):
+                                            applied.probe_held_crash_recovery(
+                                                *args, node)
+                                if defect in ("pid-drift", "Rule-crosses-Selected",
+                                              "HTTP-Rule-crosses-Selected",
+                                              "HTTP-open-fails"):
+                                    kill.assert_not_called()
+                                else:
+                                    kill.assert_called_once()
                 self.assertTrue(all(conn.closed for conn in opened))
+
+
+    def test_post_crash_selected_route_ledger_includes_held_http_and_fails_closed(self):
+        class Node:
+            def __init__(self):
+                self.calls = 13
+                self.rejections = 5
+                self.reject_connections = False
+                self.failed = False
+
+        applied.assert_post_crash_selected_accounting(Node())
+        for defect in ("missing-http-hop", "extra-hop", "missing-refusal",
+                       "rejecting", "failed", "invalid-counter"):
+            with self.subTest(defect=defect):
+                node = Node()
+                if defect == "missing-http-hop":
+                    node.calls = 12  # Old SOCKS-only ledger, now invalid.
+                elif defect == "extra-hop":
+                    node.calls = 14
+                elif defect == "missing-refusal":
+                    node.rejections = 4
+                elif defect == "rejecting":
+                    node.reject_connections = True
+                elif defect == "failed":
+                    node.failed = True
+                elif defect == "invalid-counter":
+                    node.calls = True
+                with self.assertRaises(RuntimeError) as ctx:
+                    applied.assert_post_crash_selected_accounting(node)
+                self.assertEqual(
+                    applied.safe_airgap_failure_code(ctx.exception),
+                    "crash-post-stop-selected-accounting")
+        self.assertEqual(
+            applied.safe_airgap_failure_code(
+                RuntimeError("crash secret path token 123")),
+            "unclassified")
+
+    def test_held_http_crash_error_code_remains_fixed_and_redacted(self):
+        self.assertEqual(
+            applied.safe_airgap_failure_code(RuntimeError(
+                "held HTTP crash tunnel crossed or skipped Selected")),
+            "crash-held-http-route-bypass")
+        self.assertEqual(
+            applied.safe_airgap_failure_code(RuntimeError(
+                "stopped Core forwarded data on held HTTP CONNECT tunnel")),
+            "held-http-still-forwarding")
+        self.assertEqual(
+            applied.safe_airgap_failure_code(RuntimeError(
+                "local private tunnel path HTTP auth=not-for-logs")),
+            "unclassified")
 
     def test_crash_injection_never_signals_unverified_process(self):
         for bad_pid, daemon_pid in ((0, 100), (1, 100), (100, 100),

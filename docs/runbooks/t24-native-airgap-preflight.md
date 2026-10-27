@@ -135,3 +135,13 @@ The marker `T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok` is legal only on full 
 After ADR 0165's concurrent HTTP Selected failure and same-Core recovery, use the sixth real Daemon to establish three **held** HTTP CONNECT localhost exact-echo tunnels, one per Rule/Direct/Selected mixed inbound. Do not close their client sockets before the pre-existing explicit `core stop`. Require exactly one Selected local upstream accept, no new refusals and unchanged approved Core PID/Applied=LKG. Once stopped, audit stopped intent/PID=0, no proxy listeners, and each old HTTP socket EOF/reset/abort within three seconds; continued application data or timeout fails CI. The inner `finally` must close all client sockets on every path. This is the same stop, not another lifecycle transition, crash or network operation.
 
 On real native amd64+arm64 full success only, print `T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok`; keep T20 1000 reconnect, T22 hostname/UDP and T25 long soak as **unverified**, as well as CN licensed resources, recovery/rollback, Restore/GC and release.
+
+### ADR 0167: six held SOCKS5 + HTTP tunnels under the existing pidfd-supervised Core crash
+
+During the **same one** verified pidfd SIGKILL used by ADR 0160, retain three previously established SOCKS5 streams and additionally open and retain three fully acknowledged, locally echoed numeric HTTP CONNECT streams, one per mixed inbound. Before signalling, verify the approved same Core PID, Applied=LKG and only two Selected upstream successes across the six sessions. After the *existing* Core restart/recovery checks, demand EOF/reset for all **six** old tunnels within three seconds; no old connection may continue forwarding. ExitStack closes every held client socket even on a failed HTTP open, wrong PID, refused signal or EOF assertion. Final Selected accepted count becomes 63.
+
+The marker `T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok` requires complete dual-architecture native success. This is a bounded single Core crash only, not T15/T23 physical restoration, long soak, remote DNS, licensed CN resources or release approval.
+
+
+
+ADR 0167 post-crash ledger follow-up: native `post-crash-stop` audits require **exactly 13** lifetime successful synthetic Selected upstream connections after the single supervised crash (the prior SOCKS-only **12** plus one held HTTP Selected tunnel), at least five observed Selected refusals, zero active reject toggle and no node fault. Do not accept 12, 14 or a noninteger counter. This check runs **before** later lifecycle workloads, whose final total remains exactly 63. Fixed error code `crash-post-stop-selected-accounting` is public-safe; never print raw exception strings or internal Daemon logs. No extra kill or weakened EOF assertion.
