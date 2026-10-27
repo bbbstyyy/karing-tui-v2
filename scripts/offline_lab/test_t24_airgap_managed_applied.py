@@ -1587,6 +1587,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                       mock.patch.object(
                                           applied, "probe_http_absolute_selected_failure_isolation",
                                           return_value=3) as absolute_denial,
+                                      mock.patch.object(applied, "probe_selected_socks_domain_route",
+                                                        return_value=1) as domain_probe,
                                       mock.patch.object(applied, "open_held_http_echo",
                                                         side_effect=held_http_open) as held_dial,
                                       mock.patch.object(applied, "assert_held_http_closed") as held_eof):
@@ -1608,6 +1610,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "http-restart-split-header-writes",
             "http-restart-absolute-form",
             "http-restart-absolute-selected-refusal",
+            "http-restart-selected-socks-domain",
             "http-restart-held-http-open", "http-restart-final-stop",
             "http-restart-held-http-close",
         ])
@@ -1640,6 +1643,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                          ("/daemon.sock", 5, 9, 222, origin, node))
         self.assertTrue(callable(
             absolute_denial.call_args.kwargs["stage_hook"]))
+        domain_probe.assert_called_once_with(
+            "/daemon.sock", 5, 9, 222, 41001, node)
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
         self.assertEqual(payloads, [
@@ -2326,6 +2331,164 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 applied.safe_airgap_failure_code(RuntimeError(reason)), code)
         self.assertEqual(applied.safe_airgap_failure_code(
             RuntimeError("private URL token not for logging")), "unclassified")
+
+    def test_selected_domain_client_exact_atyp3_and_strict_echo(self):
+        class Conn:
+            def __init__(self, answer):
+                self.buffer = bytearray(answer)
+                self.sent = []
+                self.closed = False
+                self.timeout = None
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+            def settimeout(self, n):
+                self.timeout = n
+            def sendall(self, data):
+                self.sent.append(data)
+            def recv(self, n):
+                count = min(n, len(self.buffer))
+                result = bytes(self.buffer[:count])
+                del self.buffer[:count]
+                return result
+
+        host = applied.SOCKS_DOMAIN_TARGET
+        payload = b"domain-echo-fixture"
+        request = (b"\x05\x01\x00\x03" + bytes([len(host)]) + host +
+                   struct.pack("!H", 41001))
+        replies = (
+            b"\x05\x00\x00\x01\x7f\x00\x00\x01" +
+            struct.pack("!H", 41001),
+            b"\x05\x00\x00\x03\x01x" + struct.pack("!H", 41001),
+            b"\x05\x00\x00\x04" + b"\x00" * 16 +
+            struct.pack("!H", 41001),
+        )
+        for reply in replies:
+            with self.subTest(atyp=reply[3]):
+                conn = Conn(b"\x05\x00" + reply + loopback.REPLY_PREFIX + payload)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as dial:
+                    applied.probe_selected_socks_domain(41001, payload)
+                dial.assert_called_once_with(("127.0.0.1", 2082), timeout=4)
+                self.assertEqual(conn.sent, [
+                    b"\x05\x01\x00", request, payload,
+                ])
+                self.assertEqual(conn.timeout, 4)
+                self.assertTrue(conn.closed)
+
+        invalid_answers = (
+            b"\x05\xff",
+            b"\x05\x00" + b"\x05\x05\x00\x01\x7f\x00\x00\x01\x00\x00",
+            b"\x05\x00" + b"\x05\x00\x00\x09",
+            b"\x05\x00" + b"\x05\x00\x00\x03\x00",
+            b"\x05\x00" + b"\x05\x00\x00\x01",
+            b"\x05\x00" + replies[0] + b"incorrect-echo-data",
+            b"\x05\x00" + replies[0] + loopback.REPLY_PREFIX,
+        )
+        for response in invalid_answers:
+            with self.subTest(bad_response=response[:12]):
+                conn = Conn(response)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_socks_domain(41001, payload)
+                self.assertTrue(conn.closed)
+        for port, body in (
+            (True, b"x"), (0, b"x"), (65536, b"x"),
+            (41001, b""), (41001, b"x" * 129), (41001, "secret"),
+        ):
+            with self.subTest(port=port, payload_type=type(body).__name__):
+                with mock.patch.object(applied.socket, "create_connection") as dial:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_socks_domain(port, body)
+                    dial.assert_not_called()
+
+    def test_selected_domain_route_requires_exact_upstream_receipt_and_pid(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.failed = False
+                self.reject_connections = False
+                self.hostname_requests = []
+                self.counter_lock = threading.Lock()
+
+        node = Node()
+        good = self.promoted_status(pid=222)
+        def successful(port, payload):
+            self.assertEqual((port, payload),
+                             (41001, b"selected-domain-only-echo"))
+            node.calls += 1
+            with node.counter_lock:
+                node.hostname_requests.append(
+                    (applied.SOCKS_DOMAIN_TARGET, port))
+        with (mock.patch.object(applied, "unix_json", return_value=good) as api,
+              mock.patch.object(applied, "probe_selected_socks_domain",
+                                side_effect=successful) as probe):
+            result = applied.probe_selected_socks_domain_route(
+                "/sock", 5, 9, 222, 41001, node)
+        self.assertEqual(result, 1)
+        self.assertEqual((node.calls, node.rejections), (9, 3))
+        self.assertEqual(node.hostname_requests,
+                         [(applied.SOCKS_DOMAIN_TARGET, 41001)])
+        self.assertEqual(api.call_count, 2)
+        probe.assert_called_once_with(41001, b"selected-domain-only-echo")
+
+        for defect in ("stale-pid", "missing-receipt", "wrong-receipt",
+                       "duplicate-receipt", "upstream-bypass", "new-refusal",
+                       "node-failed", "pid-replaced"):
+            with self.subTest(defect=defect):
+                node = Node()
+                changed = self.promoted_status(pid=333)
+                statuses = ([changed] if defect == "stale-pid" else
+                            [good, changed] if defect == "pid-replaced" else
+                            [good, good])
+                def corrupted(port, _payload):
+                    if defect not in ("upstream-bypass",):
+                        node.calls += 1
+                    if defect == "node-failed":
+                        node.failed = True
+                    if defect == "new-refusal":
+                        node.rejections += 1
+                    if defect != "missing-receipt":
+                        with node.counter_lock:
+                            domain = (b"incorrect.invalid" if
+                                      defect == "wrong-receipt" else
+                                      applied.SOCKS_DOMAIN_TARGET)
+                            node.hostname_requests.append((domain, port))
+                            if defect == "duplicate-receipt":
+                                node.hostname_requests.append((domain, port))
+                with (mock.patch.object(applied, "unix_json",
+                                        side_effect=statuses),
+                      mock.patch.object(applied, "probe_selected_socks_domain",
+                                        side_effect=corrupted) as dial):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_socks_domain_route(
+                            "/sock", 5, 9, 222, 41001, node)
+                    if defect == "stale-pid":
+                        dial.assert_not_called()
+
+        invalid = Node()
+        invalid.hostname_requests = None
+        with mock.patch.object(applied, "unix_json") as api:
+            with self.assertRaises(RuntimeError):
+                applied.probe_selected_socks_domain_route(
+                    "/sock", 5, 9, 222, 41001, invalid)
+            api.assert_not_called()
+        for error, code in (
+            ("invalid selected SOCKS domain route fixture",
+             "socks-domain-route-invalid"),
+            ("selected SOCKS domain bypassed exact upstream hostname",
+             "socks-domain-bypass"),
+            ("selected SOCKS domain began on changed Core",
+             "socks-domain-stale"),
+            ("selected SOCKS domain echo did not match", "socks-domain-echo"),
+        ):
+            self.assertEqual(
+                applied.safe_airgap_failure_code(RuntimeError(error)), code)
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("private DNS token")), "unclassified")
 
     def test_http_absolute_form_client_exact_request_response_and_fail_close(self):
         class Conn:
@@ -3258,6 +3421,103 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                     applied.probe_isolated_failure(41001, b"fault-", node)
         self.assertFalse(node.reject_connections)
 
+
+    def test_synthetic_socks_domain_maps_only_reserved_name_to_local_echo(self):
+        with (loopback.LoopbackServer(
+                  ("127.0.0.1", 0), loopback.LoopbackResponder) as echo,
+              applied.LocalSocksServer(
+                  ("127.0.0.1", 0), applied.LocalSocksNode) as node):
+            node.echo_port = echo.server_address[1]
+            echo_thread = threading.Thread(
+                target=echo.serve_forever, daemon=True)
+            node_thread = threading.Thread(
+                target=node.serve_forever, daemon=True)
+            echo_thread.start()
+            node_thread.start()
+            try:
+                payload = b"domain-relay-success"
+                domain = applied.SOCKS_DOMAIN_TARGET
+                with socket.create_connection(node.server_address,
+                                              timeout=3) as conn:
+                    conn.settimeout(3)
+                    conn.sendall(b"\x05\x01\x00")
+                    self.assertEqual(applied.exact_read(conn, 2), b"\x05\x00")
+                    conn.sendall(
+                        b"\x05\x01\x00\x03" + bytes([len(domain)]) + domain +
+                        struct.pack("!H", node.echo_port))
+                    self.assertEqual(applied.exact_read(conn, 4),
+                                     b"\x05\x00\x00\x01")
+                    self.assertEqual(applied.exact_read(conn, 4),
+                                     b"\x7f\x00\x00\x01")
+                    self.assertEqual(
+                        struct.unpack("!H", applied.exact_read(conn, 2))[0],
+                        node.echo_port)
+                    conn.sendall(payload)
+                    self.assertEqual(
+                        applied.exact_read(conn,
+                                           len(loopback.REPLY_PREFIX) +
+                                           len(payload)),
+                        loopback.REPLY_PREFIX + payload)
+                self.assertEqual(node.calls, 1)
+                self.assertEqual(node.rejections, 0)
+                self.assertEqual(node.hostname_requests,
+                                 [(domain, node.echo_port)])
+                self.assertFalse(node.failed)
+            finally:
+                node.shutdown()
+                echo.shutdown()
+                node_thread.join(timeout=4)
+                echo_thread.join(timeout=4)
+
+    def test_synthetic_socks_domain_blocks_unapproved_name_or_port_no_dial(self):
+        for name, use_port in (
+            (b"x" + applied.SOCKS_DOMAIN_TARGET[1:], 41001),
+            (applied.SOCKS_DOMAIN_TARGET, 41002),
+            (b"unexpected-longer.invalid", 41001),
+        ):
+            with self.subTest(name=name, port=use_port):
+                with applied.LocalSocksServer(
+                        ("127.0.0.1", 0),
+                        applied.LocalSocksNode) as node:
+                    node.echo_port = 41001
+                    thread = threading.Thread(
+                        target=node.serve_forever, daemon=True)
+                    thread.start()
+                    try:
+                        # No target dial is possible, including a guessed
+                        # host lookup or an external network connection.
+                        with mock.patch.object(
+                                applied.socket, "create_connection",
+                                side_effect=AssertionError(
+                                    "unapproved synthetic outbound")) as dial:
+                            with socket.socket(
+                                    socket.AF_INET, socket.SOCK_STREAM) as conn:
+                                conn.settimeout(3)
+                                conn.connect(node.server_address)
+                                conn.sendall(b"\x05\x01\x00")
+                                self.assertEqual(
+                                    applied.exact_read(conn, 2), b"\x05\x00")
+                                conn.sendall(
+                                    b"\x05\x01\x00\x03" +
+                                    bytes([len(name)]) + name +
+                                    struct.pack("!H", use_port))
+                                try:
+                                    self.assertEqual(conn.recv(1), b"")
+                                except (ConnectionResetError,
+                                        ConnectionAbortedError):
+                                    pass
+                            for _ in range(100):
+                                if node.failed:
+                                    break
+                                threading.Event().wait(0.01)
+                            self.assertTrue(node.failed)
+                            dial.assert_not_called()
+                        self.assertEqual(node.calls, 0)
+                        self.assertEqual(node.rejections, 0)
+                        self.assertEqual(node.hostname_requests, [])
+                    finally:
+                        node.shutdown()
+                        thread.join(timeout=4)
 
     def test_synthetic_relay_distinguishes_post_echo_reset_from_early_failure(self):
         # No Core, Docker, external network, or arbitrary retry required.
