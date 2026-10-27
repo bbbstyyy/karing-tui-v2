@@ -1770,3 +1770,10 @@ docs/
 - 复用既有一次显式 Core stop，不新增杀进程、启动或网络权限；停止后必须持久 stopped/PID=0、无代理端口监听、三条旧 HTTP CONNECT 在各三秒内 EOF/reset/abort，不能仍转发应用数据，超时亦不通过。内部 finally 无条件关闭所有测试 socket，错误仍失败关闭。无网络单元回归增加 HTTP 头错误/截断/超长、错误回显、非法参数、旧会话仍活跃、断开超时及安全错误码。
 - 双原生真实 Core 全通过才输出 `T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok`。合成 Selected 生涯接受计数从 61 增为 62；但 T22 完整域名/DNS/UDP、T20 1,000 次重连、T25 72h/7d/30d、CN 五层/28 组真实资源许可与离线打包、断电/恢复/正式发行仍未验收，继续 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。无 TUN/订阅-ISP 分流层，不修改稳定 `main`。
 
+
+### 2026-10-27 — M5 ADR 0167 同一次 Core 受控崩溃下 SOCKS5 + HTTP CONNECT 六条旧会话必须关闭（T22/T25 部分）
+
+- 在原生双架构第四个 `network none` 隔离容器、第六次真实 Daemon 及同一个批准 PID 的 Core 中，扩展 ADR 0160 已有的**唯一一次 pidfd 绑定 SIGKILL** 受控崩溃；在原先三条 SOCKS5 已建立回显会话之外，再保持 Rule:2080、Direct:2081、Selected:2082 各一条通过完整 HTTP CONNECT 200 与精确回显的真实本机 HTTP 隧道。故障前仅 Selected 共增加两条本机上游成功连接，Rule/Direct 不能跨路，拒绝计数不变，进程 PID/Applied=LKG 与配置声明修订必须重新核验后才允许原有崩溃注入。
+- 原有 Core 恢复后，三条旧 SOCKS5 与三条旧 HTTP CONNECT 均须在三秒内 EOF/reset/abort；绝不可接受任何旧应用字节或停滞超时。统一 `ExitStack` 负责所有旧 socket 清理；受控崩溃仍仅执行一次，原始两次恢复流量和上游拒绝审计不变。Python 无网络回归涵盖 HTTP 拨号部分失败、错误跨入口、错误 PID、任意旧连接幸存、安全白名单故障码；合成 Selected 生涯接受计数从 62 增加到 63。
+- 只有真实双架构 Core 测试全部通过才标记 `T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok`。完整 T22 域名/DNS/UDP/HTTP absolute-form、T20 一千次重连、T25 72h/7d/30d、CN 五层/28 组真实许可资源、断电/回滚/Restore/GC/正式发行依然未验证；保留全部相应 false 标志，不引入 TUN 或订阅/ISP 分流层，不更改稳定 `main`。
+

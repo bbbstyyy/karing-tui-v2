@@ -389,13 +389,26 @@ def probe_supervised_crash_recovery(sock, daemon_pid, core_path,
 
 
 
+def assert_post_crash_selected_accounting(node):
+    """Fail closed on the exact post-crash synthetic Selected route ledger.
+
+    One additional held HTTP Selected tunnel is deliberately created before
+    the existing pidfd-supervised crash. Its successful upstream must be
+    counted without relaxing any stop, route or failure assertion.
+    """
+    require(type(node.calls) is int and node.calls == 13 and
+            type(node.rejections) is int and node.rejections >= 5 and
+            node.reject_connections is False and node.failed is False,
+            "crash/restart recovery crossed or bypassed routes")
+
+
 def probe_held_crash_recovery(sock, daemon_pid, core_path,
                               old_generation, promoted_generation,
                               running_pid, echo_port, node, stage_hook=None):
-    """Crash one verified Core with all three SOCKS5 TCP tunnels established.
+    """Crash one verified Core with three SOCKS5 and three HTTP held tunnels.
 
-    The pre-existing pidfd-bound crash and recovery path still owns the
-    only SIGKILL; this wrapper may not signal an unverified or replaced PID.
+    The pre-existing pidfd-bound crash/recovery owns the only SIGKILL.
+    This wrapper never signals a replaced or unrelated Core PID.
     """
     require(stage_hook is None or callable(stage_hook),
             "invalid crash diagnostic hook")
@@ -417,6 +430,7 @@ def probe_held_crash_recovery(sock, daemon_pid, core_path,
     baseline_calls, baseline_denials = node.calls, node.rejections
     with ExitStack() as stack:
         held = []
+        held_http = []
         for port in MANAGED_PORTS:
             mark("crash-held-open-%d" % port)
             payload = b"held-crash-" + str(port).encode("ascii")
@@ -425,6 +439,19 @@ def probe_held_crash_recovery(sock, daemon_pid, core_path,
             require(node.calls == baseline_calls + (1 if port == 2082 else 0)
                     and node.rejections == baseline_denials and not node.failed,
                     "held crash tunnel crossed Selected or skipped its node")
+        # Keep the already-established SOCKS5 streams live while opening the
+        # three *real* HTTP CONNECT tunnels on the identical approved Core.
+        # ExitStack closes every old connection even on a partial open.
+        for port in MANAGED_PORTS:
+            mark("crash-held-http-open-%d" % port)
+            payload = b"held-http-crash-" + str(port).encode("ascii")
+            held_http.append(stack.enter_context(
+                open_held_http_echo(port, echo_port, payload)))
+            require(node.calls == baseline_calls + 1 +
+                    (1 if port == 2082 else 0) and
+                    node.rejections == baseline_denials and
+                    not node.failed and not node.reject_connections,
+                    "held HTTP crash tunnel crossed or skipped Selected")
 
         # Refuse to kill an unrelated, replaced or new unapproved Core even
         # if all three old listening sockets still appear reachable.
@@ -442,8 +469,11 @@ def probe_held_crash_recovery(sock, daemon_pid, core_path,
         mark("crash-held-sockets-closed")
         for conn in held:
             assert_held_session_closed(conn)
+        mark("crash-held-http-sockets-closed")
+        for conn in held_http:
+            assert_held_http_closed(conn)
         mark("crash-held-node-audit")
-        require(node.calls == baseline_calls + 3 and
+        require(node.calls == baseline_calls + 4 and
                 node.rejections > baseline_denials and
                 not node.failed and not node.reject_connections,
                 "held crash, recovery or Selected route changed the audit")
@@ -1493,6 +1523,10 @@ AIRGAP_FAILURE_CODES = {
         "crash-held-pid-drift",
     "held crash, recovery or Selected route changed the audit":
         "crash-held-node-drift",
+    "held HTTP crash tunnel crossed or skipped Selected":
+        "crash-held-http-route-bypass",
+    "crash/restart recovery crossed or bypassed routes":
+        "crash-post-stop-selected-accounting",
     "promoted managed Core failed to restart after one crash":
         "crash-restart-timeout",
     "new Core PID lacks supervised failure accounting":
@@ -1838,9 +1872,7 @@ def main(argv=None):
                         require(run_daemon(args.app, args.core, root, env,
                                            after_crash_stop) is True,
                                 "post-crash stopped Daemon restart failed")
-                        require(node.calls == 12 and node.rejections >= 5 and
-                                not node.reject_connections and not node.failed,
-                                "crash/restart recovery crossed or bypassed routes")
+                        assert_post_crash_selected_accounting(node)
 
                         def bounded_lifecycle(daemon, sock, initial):
                             nonlocal phase
@@ -1908,7 +1940,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 62 and node.rejections >= 15 and
+                        require(node.calls == 63 and node.rejections >= 15 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -1936,6 +1968,7 @@ def main(argv=None):
         print("T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok")
         print("T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok")
         print("T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok")
+        print("T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
