@@ -1569,6 +1569,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                                         return_value=12) as parallel_http,
                                       mock.patch.object(applied, "probe_parallel_http_selected_denials",
                                                         return_value=12) as parallel_denials,
+                                      mock.patch.object(applied, "probe_split_write_http_route_isolation",
+                                                        return_value=3) as split_http,
                                       mock.patch.object(applied, "open_held_http_echo",
                                                         side_effect=held_http_open) as held_dial,
                                       mock.patch.object(applied, "assert_held_http_closed") as held_eof):
@@ -1586,6 +1588,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "http-restart-concurrent-connect",
             "http-restart-parallel-selected-refusal",
             "http-restart-parallel-selected-restored",
+            "http-restart-split-header-writes",
             "http-restart-held-http-open", "http-restart-final-stop",
             "http-restart-held-http-close",
         ])
@@ -1608,6 +1611,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             mock.call("/daemon.sock", 5, 9, 222, 41001, node),
             mock.call("/daemon.sock", 5, 9, 222, 41001, node)])
         parallel_denials.assert_called_once_with(
+            "/daemon.sock", 5, 9, 222, 41001, node)
+        split_http.assert_called_once_with(
             "/daemon.sock", 5, 9, 222, 41001, node)
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
@@ -1904,6 +1909,141 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "held-http-route-bypass")
         self.assertEqual(applied.safe_airgap_failure_code(
             RuntimeError("HTTP CONNECT private token abc")), "unclassified")
+
+
+    def test_split_write_http_connect_sends_exact_separate_writes_and_echo(self):
+        class Conn:
+            def __init__(self, response):
+                self.buffer = bytearray(response)
+                self.writes = []
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_unused):
+                self.closed = True
+            def settimeout(self, n):
+                self.timeout = n
+            def sendall(self, data):
+                self.writes.append(data)
+            def recv(self, n):
+                k = min(n, len(self.buffer))
+                part = bytes(self.buffer[:k])
+                del self.buffer[:k]
+                return part
+
+        for port in applied.MANAGED_PORTS:
+            with self.subTest(port=port):
+                payload = b"split-http-connect-" + str(port).encode()
+                response = (b"HTTP/1.1 200 Connection established\r\n"
+                            b"Proxy: synthetic\r\n\r\n" +
+                            loopback.REPLY_PREFIX + payload)
+                conn = Conn(response)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as dial:
+                    applied.probe_split_write_http_connect_ip(
+                        port, 41001, payload)
+                dial.assert_called_once_with(("127.0.0.1", port), timeout=4)
+                self.assertEqual(conn.timeout, 4)
+                self.assertTrue(conn.closed)
+                pieces = conn.writes[:-1]
+                self.assertEqual(len(pieces), 6)
+                self.assertEqual(b"".join(pieces),
+                                 b"CONNECT 127.0.0.1:41001 HTTP/1.1\r\n"
+                                 b"Host: 127.0.0.1:41001\r\n\r\n")
+                self.assertEqual(conn.writes[-1], payload)
+
+        payload = b"split-echo"
+        for response in (
+            b"HTTP/1.1 403 Forbidden\r\n\r\n",
+            b"HTTP/1.1 204 No Content\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n",
+            b"HTTP/1.1 200 OK\r\nX: " + b"x" * 1100,
+            b"NOTHTTP 200 OK\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n\r\nwrong-data",
+        ):
+            with self.subTest(response=response[:30]):
+                conn = Conn(response)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_split_write_http_connect_ip(
+                            2082, 41001, payload)
+                self.assertTrue(conn.closed)
+        for port, echo, payload in (
+            (True, 41001, b"x"), (2089, 41001, b"x"),
+            (2082, True, b"x"), (2082, 0, b"x"),
+            (2082, 65536, b"x"), (2082, 41001, ""),
+            (2082, 41001, b""), (2082, 41001, b"x" * 129),
+        ):
+            with self.subTest(port=port, echo=echo):
+                with mock.patch.object(applied.socket, "create_connection") as dial:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_split_write_http_connect_ip(
+                            port, echo, payload)
+                    dial.assert_not_called()
+
+    def test_split_write_http_route_only_selected_and_no_core_change(self):
+        class Node:
+            calls = 17
+            rejections = 5
+            failed = False
+            reject_connections = False
+
+        node = Node()
+        good = self.promoted_status(pid=222)
+        seen = []
+        def dial(port, echo_port, payload):
+            self.assertEqual(echo_port, 41001)
+            self.assertEqual(payload,
+                             b"split-http-connect-" + str(port).encode())
+            seen.append(port)
+            if port == 2082:
+                node.calls += 1
+        with mock.patch.object(applied, "unix_json", return_value=good) as api:
+            with mock.patch.object(applied, "probe_split_write_http_connect_ip",
+                                   side_effect=dial) as called:
+                self.assertEqual(
+                    applied.probe_split_write_http_route_isolation(
+                        "/sock", 5, 9, 222, 41001, node), 3)
+        self.assertEqual(seen, list(applied.MANAGED_PORTS))
+        self.assertEqual((node.calls, node.rejections), (18, 5))
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(called.call_count, 3)
+
+        bad_pid = self.promoted_status(pid=333)
+        for defect in ("wrong-start", "rule-cross", "selected-bypass",
+                       "new-rejection", "changed-core"):
+            with self.subTest(defect=defect):
+                node = Node()
+                node.calls = 17
+                node.rejections = 5
+                def corrupt(port, _echo, _payload):
+                    if port == 2080 and defect == "rule-cross":
+                        node.calls += 1
+                    if port == 2082 and defect != "selected-bypass":
+                        node.calls += 1
+                    if port == 2080 and defect == "new-rejection":
+                        node.rejections += 1
+                states = ([bad_pid] if defect == "wrong-start" else
+                          [good, bad_pid] if defect == "changed-core" else
+                          [good, good])
+                with mock.patch.object(applied, "unix_json",
+                                       side_effect=states):
+                    with mock.patch.object(applied, "probe_split_write_http_connect_ip",
+                                           side_effect=corrupt) as called:
+                        with self.assertRaises(RuntimeError):
+                            applied.probe_split_write_http_route_isolation(
+                                "/sock", 5, 9, 222, 41001, node)
+                        if defect == "wrong-start":
+                            called.assert_not_called()
+        self.assertEqual(
+            applied.safe_airgap_failure_code(RuntimeError(
+                "split-write HTTP CONNECT crossed or skipped Selected")),
+            "split-http-route-bypass")
+        self.assertEqual(
+            applied.safe_airgap_failure_code(RuntimeError(
+                "private DNS or secret should not be logged")),
+            "unclassified")
 
     def test_http_connect_ip_request_and_exact_echo_on_three_mixed_inbounds(self):
         class Conn:

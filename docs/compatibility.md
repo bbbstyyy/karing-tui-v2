@@ -541,3 +541,9 @@ The sixth real native amd64/arm64 network-none Daemon session must begin from th
 - Extend the existing single pidfd-verified native Core crash with three already-established localhost HTTP CONNECT echo tunnels in addition to three held SOCKS5 tunnels, with no second signal or new container/permission. Only Selected may add two real synthetic SOCKS upstream accepts for the six held sessions; after one supervised restart, all six old sockets must EOF/reset within the bounded closure window, while the new Core must remain correctly routed with its earlier two recovery probes. Use ExitStack for unconditional socket cleanup.
 - The native success marker `T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok` is not T15/T23 power-loss recovery, real DNS/UDP/CN routes or T25 long soak acceptance; full T22, Restore/GC and release gates remain OPEN.
 
+
+### M5 / ADR 0168 — multi-write numeric-local HTTP CONNECT request
+
+- On the same approved real Core, send the canonical numeric localhost HTTP CONNECT/Host header through six ordered client writes (including splits within the method and CRLF) separately through Rule, Direct and Selected mixed inbounds. Demand bounded complete 200 status and exact echo, only one extra Selected upstream accept and no route crossing or Core replacement.
+- Transport packet boundaries are **not** under the client's control; this is a multi-write parser smoke, not deterministic TCP fragmentation, full hostname/UDP support or release acceptance. Only genuine dual-arch native success may print `T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok`; all existing T20/T22/T25/DNS/CN/Restore/GC holds remain OPEN.
+
