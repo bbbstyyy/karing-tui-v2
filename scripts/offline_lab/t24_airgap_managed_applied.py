@@ -576,6 +576,64 @@ def probe_port(port, echo_port, payload):
 
 
 
+def probe_http_connect_ip(port, echo_port, payload):
+    """A real mixed inbound HTTP CONNECT to one numeric localhost echo."""
+    require(type(port) is int and port in MANAGED_PORTS and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(payload) is bytes and 1 <= len(payload) <= 128,
+            "invalid numeric-local HTTP CONNECT fixture")
+    authority = b"127.0.0.1:" + str(echo_port).encode("ascii")
+    request = (b"CONNECT " + authority + b" HTTP/1.1\r\n" +
+               b"Host: " + authority + b"\r\n\r\n")
+    with socket.create_connection(("127.0.0.1", port), timeout=4) as conn:
+        conn.settimeout(4)
+        conn.sendall(request)
+        header = bytearray()
+        while not header.endswith(b"\r\n\r\n") and len(header) < 1024:
+            part = conn.recv(1)
+            require(part != b"", "HTTP CONNECT reply ended before header")
+            header.extend(part)
+        require(header.endswith(b"\r\n\r\n"),
+                "HTTP CONNECT response header exceeded fixed limit")
+        status_line = bytes(header).split(b"\r\n", 1)[0].split(b" ")
+        require(len(status_line) >= 2 and
+                status_line[0] in (b"HTTP/1.0", b"HTTP/1.1") and
+                status_line[1] == b"200",
+                "HTTP CONNECT response not an approved success")
+        conn.sendall(payload)
+        require(exact_read(conn, len(loopback.REPLY_PREFIX) + len(payload)) ==
+                loopback.REPLY_PREFIX + payload,
+                "HTTP CONNECT numeric-local exact echo mismatch")
+
+
+def probe_http_route_isolation(sock, old_generation, promoted_generation,
+                               expected_pid, echo_port, node):
+    """Three real HTTP CONNECT tunnels; only Selected may reach local node."""
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            not node.failed and not node.reject_connections,
+            "invalid HTTP route isolation fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "HTTP CONNECT began on an unapproved Core PID or generation")
+    before, rejected = node.calls, node.rejections
+    for port in MANAGED_PORTS:
+        probe_http_connect_ip(
+            port, echo_port, b"http-connect-ip-" + str(port).encode("ascii"))
+        require(node.calls == before + (1 if port == 2082 else 0) and
+                node.rejections == rejected and not node.failed and
+                not node.reject_connections,
+                "HTTP CONNECT bypassed Selected or crossed Rule/Direct")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "HTTP CONNECT silently restarted or replaced the Core")
+    return len(MANAGED_PORTS)
+
+
 def open_held_socks_echo(port, echo_port, payload):
     """Open one *live* local SOCKS5 echo stream; caller owns socket closure."""
     require(type(port) is int and port in MANAGED_PORTS and
@@ -1039,6 +1097,9 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
             sock, daemon_pid, core_path, old_generation, promoted_generation,
             pid, echo_port, node) == 72,
             "bounded reconnect smoke did not complete all three inbounds")
+        require(probe_http_route_isolation(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node) == 3, "HTTP CONNECT three-inbound smoke failed")
         return pid
     finally:
         if started:
@@ -1451,7 +1512,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 51 and node.rejections >= 11 and
+                        require(node.calls == 52 and node.rejections >= 11 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -1474,6 +1535,8 @@ def main(argv=None):
         print("T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok")
         print("T20_AIRGAP_BOUNDED_RECONNECT_FD=ok")
         print("T20_1000_RECONNECTS_VERIFIED=false")
+        print("T22_AIRGAP_HTTP_CONNECT_IP=ok")
+        print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
         print("T24_OFFLINE_DISTRIBUTION_OR_RESTORE_APPROVED=false")

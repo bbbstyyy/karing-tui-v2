@@ -1735,3 +1735,10 @@ docs/
 - 在重连前和结束后读取**已核准同 UID Core 子进程**和 Daemon 自身 `/proc/<pid>/fd` 数量，允许至多 4 秒有限回落，限制 Daemon ≤ 基线+16、Core ≤ 基线+24、计数有效且均小于 1024；这是短时 FD 粗粒度漂移预警，不等同无泄漏证明、真实用户吞吐或延迟 SLA。任一回显、路由、PID、代际或 FD 校验失败，仍由现有 `finally` 显式 stop 并核查无监听/持久停止意图。Python 无网络回归覆盖计数非法值、状态漂移、Selected 旁路与回落失败。
 - 双原生通过才额外打印 `T20_AIRGAP_BOUNDED_RECONNECT_FD=ok`，永远明确 `T20_1000_RECONNECTS_VERIFIED=false` 及 `T25_72H_7D_30D_SOAK_VERIFIED=false`。未实现全量 T20 千次重连、长时 goroutine/内存曲线、真实 DNS/远端节点、CN 五层及 28 组、完整合法离线包、掉电/双回滚或 72h/7d/30d。T15/T23/T24/T25/Restore/GC/正式发行门槛保持 OPEN，不引入 TUN/订阅-ISP 分流层或改变 stable `main`。
 
+
+### 2026-10-26 — M5 ADR 0162 三入口真实 mixed HTTP CONNECT 数字本机地址验证（T22 部分，整体仍 OPEN）
+
+- 继续复用第六次真实 Daemon 和原生双架构第四个 `docker --network none` 隔离环境，在 ADR 0161 的 24×3 SOCKS5 重连完成后，对同一个已授权 Applied=LKG generation 2、固定 PID 的 Core 依次通过 Rule:2080、Direct:2081、Selected:2082 发送 **HTTP/1.1 CONNECT 127.0.0.1:<仅本机临时 echo 端口>**，使用严格有限的响应头读取、HTTP 200 校验和二进制回显精确匹配。只允许 Selected 增加一次本地 SOCKS 节点连接，Rule/Direct 不得旁路，不能意外增加拒绝或更换 Core PID/代际。
+- Python 离线负向用例覆盖非 200/截断/超大/非法 HTTP 头、不匹配 echo、无效端口或 payload、错误 PID、跨入口和 Selected 旁路。全部真实双架构前置验证通过才输出 `T22_AIRGAP_HTTP_CONNECT_IP=ok`；仍明确 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。
+- **本切片不包含 SOCKS 域名解析、HTTP absolute-form、UDP、认证、真实 DNS/远端节点、CN 五层及 28 组真实资源、许可证离线分发、物理掉电/双回滚/正式恢复或长时稳定性验收。** T22 整体、T15/T23/T24/T25、Restore/GC、发行权限继续关闭，无 TUN/订阅-ISP 分流层，不更改 stable `main`。
+
