@@ -810,6 +810,128 @@ def probe_http_absolute_route_isolation(sock, old_generation,
     return len(MANAGED_PORTS)
 
 
+
+def probe_http_absolute_selected_refusal(origin_port):
+    """Fail-close numeric absolute-form GET; an error response is not an origin."""
+    require(type(origin_port) is int and 0 < origin_port < 65536,
+            "invalid HTTP absolute-form refusal target")
+    authority = b"127.0.0.1:" + str(origin_port).encode("ascii")
+    path = b"/t24-http-absolute-2082"
+    request = (b"GET http://" + authority + path + b" HTTP/1.1\r\n" +
+               b"Host: " + authority + b"\r\nConnection: close\r\n\r\n")
+    with socket.create_connection(("127.0.0.1", 2082), timeout=4) as conn:
+        conn.settimeout(4)
+        try:
+            conn.sendall(request)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            # An early rejected outbound may close the client before recv.
+            # The caller separately requires an actual Selected node refusal.
+            return
+        header = bytearray()
+        while len(header) < 1024:
+            try:
+                part = conn.recv(1)
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                require(not header, "partial HTTP absolute-form refusal header")
+                return
+            if not part:
+                require(not header, "truncated HTTP absolute-form refusal header")
+                return
+            header.extend(part)
+            if header.endswith(b"\r\n\r\n"):
+                lines = bytes(header[:-4]).split(b"\r\n")
+                status = lines[0].split(b" ", 2)
+                require(len(status) >= 2 and
+                        status[0] in (b"HTTP/1.0", b"HTTP/1.1") and
+                        len(status[1]) == 3 and status[1].isdigit() and
+                        400 <= int(status[1]) <= 599 and
+                        all(b":" in field and field.split(b":", 1)[0]
+                            for field in lines[1:]),
+                        "HTTP absolute-form Selected returned unsafe response")
+                return
+        raise RuntimeError("HTTP absolute-form refusal header exceeds bound")
+
+
+def probe_http_absolute_selected_failure_isolation(
+        sock, old_generation, promoted_generation, expected_pid, origin,
+        node, stage_hook=None):
+    """Selected refuses ordinary GET; Rule/Direct stay healthy on same Core."""
+    require(stage_hook is None or callable(stage_hook),
+            "invalid HTTP absolute-form failure diagnostic hook")
+    def mark(label):
+        if stage_hook is not None:
+            stage_hook(label)
+    mark("absolute-failure-preflight")
+    address = getattr(origin, "server_address", None)
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(address) is tuple and len(address) == 2 and
+            address[0] == "127.0.0.1" and
+            type(address[1]) is int and 0 < address[1] < 65536 and
+            type(getattr(origin, "receipts", None)) is list and
+            getattr(origin, "counter_lock", None) is not None and
+            type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            not node.failed and not node.reject_connections,
+            "invalid HTTP absolute-form failure fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "HTTP absolute-form failure began on changed Core")
+    accepted, denied = node.calls, node.rejections
+    with origin.counter_lock:
+        expected_receipts = list(origin.receipts)
+    host = "127.0.0.1:" + str(address[1])
+    node.reject_connections = True
+    try:
+        for port in MANAGED_PORTS[:2]:
+            mark("absolute-failure-rule" if port == 2080 else
+                 "absolute-failure-direct")
+            probe_http_absolute_form_get(port, address[1])
+            path = "/t24-http-absolute-" + str(port)
+            expected_receipts.append(
+                (path, host, "GET " + path + " HTTP/1.1"))
+            with origin.counter_lock:
+                require(origin.receipts == expected_receipts,
+                        "HTTP absolute-form healthy origin receipt drift")
+            require(node.calls == accepted and node.rejections == denied and
+                    not node.failed,
+                    "HTTP absolute-form Rule/Direct reached Selected")
+        mark("absolute-failure-selected")
+        probe_http_absolute_selected_refusal(address[1])
+        with origin.counter_lock:
+            require(origin.receipts == expected_receipts,
+                    "HTTP absolute-form rejected Selected reached origin")
+        delta = node.rejections - denied
+        mark("absolute-failure-denial-audit")
+        require(node.calls == accepted and 1 <= delta <= 4 and
+                not node.failed,
+                "HTTP absolute-form Selected denial unobserved or bypassed")
+    finally:
+        node.reject_connections = False
+    mark("absolute-failure-pid-after-restore")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "HTTP absolute-form failure restarted Core")
+    mark("absolute-failure-recovery")
+    require(probe_http_absolute_route_isolation(
+        sock, old_generation, promoted_generation, expected_pid,
+        origin, node) == 3,
+        "HTTP absolute-form failure recovery incomplete")
+    mark("absolute-failure-final-audit")
+    for port in MANAGED_PORTS:
+        path = "/t24-http-absolute-" + str(port)
+        expected_receipts.append(
+            (path, host, "GET " + path + " HTTP/1.1"))
+    with origin.counter_lock:
+        require(origin.receipts == expected_receipts and
+                node.calls == accepted + 1 and
+                node.rejections - denied == delta and
+                not node.failed and not node.reject_connections,
+                "HTTP absolute-form failure recovered routes drifted")
+    return 3
+
+
 def probe_split_write_http_route_isolation(sock, old_generation,
                                            promoted_generation, expected_pid,
                                            echo_port, node):
@@ -1653,6 +1775,11 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
             sock, old_generation, promoted_generation, pid,
             http_origin, node) == 3,
             "HTTP absolute-form three-inbound smoke did not finish")
+        mark("http-restart-absolute-selected-refusal")
+        require(probe_http_absolute_selected_failure_isolation(
+            sock, old_generation, promoted_generation, pid,
+            http_origin, node, stage_hook=mark) == 3,
+            "HTTP absolute-form Selected failure isolation did not recover")
         mark("http-restart-held-http-open")
         held_before, denied_before = node.calls, node.rejections
         for port in MANAGED_PORTS:
@@ -1839,6 +1966,26 @@ AIRGAP_FAILURE_CODES = {
     "HTTP absolute-form replaced approved Core": "http-absolute-core-drift",
     "HTTP absolute-form three-inbound smoke did not finish":
         "http-absolute-incomplete",
+    "invalid HTTP absolute-form refusal target": "http-absolute-denial-target",
+    "partial HTTP absolute-form refusal header": "http-absolute-denial-partial",
+    "truncated HTTP absolute-form refusal header": "http-absolute-denial-eof",
+    "HTTP absolute-form Selected returned unsafe response": "http-absolute-denial-unsafe",
+    "HTTP absolute-form refusal header exceeds bound": "http-absolute-denial-bound",
+    "invalid HTTP absolute-form failure diagnostic hook":
+        "http-absolute-denial-hook",
+    "invalid HTTP absolute-form failure fixture": "http-absolute-denial-invalid",
+    "HTTP absolute-form failure began on changed Core": "http-absolute-denial-stale",
+    "HTTP absolute-form healthy origin receipt drift": "http-absolute-healthy-origin",
+    "HTTP absolute-form Rule/Direct reached Selected": "http-absolute-healthy-route",
+    "HTTP absolute-form rejected Selected reached origin": "http-absolute-leak",
+    "HTTP absolute-form Selected denial unobserved or bypassed":
+        "http-absolute-denial-bypass",
+    "HTTP absolute-form failure restarted Core": "http-absolute-denial-core",
+    "HTTP absolute-form failure recovery incomplete": "http-absolute-denial-recovery",
+    "HTTP absolute-form failure recovered routes drifted":
+        "http-absolute-denial-final",
+    "HTTP absolute-form Selected failure isolation did not recover":
+        "http-absolute-denial-incomplete",
 }
 
 
@@ -2196,7 +2343,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 65 and node.rejections >= 15 and
+                        require(node.calls == 66 and node.rejections >= 16 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -2229,6 +2376,7 @@ def main(argv=None):
         print("T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok")
         print("T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok")
         print("T22_AIRGAP_HTTP_ABSOLUTE_FORM_IP=ok")
+        print("T22_AIRGAP_HTTP_ABSOLUTE_SELECTED_FAIL_CLOSED=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
