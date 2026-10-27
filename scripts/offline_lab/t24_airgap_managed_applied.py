@@ -580,6 +580,10 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
                 # the managed Core must not fall back to an unrequested path.
                 with self.server.counter_lock:
                     self.server.rejections += 1
+                    if hostname is not None:
+                        # Raw, fixed .invalid test target only; no real DNS names.
+                        self.server.rejected_hostname_requests.append(
+                            (hostname, port))
                 incoming.sendall(b"\x05\x05\x00\x01\x7f\x00\x00\x01\x00\x00")
                 return
             with socket.create_connection(("127.0.0.1", port), timeout=3) as target:
@@ -637,6 +641,7 @@ class LocalSocksServer(socketserver.ThreadingTCPServer):
         self.counter_lock = threading.Lock()
         self.parallel_payloads = []
         self.hostname_requests = []
+        self.rejected_hostname_requests = []
 
 
 def probe_port(port, echo_port, payload):
@@ -737,6 +742,116 @@ def probe_selected_socks_domain_route(sock, old_generation,
         unix_json(sock, "GET", "/v1/status"),
         old_generation, promoted_generation, None, True) == expected_pid,
         "selected SOCKS domain replaced approved Core")
+    return 1
+
+
+def probe_selected_socks_domain_refusal(echo_port):
+    """Reject Selected ATYP=3 without accepting a success or partial reply."""
+    require(type(echo_port) is int and 0 < echo_port < 65536,
+            "invalid Selected SOCKS domain refusal fixture")
+    request = (b"\x05\x01\x00\x03" +
+               bytes([len(SOCKS_DOMAIN_TARGET)]) + SOCKS_DOMAIN_TARGET +
+               struct.pack("!H", echo_port))
+    with socket.create_connection(("127.0.0.1", 2082), timeout=4) as conn:
+        conn.settimeout(4)
+        conn.sendall(b"\x05\x01\x00")
+        require(exact_read(conn, 2) == b"\x05\x00",
+                "Selected SOCKS domain greeting unavailable during failure")
+        conn.sendall(request)
+        reply = bytearray()
+        while len(reply) < 2:
+            try:
+                chunk = conn.recv(2 - len(reply))
+            except (ConnectionResetError, ConnectionAbortedError,
+                    BrokenPipeError):
+                break
+            if not chunk:
+                break
+            reply.extend(chunk)
+        require(not reply or
+                (len(reply) == 2 and reply[0] == 5 and reply[1] != 0),
+                "Selected SOCKS domain returned success or malformed refusal")
+
+
+def probe_selected_socks_domain_failure_isolation(
+        sock, old_generation, promoted_generation, expected_pid,
+        echo_port, node, stage_hook=None):
+    """Audit actual upstream DOMAIN refusal and recovery without Core restart."""
+    require(stage_hook is None or callable(stage_hook),
+            "invalid Selected SOCKS domain failure stage hook")
+    def mark(label):
+        if stage_hook is not None:
+            stage_hook(label)
+
+    mark("domain-denial-preflight")
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(getattr(node, "calls", None)) is int and
+            node.calls >= 0 and
+            type(getattr(node, "rejections", None)) is int and
+            node.rejections >= 0 and
+            type(getattr(node, "hostname_requests", None)) is list and
+            type(getattr(node, "rejected_hostname_requests", None)) is list and
+            getattr(node, "counter_lock", None) is not None and
+            not node.failed and not node.reject_connections,
+            "invalid Selected SOCKS domain failure fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "Selected SOCKS domain denial began on changed Core")
+
+    accepted, denied = node.calls, node.rejections
+    with node.counter_lock:
+        successful_receipts = list(node.hostname_requests)
+        rejected_receipts = list(node.rejected_hostname_requests)
+    node.reject_connections = True
+    try:
+        for port in MANAGED_PORTS[:2]:
+            mark("domain-denial-rule" if port == 2080 else
+                 "domain-denial-direct")
+            probe_port(port, echo_port,
+                       b"domain-denial-healthy-" + str(port).encode("ascii"))
+            with node.counter_lock:
+                unchanged = (
+                    node.hostname_requests == successful_receipts and
+                    node.rejected_hostname_requests == rejected_receipts)
+            require(unchanged and node.calls == accepted and
+                    node.rejections == denied and not node.failed,
+                    "Selected SOCKS domain denial affected healthy inbounds")
+        mark("domain-denial-selected")
+        probe_selected_socks_domain_refusal(echo_port)
+        mark("domain-denial-upstream-audit")
+        delta = node.rejections - denied
+        with node.counter_lock:
+            expected_denials = rejected_receipts + [
+                (SOCKS_DOMAIN_TARGET, echo_port)] * max(0, delta)
+            audited = (node.hostname_requests == successful_receipts and
+                       node.rejected_hostname_requests == expected_denials)
+        require(1 <= delta <= 4 and audited and
+                node.calls == accepted and not node.failed,
+                "Selected SOCKS domain denial bypassed exact upstream")
+    finally:
+        node.reject_connections = False
+
+    mark("domain-denial-identity-after-restore")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "Selected SOCKS domain denial restarted Core")
+    mark("domain-denial-recovery")
+    require(probe_selected_socks_domain_route(
+        sock, old_generation, promoted_generation, expected_pid,
+        echo_port, node) == 1,
+        "Selected SOCKS domain denial did not recover")
+    mark("domain-denial-final-audit")
+    with node.counter_lock:
+        audited = (node.hostname_requests == successful_receipts +
+                   [(SOCKS_DOMAIN_TARGET, echo_port)] and
+                   node.rejected_hostname_requests == expected_denials)
+    require(audited and node.calls == accepted + 1 and
+            node.rejections == denied + delta and
+            not node.reject_connections and not node.failed,
+            "Selected SOCKS domain denial recovery drifted")
     return 1
 
 
@@ -1878,6 +1993,11 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
             sock, old_generation, promoted_generation, pid, echo_port,
             node) == 1,
             "selected SOCKS domain route probe did not finish")
+        mark("http-restart-selected-socks-domain-denial")
+        require(probe_selected_socks_domain_failure_isolation(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node, stage_hook=mark) == 1,
+            "selected SOCKS domain denial stage did not recover")
         mark("http-restart-held-http-open")
         held_before, denied_before = node.calls, node.rejections
         for port in MANAGED_PORTS:
@@ -2095,6 +2215,25 @@ AIRGAP_FAILURE_CODES = {
         "socks-domain-bypass",
     "selected SOCKS domain replaced approved Core": "socks-domain-core-drift",
     "selected SOCKS domain route probe did not finish": "socks-domain-incomplete",
+    "invalid Selected SOCKS domain refusal fixture": "socks-domain-denial-target",
+    "Selected SOCKS domain greeting unavailable during failure":
+        "socks-domain-denial-greeting",
+    "Selected SOCKS domain returned success or malformed refusal":
+        "socks-domain-denial-response",
+    "invalid Selected SOCKS domain failure stage hook":
+        "socks-domain-denial-hook",
+    "invalid Selected SOCKS domain failure fixture": "socks-domain-denial-invalid",
+    "Selected SOCKS domain denial began on changed Core":
+        "socks-domain-denial-stale",
+    "Selected SOCKS domain denial affected healthy inbounds":
+        "socks-domain-denial-route",
+    "Selected SOCKS domain denial bypassed exact upstream":
+        "socks-domain-denial-bypass",
+    "Selected SOCKS domain denial restarted Core": "socks-domain-denial-core",
+    "Selected SOCKS domain denial did not recover": "socks-domain-denial-recovery",
+    "Selected SOCKS domain denial recovery drifted": "socks-domain-denial-drift",
+    "selected SOCKS domain denial stage did not recover":
+        "socks-domain-denial-incomplete",
 }
 
 
@@ -2452,7 +2591,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 67 and node.rejections >= 16 and
+                        require(node.calls == 68 and node.rejections >= 17 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -2487,6 +2626,7 @@ def main(argv=None):
         print("T22_AIRGAP_HTTP_ABSOLUTE_FORM_IP=ok")
         print("T22_AIRGAP_HTTP_ABSOLUTE_SELECTED_FAIL_CLOSED=ok")
         print("T22_AIRGAP_SELECTED_SOCKS_DOMAIN_PASSTHROUGH=ok")
+        print("T22_AIRGAP_SELECTED_SOCKS_DOMAIN_FAIL_CLOSED=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
