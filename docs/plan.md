@@ -1777,3 +1777,10 @@ docs/
 - 原有 Core 恢复后，三条旧 SOCKS5 与三条旧 HTTP CONNECT 均须在三秒内 EOF/reset/abort；绝不可接受任何旧应用字节或停滞超时。统一 `ExitStack` 负责所有旧 socket 清理；受控崩溃仍仅执行一次，原始两次恢复流量和上游拒绝审计不变。Python 无网络回归涵盖 HTTP 拨号部分失败、错误跨入口、错误 PID、任意旧连接幸存、安全白名单故障码；合成 Selected 生涯接受计数从 62 增加到 63。
 - 只有真实双架构 Core 测试全部通过才标记 `T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok`。完整 T22 域名/DNS/UDP/HTTP absolute-form、T20 一千次重连、T25 72h/7d/30d、CN 五层/28 组真实许可资源、断电/回滚/Restore/GC/正式发行依然未验证；保留全部相应 false 标志，不引入 TUN 或订阅/ISP 分流层，不更改稳定 `main`。
 
+
+### 2026-10-27 — M5 ADR 0168 分次写入 HTTP CONNECT 请求头的真实三入口验证（T22 部分）
+
+- 复用原双原生架构第四个 `docker --network none` 容器、第六次真实 Daemon 和批准的 Applied=LKG generation 2 Core，先通过已有短周期故障/恢复测试，再分别对 Rule:2080、Direct:2081、Selected:2082 发送一次合法 **HTTP/1.1 CONNECT 数值型 localhost** 请求。单个请求被明确拆成 **六次连续客户端 `sendall` 写入**，切开 CONNECT 方法、CRLF 和 Host 头；Linux TCP 可能合并写入，**不得宣称**验证了真实网络分包。仍严格要求完整受限 HTTP 200 响应和精准二进制回显。
+- 前后必须核对真实 Core PID、配置/声明修订与 Applied=LKG；只允许 Selected 增加一次合成本机 SOCKS 上游成功计数，Rule/Direct 不得跨路，拒绝与节点失败计数不变。无网络测试增加六段请求字节精确一致、回显、非 200/畸形/截断/过长响应、非法参数、错误路由、PID 替换等失败关闭路径。合成 Selected 生涯计数最终由 **63 → 64**。
+- 真实双架构新提交完全通过才输出 `T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok`，仍显式保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。本切片不证明 HTTP absolute-form、真实 TCP 分包、域名/DNS/UDP、CN 五层/28 组真实资源许可、长时浸泡、恢复及发行，亦不包含 TUN/订阅-ISP 分流层或稳定 main 改动。
+

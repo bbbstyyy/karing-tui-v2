@@ -636,6 +636,80 @@ def probe_http_connect_ip(port, echo_port, payload):
                 "HTTP CONNECT numeric-local exact echo mismatch")
 
 
+
+def probe_split_write_http_connect_ip(port, echo_port, payload):
+    """Multi-write numeric localhost CONNECT; no TCP segmentation claim."""
+    require(type(port) is int and port in MANAGED_PORTS and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(payload) is bytes and 1 <= len(payload) <= 128,
+            "invalid split-write HTTP CONNECT fixture")
+    authority = b"127.0.0.1:" + str(echo_port).encode("ascii")
+    pieces = (
+        b"CON",
+        b"NECT " + authority + b" HTTP/1.1\r",
+        b"\nHo",
+        b"st: " + authority + b"\r",
+        b"\n\r",
+        b"\n",
+    )
+    expected_request = (b"CONNECT " + authority + b" HTTP/1.1\r\n" +
+                        b"Host: " + authority + b"\r\n\r\n")
+    require(b"".join(pieces) == expected_request,
+            "split-write HTTP CONNECT fixture changed framing")
+    with socket.create_connection(("127.0.0.1", port), timeout=4) as conn:
+        conn.settimeout(4)
+        # Six distinct client sendall calls. The kernel may coalesce them:
+        # this verifies parser tolerance, not deterministic TCP packets.
+        for piece in pieces:
+            conn.sendall(piece)
+        header = bytearray()
+        while not header.endswith(b"\r\n\r\n") and len(header) < 1024:
+            chunk = conn.recv(1)
+            require(chunk != b"",
+                    "split-write HTTP CONNECT response ended early")
+            header.extend(chunk)
+        require(header.endswith(b"\r\n\r\n"),
+                "split-write HTTP CONNECT response exceeded header bound")
+        status = bytes(header).split(b"\r\n", 1)[0].split(b" ")
+        require(len(status) >= 2 and
+                status[0] in (b"HTTP/1.0", b"HTTP/1.1") and
+                status[1] == b"200",
+                "split-write HTTP CONNECT was not successful")
+        conn.sendall(payload)
+        require(exact_read(conn, len(loopback.REPLY_PREFIX) + len(payload)) ==
+                loopback.REPLY_PREFIX + payload,
+                "split-write HTTP CONNECT exact echo mismatch")
+
+
+def probe_split_write_http_route_isolation(sock, old_generation,
+                                           promoted_generation, expected_pid,
+                                           echo_port, node):
+    """Three mixed inbounds preserve Selected identity under split writes."""
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            not node.failed and not node.reject_connections,
+            "invalid split-write HTTP route fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "split-write HTTP CONNECT began on wrong Core")
+    before_calls, before_denials = node.calls, node.rejections
+    for port in MANAGED_PORTS:
+        payload = b"split-http-connect-" + str(port).encode("ascii")
+        probe_split_write_http_connect_ip(port, echo_port, payload)
+        require(node.calls == before_calls + (1 if port == 2082 else 0)
+                and node.rejections == before_denials and
+                not node.failed and not node.reject_connections,
+                "split-write HTTP CONNECT crossed or skipped Selected")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "split-write HTTP CONNECT changed approved Core")
+    return len(MANAGED_PORTS)
+
+
 def probe_http_route_isolation(sock, old_generation, promoted_generation,
                                expected_pid, echo_port, node):
     """Three real HTTP CONNECT tunnels; only Selected may reach local node."""
@@ -1434,6 +1508,10 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
         require(probe_parallel_http_connects(
             sock, old_generation, promoted_generation, pid, echo_port,
             node) == 12, "parallel HTTP Selected did not recover")
+        mark("http-restart-split-header-writes")
+        require(probe_split_write_http_route_isolation(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node) == 3, "split-write HTTP CONNECT smoke did not finish")
         mark("http-restart-held-http-open")
         held_before, denied_before = node.calls, node.rejections
         for port in MANAGED_PORTS:
@@ -1589,6 +1667,19 @@ AIRGAP_FAILURE_CODES = {
         "held-http-pid-drift",
     "held HTTP CONNECT routing drifted during stop":
         "held-http-stop-route-drift",
+    "invalid split-write HTTP CONNECT fixture": "split-http-invalid",
+    "split-write HTTP CONNECT fixture changed framing": "split-http-framing",
+    "split-write HTTP CONNECT response ended early": "split-http-early-eof",
+    "split-write HTTP CONNECT response exceeded header bound":
+        "split-http-header-bound",
+    "split-write HTTP CONNECT was not successful": "split-http-not-200",
+    "split-write HTTP CONNECT exact echo mismatch": "split-http-bad-echo",
+    "invalid split-write HTTP route fixture": "split-http-route-invalid",
+    "split-write HTTP CONNECT began on wrong Core": "split-http-stale-core",
+    "split-write HTTP CONNECT crossed or skipped Selected":
+        "split-http-route-bypass",
+    "split-write HTTP CONNECT changed approved Core": "split-http-core-drift",
+    "split-write HTTP CONNECT smoke did not finish": "split-http-incomplete",
 }
 
 
@@ -1940,7 +2031,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 63 and node.rejections >= 15 and
+                        require(node.calls == 64 and node.rejections >= 15 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -1969,6 +2060,7 @@ def main(argv=None):
         print("T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok")
         print("T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok")
         print("T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok")
+        print("T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")

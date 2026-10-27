@@ -145,3 +145,8 @@ The marker `T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok` requires complete dual-archite
 
 
 ADR 0167 post-crash ledger follow-up: native `post-crash-stop` audits require **exactly 13** lifetime successful synthetic Selected upstream connections after the single supervised crash (the prior SOCKS-only **12** plus one held HTTP Selected tunnel), at least five observed Selected refusals, zero active reject toggle and no node fault. Do not accept 12, 14 or a noninteger counter. This check runs **before** later lifecycle workloads, whose final total remains exactly 63. Fixed error code `crash-post-stop-selected-accounting` is public-safe; never print raw exception strings or internal Daemon logs. No extra kill or weakened EOF assertion.
+
+### ADR 0168: bounded split-write HTTP CONNECT request header
+
+Before ADR 0166's existing held-HTTP explicit stop, send each numeric localhost HTTP CONNECT request as six ordered client `sendall` calls via Rule/Direct/Selected, splitting the method, Host and CRLF boundaries. Require complete ≤1024-byte HTTP 200 response and exact localhost echo, approved unchanged Core PID/Applied=LKG, exactly one extra Selected accept and no Rule/Direct Selected crossings or new refusals. The kernel may coalesce writes; do **not** describe this as verified TCP packet segmentation. Final selected accepted lifetime count is 64; the marker is `T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok` only on complete dual-arch native success. This does not establish HTTP absolute-form, hostname DNS, UDP, real CN resources, T20/T25 endurance or release readiness.
+
