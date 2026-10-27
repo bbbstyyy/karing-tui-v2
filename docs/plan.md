@@ -1784,3 +1784,8 @@ docs/
 - 前后必须核对真实 Core PID、配置/声明修订与 Applied=LKG；只允许 Selected 增加一次合成本机 SOCKS 上游成功计数，Rule/Direct 不得跨路，拒绝与节点失败计数不变。无网络测试增加六段请求字节精确一致、回显、非 200/畸形/截断/过长响应、非法参数、错误路由、PID 替换等失败关闭路径。合成 Selected 生涯计数最终由 **63 → 64**。
 - 真实双架构新提交完全通过才输出 `T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok`，仍显式保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。本切片不证明 HTTP absolute-form、真实 TCP 分包、域名/DNS/UDP、CN 五层/28 组真实资源许可、长时浸泡、恢复及发行，亦不包含 TUN/订阅-ISP 分流层或稳定 main 改动。
 
+### 2026-10-27 — M5 ADR 0169 HTTP absolute-form 数字本机 GET 三入口真实转发（T22 部分）
+
+- 复用已有原生 amd64/arm64 第四个 `docker --network none` 容器、第六次 Daemon 和批准的 Applied=LKG generation 2 Core，在原三入口 HTTP CONNECT/分次写入验证后、同一次显式停止前，增加 **唯一一个测试用 127.0.0.1:<随机端口> HTTP Origin**。三个入口 Rule:2080、Direct:2081、Selected:2082 各发送一次标准 `GET http://127.0.0.1:<端口>/t24-http-absolute-<入口> HTTP/1.1`，Origin 只接受已知三条 origin-form 请求路径及正确 Host；响应固定短报文与 Content-Length，收据仅记录允许的固定路径，不打印动态头或凭据。
+- 客户端要求完整且至多 1024 字节响应头、HTTP 200、精确 Content-Length 和独立 Origin 证实的响应正文。Origin 必须按入口顺序各观察一次实际 origin-form GET；只有 Selected 新增 1 次合成 SOCKS 上游成功计数，无新增拒绝/失败，不得串入 Rule/Direct 或静默直连；真实 Core PID、声明和运行修订、Applied=LKG 不变。增加无 Core 负向回归：非法端口、非 200/截断/异常头/错误长度与正文、伪造 Origin 收据、重复请求、跨路/绕过、PID 漂移及脱敏固定诊断码；合成 Selected 生涯总数由 64 调整至 65。
+- 新提交真实双架构完全通过才允许输出 `T22_AIRGAP_HTTP_ABSOLUTE_FORM_IP=ok`；这仅是本机 **HTTP absolute-form** 早期验证，不证明 HTTPS 站点、远程 DNS、SOCKS DOMAIN/UDP、完整 CN 五层/28 组许可规则、T20 一千次重连、T25 72h/7d/30d、真实断电/双回滚/Restore/GC/正式发行。保持 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`，无 TUN/订阅-ISP 路由层，不修改稳定 main。
