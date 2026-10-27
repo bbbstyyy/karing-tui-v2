@@ -12,6 +12,7 @@ from contextlib import ExitStack
 import argparse
 import hashlib
 import http.client
+import http.server
 import json
 import os
 from pathlib import Path
@@ -496,6 +497,42 @@ def is_post_echo_peer_reset(exc, forwarded_reply):
                               BrokenPipeError))
 
 
+class LocalHTTPOrigin(http.server.BaseHTTPRequestHandler):
+    """A bounded origin-form-only local HTTP responder; no request logging."""
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):
+        paths = {"/t24-http-absolute-" + str(p) for p in MANAGED_PORTS}
+        host = "127.0.0.1:" + str(self.server.server_address[1])
+        if (self.path not in paths or
+                self.requestline != "GET " + self.path + " HTTP/1.1" or
+                self.headers.get("Host") != host):
+            self.send_error(400)
+            return
+        with self.server.counter_lock:
+            self.server.receipts.append((self.path, host, self.requestline))
+        body = b"T24-ABS-ORIGIN:" + self.path.encode("ascii")
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class LocalHTTPOriginServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self, address, handler):
+        super().__init__(address, handler)
+        self.counter_lock = threading.Lock()
+        self.receipts = []
+
+
 class LocalSocksNode(socketserver.BaseRequestHandler):
     """Only relay CONNECT for one synthetic echo endpoint inside namespace."""
 
@@ -513,7 +550,11 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
                     "Core requested nonlocal or unsupported destination")
             address = socket.inet_ntoa(exact_read(incoming, 4))
             port = struct.unpack("!H", exact_read(incoming, 2))[0]
-            require(address == "127.0.0.1" and port == self.server.echo_port,
+            http_port = getattr(self.server, "http_port", None)
+            require(address == "127.0.0.1" and (
+                    port == self.server.echo_port or
+                    (type(http_port) is int and 0 < http_port < 65536
+                     and port == http_port)),
                     "Core attempted to forward to a nonlocal target")
             if self.server.reject_connections:
                 # A real SOCKS5 CONNECT failure, not a closed test listener:
@@ -679,6 +720,94 @@ def probe_split_write_http_connect_ip(port, echo_port, payload):
         require(exact_read(conn, len(loopback.REPLY_PREFIX) + len(payload)) ==
                 loopback.REPLY_PREFIX + payload,
                 "split-write HTTP CONNECT exact echo mismatch")
+
+
+def probe_http_absolute_form_get(port, origin_port):
+    """GET absolute-form through one mixed inbound to the real local origin."""
+    require(type(port) is int and port in MANAGED_PORTS and
+            type(origin_port) is int and 0 < origin_port < 65536,
+            "invalid HTTP absolute-form fixture")
+    path = b"/t24-http-absolute-" + str(port).encode("ascii")
+    authority = b"127.0.0.1:" + str(origin_port).encode("ascii")
+    request = (b"GET http://" + authority + path + b" HTTP/1.1\r\n" +
+               b"Host: " + authority + b"\r\nConnection: close\r\n\r\n")
+    expected_body = b"T24-ABS-ORIGIN:" + path
+    with socket.create_connection(("127.0.0.1", port), timeout=4) as conn:
+        conn.settimeout(4)
+        conn.sendall(request)
+        header = bytearray()
+        while not header.endswith(b"\r\n\r\n") and len(header) < 1024:
+            part = conn.recv(1)
+            require(bool(part), "HTTP absolute-form response ended before header")
+            header.extend(part)
+        require(header.endswith(b"\r\n\r\n"),
+                "HTTP absolute-form header exceeded fixed bound")
+        fields = bytes(header[:-4]).split(b"\r\n")
+        status = fields[0].split(b" ", 2)
+        require(len(status) >= 2 and
+                status[0] in (b"HTTP/1.0", b"HTTP/1.1") and
+                status[1] == b"200",
+                "HTTP absolute-form did not return approved 200")
+        lengths = []
+        for field in fields[1:]:
+            key, sep, value = field.partition(b":")
+            require(bool(key) and bool(sep),
+                    "HTTP absolute-form response header malformed")
+            require(key.strip().lower() != b"transfer-encoding",
+                    "HTTP absolute-form response used transfer encoding")
+            if key.strip().lower() == b"content-length":
+                lengths.append(value.strip())
+        require(lengths == [str(len(expected_body)).encode("ascii")],
+                "HTTP absolute-form response length was not exact")
+        try:
+            response_body = exact_read(conn, len(expected_body))
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "HTTP absolute-form response body incomplete") from exc
+        require(response_body == expected_body,
+                "HTTP absolute-form origin body mismatch")
+
+
+def probe_http_absolute_route_isolation(sock, old_generation,
+                                        promoted_generation, expected_pid,
+                                        origin, node):
+    """Require real origin receipt AND Selected-only upstream on all ports."""
+    address = getattr(origin, "server_address", None)
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(address) is tuple and len(address) == 2 and
+            address[0] == "127.0.0.1" and type(address[1]) is int and
+            0 < address[1] < 65536 and
+            type(getattr(origin, "receipts", None)) is list and
+            getattr(origin, "counter_lock", None) is not None and
+            type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            not node.failed and not node.reject_connections,
+            "invalid HTTP absolute-form route fixture")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "HTTP absolute-form began on unapproved Core")
+    before_calls, before_denials = node.calls, node.rejections
+    with origin.counter_lock:
+        receipts = list(origin.receipts)
+    host = "127.0.0.1:" + str(address[1])
+    for port in MANAGED_PORTS:
+        probe_http_absolute_form_get(port, address[1])
+        path = "/t24-http-absolute-" + str(port)
+        receipts.append((path, host, "GET " + path + " HTTP/1.1"))
+        with origin.counter_lock:
+            observed = list(origin.receipts)
+        require(observed == receipts,
+                "HTTP absolute-form did not reach approved origin exactly")
+        require(node.calls == before_calls + (1 if port == 2082 else 0)
+                and node.rejections == before_denials and
+                not node.failed and not node.reject_connections,
+                "HTTP absolute-form crossed or skipped Selected")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "HTTP absolute-form replaced approved Core")
+    return len(MANAGED_PORTS)
 
 
 def probe_split_write_http_route_isolation(sock, old_generation,
@@ -1428,10 +1557,17 @@ def probe_bounded_lifecycle_cycles(app, env, sock, daemon_pid, core_path,
 def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
                                   old_generation, promoted_generation,
                                   echo_port, node, declaration_sha,
-                                  stage_hook=None):
+                                  http_origin=None, stage_hook=None):
     """Explicit restart after held-session stop: old generation never reappears."""
     require(stage_hook is None or callable(stage_hook),
             "invalid HTTP restart diagnostic stage hook")
+    origin_address = getattr(http_origin, "server_address", None)
+    require(type(origin_address) is tuple and len(origin_address) == 2 and
+            origin_address[0] == "127.0.0.1" and
+            type(origin_address[1]) is int and 0 < origin_address[1] < 65536
+            and type(getattr(http_origin, "receipts", None)) is list and
+            getattr(http_origin, "counter_lock", None) is not None,
+            "invalid HTTP absolute-form origin preflight")
     def mark(label):
         if stage_hook is not None:
             stage_hook(label)
@@ -1512,6 +1648,11 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
         require(probe_split_write_http_route_isolation(
             sock, old_generation, promoted_generation, pid, echo_port,
             node) == 3, "split-write HTTP CONNECT smoke did not finish")
+        mark("http-restart-absolute-form")
+        require(probe_http_absolute_route_isolation(
+            sock, old_generation, promoted_generation, pid,
+            http_origin, node) == 3,
+            "HTTP absolute-form three-inbound smoke did not finish")
         mark("http-restart-held-http-open")
         held_before, denied_before = node.calls, node.rejections
         for port in MANAGED_PORTS:
@@ -1680,6 +1821,24 @@ AIRGAP_FAILURE_CODES = {
         "split-http-route-bypass",
     "split-write HTTP CONNECT changed approved Core": "split-http-core-drift",
     "split-write HTTP CONNECT smoke did not finish": "split-http-incomplete",
+    "invalid HTTP absolute-form fixture": "http-absolute-invalid",
+    "HTTP absolute-form response ended before header": "http-absolute-eof",
+    "HTTP absolute-form header exceeded fixed bound": "http-absolute-bound",
+    "HTTP absolute-form did not return approved 200": "http-absolute-not-200",
+    "HTTP absolute-form response header malformed": "http-absolute-header",
+    "HTTP absolute-form response used transfer encoding": "http-absolute-chunked",
+    "HTTP absolute-form response length was not exact": "http-absolute-length",
+    "HTTP absolute-form response body incomplete": "http-absolute-truncated",
+    "HTTP absolute-form origin body mismatch": "http-absolute-body",
+    "invalid HTTP absolute-form route fixture": "http-absolute-route-invalid",
+    "invalid HTTP absolute-form origin preflight": "http-absolute-origin-invalid",
+    "HTTP absolute-form began on unapproved Core": "http-absolute-stale",
+    "HTTP absolute-form did not reach approved origin exactly":
+        "http-absolute-origin-bypass",
+    "HTTP absolute-form crossed or skipped Selected": "http-absolute-route-bypass",
+    "HTTP absolute-form replaced approved Core": "http-absolute-core-drift",
+    "HTTP absolute-form three-inbound smoke did not finish":
+        "http-absolute-incomplete",
 }
 
 
@@ -1761,12 +1920,18 @@ def main(argv=None):
         with tempfile.TemporaryDirectory(prefix="t24-applied-", dir="/work") as temp:
             root = Path(temp)
             env = cold.fresh_env(root, args.core)
-            with loopback.LoopbackServer(("127.0.0.1", 0),
-                                         loopback.LoopbackResponder) as echo:
+            with (loopback.LoopbackServer(("127.0.0.1", 0),
+                                          loopback.LoopbackResponder) as echo,
+                  LocalHTTPOriginServer(("127.0.0.1", 0),
+                                        LocalHTTPOrigin) as http_origin):
                 echo_thread = threading.Thread(target=echo.serve_forever, daemon=True)
                 echo_thread.start()
+                http_thread = threading.Thread(target=http_origin.serve_forever,
+                                               daemon=True)
+                http_thread.start()
                 with LocalSocksServer(("127.0.0.1", 0), LocalSocksNode) as node:
                     node.echo_port = echo.server_address[1]
+                    node.http_port = http_origin.server_address[1]
                     node_thread = threading.Thread(target=node.serve_forever, daemon=True)
                     node_thread.start()
                     try:
@@ -2007,7 +2172,7 @@ def main(argv=None):
                                 args.app, env, sock, daemon.pid, args.core,
                                 generation, promoted_generation,
                                 echo.server_address[1], node, staged_sha,
-                                stage_hook=http_stage)
+                                http_origin=http_origin, stage_hook=http_stage)
 
                         phase = "held-stop-explicit-restart"
                         require(type(run_daemon(
@@ -2031,7 +2196,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 64 and node.rejections >= 15 and
+                        require(node.calls == 65 and node.rejections >= 15 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -2039,6 +2204,8 @@ def main(argv=None):
                     finally:
                         node.shutdown()
                         node_thread.join(timeout=5)
+                        http_origin.shutdown()
+                        http_thread.join(timeout=5)
                         echo.shutdown()
                         echo_thread.join(timeout=5)
         print("T24_AIRGAP_DAEMON_COMMITTED_CORE_LOOPBACK=ok")
@@ -2061,6 +2228,7 @@ def main(argv=None):
         print("T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok")
         print("T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok")
         print("T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok")
+        print("T22_AIRGAP_HTTP_ABSOLUTE_FORM_IP=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")

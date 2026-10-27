@@ -16,6 +16,16 @@ import t24_airgap_loopback_core as loopback
 
 
 class AppliedManagedPolicyTests(unittest.TestCase):
+    @staticmethod
+    def synthetic_http_origin():
+        class Origin:
+            server_address = ("127.0.0.1", 41002)
+
+            def __init__(self):
+                self.receipts = []
+                self.counter_lock = threading.Lock()
+        return Origin()
+
     def status(self, desired="stopped", running=False):
         return {
             "api_version": "v1", "core_configured": True,
@@ -1491,6 +1501,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             reject_connections = False
 
         node = Node()
+        origin = self.synthetic_http_origin()
         state = {"running": False, "pid": 0}
         commands, payloads = [], []
 
@@ -1571,6 +1582,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                                         return_value=12) as parallel_denials,
                                       mock.patch.object(applied, "probe_split_write_http_route_isolation",
                                                         return_value=3) as split_http,
+                                      mock.patch.object(applied, "probe_http_absolute_route_isolation",
+                                                        return_value=3) as absolute_http,
                                       mock.patch.object(applied, "open_held_http_echo",
                                                         side_effect=held_http_open) as held_dial,
                                       mock.patch.object(applied, "assert_held_http_closed") as held_eof):
@@ -1579,6 +1592,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                         "/app", {}, "/daemon.sock", 100,
                                         "/approved-core", 5, 9,
                                         41001, node, "b" * 64,
+                                        http_origin=origin,
                                         stage_hook=stages.append)
         self.assertEqual(stages, [
             "http-restart-preflight", "http-restart-core-start",
@@ -1589,6 +1603,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "http-restart-parallel-selected-refusal",
             "http-restart-parallel-selected-restored",
             "http-restart-split-header-writes",
+            "http-restart-absolute-form",
             "http-restart-held-http-open", "http-restart-final-stop",
             "http-restart-held-http-close",
         ])
@@ -1614,6 +1629,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "/daemon.sock", 5, 9, 222, 41001, node)
         split_http.assert_called_once_with(
             "/daemon.sock", 5, 9, 222, 41001, node)
+        absolute_http.assert_called_once_with(
+            "/daemon.sock", 5, 9, 222, origin, node)
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
         self.assertEqual(payloads, [
@@ -1654,7 +1671,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                 applied.probe_restart_after_held_stop(
                                     "/app", {}, "/daemon.sock", 100,
                                     "/approved-core", 5, 9,
-                                    41001, type('Node', (), {'calls': 1, 'rejections': 1, 'failed': False, 'reject_connections': False})(), "b" * 64)
+                                    41001, type('Node', (), {'calls': 1, 'rejections': 1, 'failed': False, 'reject_connections': False})(), "b" * 64,
+                                    http_origin=self.synthetic_http_origin())
                         cli.assert_not_called()
 
     def test_held_stop_restart_still_stops_on_reprobe_failure(self):
@@ -1698,7 +1716,8 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                                     applied.probe_restart_after_held_stop(
                                         "/app", {}, "/daemon.sock", 100,
                                         "/approved-core", 5, 9,
-                                        41001, node, "b" * 64)
+                                        41001, node, "b" * 64,
+                                         http_origin=self.synthetic_http_origin())
         self.assertEqual(actions, ["start", "stop"])
         self.assertFalse(state["running"])
         self.assertEqual(closed.call_count, 2)
@@ -2044,6 +2063,200 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             applied.safe_airgap_failure_code(RuntimeError(
                 "private DNS or secret should not be logged")),
             "unclassified")
+
+    def test_http_absolute_form_client_exact_request_response_and_fail_close(self):
+        class Conn:
+            def __init__(self, answer):
+                self.buffer = bytearray(answer)
+                self.writes = []
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+            def settimeout(self, n):
+                self.timeout = n
+            def sendall(self, data):
+                self.writes.append(data)
+            def recv(self, n):
+                take = min(n, len(self.buffer))
+                result = bytes(self.buffer[:take])
+                del self.buffer[:take]
+                return result
+
+        for port in applied.MANAGED_PORTS:
+            with self.subTest(port=port):
+                path = b"/t24-http-absolute-" + str(port).encode()
+                body = b"T24-ABS-ORIGIN:" + path
+                answer = (b"HTTP/1.1 200 OK\r\nContent-Length: " +
+                          str(len(body)).encode() +
+                          b"\r\nConnection: close\r\n\r\n" + body)
+                conn = Conn(answer)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as dial:
+                    applied.probe_http_absolute_form_get(port, 41002)
+                self.assertTrue(conn.closed)
+                self.assertEqual(conn.timeout, 4)
+                dial.assert_called_once_with(("127.0.0.1", port), timeout=4)
+                self.assertEqual(conn.writes, [
+                    b"GET http://127.0.0.1:41002" + path + b" HTTP/1.1\r\n"
+                    b"Host: 127.0.0.1:41002\r\nConnection: close\r\n\r\n",
+                ])
+
+        good_path = b"/t24-http-absolute-2082"
+        good_body = b"T24-ABS-ORIGIN:" + good_path
+        for answer in (
+            b"HTTP/1.1 403 Forbidden\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n",
+            b"HTTP/1.1 200 OK\r\nX: " + b"x" * 1100,
+            b"NOTHTTP 200 OK\r\nContent-Length: 4\r\n\r\ntest",
+            b"HTTP/1.1 200 OK\r\nMalformed\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+            b"Content-Length: 4\r\n\r\ntest",
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx",
+            b"HTTP/1.1 200 OK\r\nContent-Length: " +
+            str(len(good_body)).encode() + b"\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Length: " +
+            str(len(good_body)).encode() + b"\r\n\r\n" +
+            b"x" * len(good_body),
+        ):
+            with self.subTest(answer=answer[:32]):
+                conn = Conn(answer)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_http_absolute_form_get(2082, 41002)
+                self.assertTrue(conn.closed)
+        for port, origin in ((True, 41002), (2089, 41002),
+                             (2080, True), (2080, 0), (2080, 65536)):
+            with self.subTest(bad_port=port, origin=origin):
+                with mock.patch.object(applied.socket, "create_connection") as dial:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_http_absolute_form_get(port, origin)
+                    dial.assert_not_called()
+
+    def test_http_absolute_form_origin_only_accepts_expected_origin_form(self):
+        with applied.LocalHTTPOriginServer(
+                ("127.0.0.1", 0), applied.LocalHTTPOrigin) as origin:
+            thread = threading.Thread(target=origin.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host = b"127.0.0.1:" + str(origin.server_address[1]).encode()
+                def query(target, header_host):
+                    request = (b"GET " + target + b" HTTP/1.1\r\n" +
+                               b"Host: " + header_host +
+                               b"\r\nConnection: close\r\n\r\n")
+                    with socket.create_connection(origin.server_address,
+                                                  timeout=3) as conn:
+                        conn.settimeout(3)
+                        conn.sendall(request)
+                        answer = bytearray()
+                        while True:
+                            part = conn.recv(1024)
+                            if not part:
+                                break
+                            answer.extend(part)
+                            self.assertLessEqual(len(answer), 2048)
+                        return bytes(answer)
+                path = b"/t24-http-absolute-2081"
+                self.assertIn(b"HTTP/1.1 200", query(path, host))
+                self.assertEqual(origin.receipts, [
+                    (path.decode(), host.decode(),
+                     "GET " + path.decode() + " HTTP/1.1"),
+                ])
+                self.assertIn(b" 400 ", query(
+                    b"http://" + host + path, host))
+                self.assertIn(b" 400 ", query(path, b"8.8.8.8"))
+                self.assertEqual(len(origin.receipts), 1)
+            finally:
+                origin.shutdown()
+                thread.join(timeout=4)
+
+    def test_http_absolute_form_origin_and_selected_must_both_be_observed(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.failed = False
+                self.reject_connections = False
+
+        good = self.promoted_status(pid=222)
+        origin = self.synthetic_http_origin()
+        node = Node()
+        visited = []
+        def receive(port, origin_port):
+            self.assertEqual(origin_port, 41002)
+            visited.append(port)
+            path = "/t24-http-absolute-" + str(port)
+            with origin.counter_lock:
+                origin.receipts.append((
+                    path, "127.0.0.1:41002", "GET " + path + " HTTP/1.1"))
+            if port == 2082:
+                node.calls += 1
+        with mock.patch.object(applied, "unix_json", return_value=good) as api:
+            with mock.patch.object(applied, "probe_http_absolute_form_get",
+                                   side_effect=receive) as dial:
+                self.assertEqual(applied.probe_http_absolute_route_isolation(
+                    "/sock", 5, 9, 222, origin, node), 3)
+        self.assertEqual(visited, list(applied.MANAGED_PORTS))
+        self.assertEqual((node.calls, node.rejections), (9, 3))
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual(dial.call_count, 3)
+
+        for defect in ("wrong-core", "origin-bypass", "duplicate-origin",
+                       "rule-cross", "selected-bypass", "new-rejection",
+                       "changed-core"):
+            with self.subTest(defect=defect):
+                origin = self.synthetic_http_origin()
+                node = Node()
+                def broken(port, _origin):
+                    path = "/t24-http-absolute-" + str(port)
+                    if defect != "origin-bypass":
+                        with origin.counter_lock:
+                            origin.receipts.append((
+                                path, "127.0.0.1:41002",
+                                "GET " + path + " HTTP/1.1"))
+                            if defect == "duplicate-origin":
+                                origin.receipts.append(origin.receipts[-1])
+                    if port == 2082 and defect != "selected-bypass":
+                        node.calls += 1
+                    if port == 2080 and defect == "rule-cross":
+                        node.calls += 1
+                    if port == 2080 and defect == "new-rejection":
+                        node.rejections += 1
+                changed = self.promoted_status(pid=333)
+                states = ([changed] if defect == "wrong-core" else
+                          [good, changed] if defect == "changed-core" else
+                          [good, good])
+                with mock.patch.object(applied, "unix_json",
+                                       side_effect=states):
+                    with mock.patch.object(applied, "probe_http_absolute_form_get",
+                                           side_effect=broken) as dial:
+                        with self.assertRaises(RuntimeError):
+                            applied.probe_http_absolute_route_isolation(
+                                "/sock", 5, 9, 222, origin, node)
+                        if defect == "wrong-core":
+                            dial.assert_not_called()
+        invalid = self.synthetic_http_origin()
+        invalid.server_address = ("8.8.8.8", 53)
+        with mock.patch.object(applied, "unix_json") as api:
+            with self.assertRaises(RuntimeError):
+                applied.probe_http_absolute_route_isolation(
+                    "/sock", 5, 9, 222, invalid, Node())
+            api.assert_not_called()
+        for message, expected in (
+            ("invalid HTTP absolute-form fixture", "http-absolute-invalid"),
+            ("HTTP absolute-form crossed or skipped Selected",
+             "http-absolute-route-bypass"),
+            ("HTTP absolute-form did not reach approved origin exactly",
+             "http-absolute-origin-bypass"),
+            ("HTTP absolute-form response body incomplete",
+             "http-absolute-truncated"),
+        ):
+            self.assertEqual(applied.safe_airgap_failure_code(
+                RuntimeError(message)), expected)
+        self.assertEqual(applied.safe_airgap_failure_code(
+            RuntimeError("private token in origin header")), "unclassified")
 
     def test_http_connect_ip_request_and_exact_echo_on_three_mixed_inbounds(self):
         class Conn:
