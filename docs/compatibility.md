@@ -523,3 +523,9 @@ The sixth real native amd64/arm64 network-none Daemon session must begin from th
 - Six barrier-released numeric localhost HTTP CONNECT clients (two per existing mixed inbound, two fresh tunnels per client) must achieve twelve exact echoes on the same pinned approved Core, with four new Selected-only upstream accepts and the four exact unique 32-byte synthetic Selected payload tags. Rule/Direct cannot cross Selected even if successful connection totals happen to compensate for a bypass. All original nonroot network-none and explicit-stop guarantees remain in force.
 - Only the bounded `T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok` marker may be emitted on genuine dual-arch native success; hostname/UDP, production CN SRS/DNS, offline distribution, 1,000 reconnects, long soak and Restore/GC remain unverified.
 
+
+### M5 / ADR 0165 — concurrent HTTP Selected refusal and same-Core recovery
+
+- In the existing sixth native Daemon, six barrier-released clients issue twelve mixed-inbound HTTP CONNECT operations while only the synthetic Selected upstream rejects: eight Rule/Direct exact localhost echoes must succeed, four Selected attempts must terminate without tunneled application data, and the synthetic Selected successful accept/tag arrays must not change. Demand 4–16 measured upstream failures with no fallback, failed node, unauthorized PID or generation drift. Restore the failure flag in `finally` and rerun twelve concurrent successful HTTP CONNECTs with four exact unique Selected tags.
+- Only a full native check may emit `T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok`; this is a short airgap failure isolation smoke, not DNS/UDP, real CN routing, long-duration resource budgets, user restore or release approval.
+

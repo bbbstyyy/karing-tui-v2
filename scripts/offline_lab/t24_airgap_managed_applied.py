@@ -687,6 +687,60 @@ def probe_parallel_http_connects(sock, old_generation, promoted_generation,
     return len(completed) * 2
 
 
+
+def probe_parallel_http_selected_denials(sock, old_generation,
+                                         promoted_generation, expected_pid,
+                                         echo_port, node):
+    """12 simultaneous HTTP operations: eight healthy and four fail-closed."""
+    require(type(expected_pid) is int and expected_pid > 1 and
+            type(echo_port) is int and 0 < echo_port < 65536 and
+            type(node.calls) is int and node.calls >= 0 and
+            type(node.rejections) is int and node.rejections >= 0 and
+            type(node.parallel_payloads) is list and
+            not node.failed and not node.reject_connections,
+            "invalid parallel HTTP Selected refusal preflight")
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "parallel HTTP Selected refusal began on changed Core")
+    accepted, rejected = node.calls, node.rejections
+    prior_tags = len(node.parallel_payloads)
+    barrier = threading.Barrier(6)
+    node.reject_connections = True
+    try:
+        def worker(index):
+            port = MANAGED_PORTS[index % len(MANAGED_PORTS)]
+            barrier.wait(timeout=8)
+            for iteration in range(2):
+                if port == 2082:
+                    # A premature CONNECT 200 does not count as success; the
+                    # existing strict probe requires bounded zero-data EOF.
+                    probe_http_selected_refusal(echo_port)
+                else:
+                    payload = ("http-parallel-denied-" + str(index) + "-" +
+                               str(iteration) + "-" + str(port)).encode("ascii")
+                    probe_http_connect_ip(port, echo_port, payload)
+            return port
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = [executor.submit(worker, i) for i in range(6)]
+            completed = [future.result(timeout=40) for future in futures]
+        require(all(completed.count(port) == 2 for port in MANAGED_PORTS),
+                "parallel HTTP Selected refusal did not complete all workers")
+        delta = node.rejections - rejected
+        require(node.calls == accepted and
+                len(node.parallel_payloads) == prior_tags and
+                4 <= delta <= 16 and not node.failed,
+                "parallel HTTP Selected refusal bypassed or harmed Rule/Direct")
+    finally:
+        node.reject_connections = False
+    require(assert_promoted_core(
+        unix_json(sock, "GET", "/v1/status"),
+        old_generation, promoted_generation, None, True) == expected_pid,
+        "parallel HTTP Selected refusal unexpectedly restarted Core")
+    return len(completed) * 2
+
+
 def probe_http_selected_refusal(echo_port):
     """Fail closed even if the mixed HTTP inbound acknowledges CONNECT early.
 
@@ -1288,6 +1342,14 @@ def probe_restart_after_held_stop(app, env, sock, daemon_pid, core_path,
         require(probe_parallel_http_connects(
             sock, old_generation, promoted_generation, pid, echo_port,
             node) == 12, "parallel HTTP CONNECT smoke did not finish")
+        mark("http-restart-parallel-selected-refusal")
+        require(probe_parallel_http_selected_denials(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node) == 12, "parallel HTTP Selected failure did not finish")
+        mark("http-restart-parallel-selected-restored")
+        require(probe_parallel_http_connects(
+            sock, old_generation, promoted_generation, pid, echo_port,
+            node) == 12, "parallel HTTP Selected did not recover")
         return pid
     finally:
         if started:
@@ -1382,6 +1444,20 @@ AIRGAP_FAILURE_CODES = {
     "parallel HTTP CONNECT changed approved Core PID or generation":
         "http-parallel-core-replaced",
     "parallel HTTP CONNECT smoke did not finish": "http-parallel-incomplete",
+    "invalid parallel HTTP Selected refusal preflight":
+        "http-parallel-refusal-invalid",
+    "parallel HTTP Selected refusal began on changed Core":
+        "http-parallel-refusal-stale-core",
+    "parallel HTTP Selected refusal did not complete all workers":
+        "http-parallel-refusal-workers",
+    "parallel HTTP Selected refusal bypassed or harmed Rule/Direct":
+        "http-parallel-refusal-bypass",
+    "parallel HTTP Selected refusal unexpectedly restarted Core":
+        "http-parallel-refusal-core-changed",
+    "parallel HTTP Selected failure did not finish":
+        "http-parallel-refusal-incomplete",
+    "parallel HTTP Selected did not recover":
+        "http-parallel-refusal-no-recovery",
 }
 
 
@@ -1735,7 +1811,7 @@ def main(argv=None):
                         phase = "final-stopped-open"
                         run_daemon(args.app, args.core, root, env, final_stopped)
                         phase = "final-node-accounting"
-                        require(node.calls == 57 and node.rejections >= 11 and
+                        require(node.calls == 61 and node.rejections >= 15 and
                                 not node.reject_connections and not node.failed,
                                 "held-session restart or Selected routing drifted")
                         phase = "final-core-hash"
@@ -1761,6 +1837,7 @@ def main(argv=None):
         print("T22_AIRGAP_HTTP_CONNECT_IP=ok")
         print("T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok")
         print("T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok")
+        print("T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok")
         print("T22_HOSTNAME_AND_UDP_VERIFIED=false")
         print("T25_72H_7D_30D_SOAK_VERIFIED=false")
         print("T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false")
