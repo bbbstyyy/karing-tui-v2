@@ -207,6 +207,18 @@ class NativeGroupDNSTests(unittest.TestCase):
         add(group.PROXY_DOMAIN, 41004)
         self.assertEqual(group.verify_upstream(
             node, 41010, 41004, 41005, True, True), (4, 1, 1))
+        # After explicit Group resolve, sing-box can pass the A address
+        # (SOCKS5 ATYP=1) to Selected, instead of the original domain.
+        # Group DNS A query + selected DNS-port CONNECT + echo-port CONNECT
+        # are still mandatory; a direct DNS bypass must still be rejected.
+        resolved = node_fixture()
+        resolved.destination_receipts = list(node.destination_receipts)
+        resolved.destination_receipts[1] = (
+            None, "127.0.0.1", 41010)
+        resolved.hostname_requests = [(group.PROXY_DOMAIN, 41010)]
+        resolved.calls = 4
+        self.assertEqual(group.verify_upstream(
+            resolved, 41010, 41004, 41005, True, True), (4, 1, 1))
         for defect in ("wrong-port", "external-address", "missing-group",
                        "missing-proxy", "extra-echo", "node-denied",
                        "node-failed", "forged-hostname"):
@@ -271,8 +283,7 @@ class NativeGroupDNSTests(unittest.TestCase):
                 if defect != "group-upstream-bypass":
                     node.destination_receipts.extend([
                         (None, "127.0.0.1", 41005),
-                        (group.GROUP_DOMAIN, "127.0.0.1", 41010)])
-                    node.hostname_requests.append((group.GROUP_DOMAIN, 41010))
+                        (None, "127.0.0.1", 41010)])
                     node.calls += 2
             def selected_control(_port, _payload):
                 pd.receipts.append((dns.PROXY_DOMAIN, 1))
@@ -324,8 +335,8 @@ class NativeGroupDNSTests(unittest.TestCase):
             self.assertEqual(workflow.count(item), 8)
         self.assertIn("t24_airgap_managed_group_dns.py", workflow)
         self.assertEqual(group.SAFE_CODES[
-            "Group DNS resolve/route detour or application bypass"],
-            "group-dns-bypass")
+            "Group DNS application did not use Selected SOCKS"],
+            "group-dns-app-bypass")
         self.assertNotIn("password", group.SAFE_CODES)
 
 

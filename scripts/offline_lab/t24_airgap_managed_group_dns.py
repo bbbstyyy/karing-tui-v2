@@ -146,19 +146,32 @@ def verify_upstream(node, echo_port, proxy_port, group_port,
             "Group DNS unexpected Selected upstream destinations")
     group_count = sum(port == group_port for _, _, port in destinations)
     proxy_count = sum(port == proxy_port for _, _, port in destinations)
-    group_app = sum(host == GROUP_DOMAIN and port == echo_port
+    # Sing-box may replace the application destination DOMAIN with the IP
+    # yielded by this Group resolve action before using the selected SOCKS.
+    # Such an ATYP=1 hop is legitimate ONLY when a real Group DNS A packet,
+    # matching Group TCP detour and exact local application echo are proven.
+    group_app = sum(host in (GROUP_DOMAIN, None) and port == echo_port
                     for host, _, port in destinations)
     proxy_app = sum(host == PROXY_DOMAIN and port == echo_port
                     for host, _, port in destinations)
+    echo_count = sum(port == echo_port for _, _, port in destinations)
+    expected_echo = int(expect_group) + int(expect_proxy)
+    expected_hostnames = sorted(
+        (host, port) for host, _, port in destinations
+        if host is not None and port == echo_port)
+    require(hostname_receipts == expected_hostnames or
+            sorted(hostname_receipts) == expected_hostnames,
+            "Group DNS raw SOCKS hostname receipts drifted")
     require((1 <= group_count <= proxy.MAX_TCP_DNS_QUERIES
-             if expect_group else group_count == 0) and
-            (1 <= proxy_count <= proxy.MAX_TCP_DNS_QUERIES
-             if expect_proxy else proxy_count == 0) and
-            group_app == (1 if expect_group else 0) and
-            proxy_app == (1 if expect_proxy else 0) and
-            len(hostname_receipts) ==
-            (int(expect_group) + int(expect_proxy)),
-            "Group DNS resolve/route detour or application bypass")
+             if expect_group else group_count == 0),
+            "Group DNS TCP transport did not use Selected SOCKS")
+    require((1 <= proxy_count <= proxy.MAX_TCP_DNS_QUERIES
+             if expect_proxy else proxy_count == 0),
+            "Proxy DNS TCP transport did not use Selected SOCKS")
+    require(group_app == int(expect_group) and echo_count == expected_echo,
+            "Group DNS application did not use Selected SOCKS")
+    require(proxy_app == int(expect_proxy),
+            "Selected control did not use its Proxy DNS application")
     return accepted, group_count, proxy_count
 
 
@@ -373,7 +386,11 @@ SAFE_CODES = {
     "Group DNS SOCKS response address invalid": "group-dns-reply",
     "Group DNS SOCKS application echo mismatch": "group-dns-echo",
     "Group DNS unexpected Selected upstream destinations": "group-dns-unapproved-upstream",
-    "Group DNS resolve/route detour or application bypass": "group-dns-bypass",
+    "Group DNS raw SOCKS hostname receipts drifted": "group-dns-raw-host-drift",
+    "Group DNS TCP transport did not use Selected SOCKS": "group-dns-tcp-detour",
+    "Proxy DNS TCP transport did not use Selected SOCKS": "group-dns-proxy-detour",
+    "Group DNS application did not use Selected SOCKS": "group-dns-app-bypass",
+    "Selected control did not use its Proxy DNS application": "group-dns-proxy-app-bypass",
     "Group DNS managed Core fixture invalid": "group-dns-preflight",
     "Group DNS started on wrong Core or LKG": "group-dns-stale-core",
     "Group DNS started with old DNS receipts": "group-dns-old-receipts",
