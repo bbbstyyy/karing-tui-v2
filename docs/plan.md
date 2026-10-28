@@ -1859,3 +1859,10 @@ docs/
 - 继 ADR 0178/0179 的 Group/Proxy DNS 配对防伪后，新增原生配置发射前的五层 `source_map` 完整性检查：Custom → GeoSite → GeoIP → ACL → FINAL 的来源必须有序，每条用户作用域规则必须存在实际 native rule 与 source-map 双向对应；不能插入订阅/ISP 来源层、删除用户分流来源、伪造 BLOCK/FINAL 或替换已声明目标。
 - 对 GROUP/Proxy DNS `resolve → route` 的同组、同目标、同谓词和相邻关系再次执行通用闭包校验。FINAL 必须是作用于 Rule 入口的唯一无条件终止目标，BLOCK 必须是真正 `reject`，目标标签需与 TargetCatalog 解析一致；不一致时 `ErrNativeConfigClosure` 拒绝编译。
 - 新增无需联网/真实 Core 的五层正反例测试；须通过同一提交的普通 CI、Race 4/4、Managed Core 与 amd64/arm64 原生 Core 后才能合并。本项仅强化 T26 *编译期* 来源证明，不代表真实观察 `observed`、Group DNS 解析私有 IP 经 Selected 应用出口、CN 28 组带许可资源闭包、完整 T10/T22/T24、T20 千次重连、T25 长时运行或正式发布。保持全部未验收发布标志 `false`，不引入 TUN、订阅/ISP 分流层，不改稳定 `main`。
+
+
+### 2026-10-29 — M5 ADR 0181 T26 已应用代际路由解释的跨文件可信闭包
+
+- ADR 0180 已在编译发射前约束五层 `route.rules` 与 `source_map` 的双向关系。本切片进一步在 `route explain` 从 SQLite 读取已应用代际、完成配置/manifest/source-map 独立 SHA-256 校验之后，重新核对层次顺序、FINAL 无条件 Rule 入口、BLOCK/出口目标/原生谓词、全部用户作用域来源与 Group/Proxy DNS 相邻解析配对，不信任仅重算哈希的错误来源标签。异常只返回 `ErrRouteExplainIntegrity`，不伪造已观测的连接证据。
+- 使用确定性目标标签约定重建最小 `TargetCatalog`，只验证已持久化字节间能独立交叉核对的关系；不声称能认证原始声明、检测完全协调改写后的语义有效字节或还原 DNS detour/实时 Core 连接。负向用例主动重算三份元数据哈希，证明本次额外拒绝条件；正向用例必须允许真实 Group DNS 与 Proxy DNS 的编译配对。
+- 本项只属于 T26 *已应用代际模拟诊断的读取侧一致性*。需在同一 commit 普通 CI、四片 Race、Managed Core、双原生 amd64/arm64 全绿后才合并；不将 T26 标记完成。既有 Group Target=CurrentSelected 解析私有回环 IP 的实际应用出口问题、CN 许可规则资产、T20 千次重连、T25 长时运行及真实 Restore/GC、T22/T24 整体验收仍是独立阻塞项，未验收发布标志保持 false。无 TUN、订阅/ISP 分流层，稳定 main 和发行 Draft PR #1 不动。

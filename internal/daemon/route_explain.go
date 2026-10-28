@@ -252,6 +252,12 @@ func decodeRouteExplainGeneration(
 			)
 		}
 	}
+	if err := compiler.ValidatePersistedRouteProvenance(native.Route.Rules, sourceMap, manifest.DNSServerTags); err != nil {
+		return compiler.NativeManifest{}, nil, nil, fmt.Errorf(
+			"%w: generation %d route provenance: %v",
+			ErrRouteExplainIntegrity, generationID, err,
+		)
+	}
 	return manifest, native.Route.Rules, sourceMap, nil
 }
 
