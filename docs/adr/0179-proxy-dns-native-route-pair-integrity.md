@@ -17,13 +17,13 @@ resolved address remains unresolved under ADR 0178.
 
 At the final native configuration boundary, reject the complete candidate unless:
 
-- exactly one Selected synthetic outbound route has an immediately preceding
-  Proxy DNS `resolve` with identical match predicates;
+- exactly one Selected synthetic outbound route targets CurrentSelected, with an
+  immediately preceding Proxy DNS `resolve` using identical match predicates;
 - each of Global and GlobalNoPrivate has the same adjacent, exact-predicate
   `resolve → route` pair;
 - every source-mapped, proxy-targeted user route without Group DNS has its
   own adjacent Proxy DNS `resolve` with matching group, layer, FINAL flag,
-  target and actual native rule contents;
+  target, an outbound equal to TargetCatalog resolution, and exact native rule contents;
 - a Proxy DNS `resolve` in the user source map cannot be orphaned,
   forged, duplicated or indexed outside the final native rule array.
 
