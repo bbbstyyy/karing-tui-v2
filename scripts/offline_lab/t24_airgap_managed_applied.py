@@ -594,6 +594,13 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
                     self.server.calls += 1
                     if hostname is not None:
                         self.server.hostname_requests.append((hostname, port))
+                    # Optional exact destination audit for the separate
+                    # ADR 0177 Proxy DNS detour test. Older lab fixtures do
+                    # not set this attribute and retain identical behavior.
+                    receipts = getattr(
+                        self.server, "destination_receipts", None)
+                    if receipts is not None:
+                        receipts.append((hostname, address, port))
                 until = time.monotonic() + 4
                 audit_prefix = bytearray()
                 audited = False

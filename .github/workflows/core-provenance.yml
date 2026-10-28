@@ -95,6 +95,7 @@ jobs:
           install -m 0444 scripts/offline_lab/t24_airgap_managed_applied.py "$stage/t24_airgap_managed_applied.py"
           install -m 0444 scripts/offline_lab/t24_airgap_managed_dns.py "$stage/t24_airgap_managed_dns.py"
           install -m 0444 scripts/offline_lab/t24_airgap_managed_direct_dns.py "$stage/t24_airgap_managed_direct_dns.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_proxy_dns.py "$stage/t24_airgap_managed_proxy_dns.py"
           # Host-only staging: root-own the approved Core artifact so the
           # non-root Daemon artifact verifier accepts it in a read-only bind.
           sudo chown 0:0 "$stage/core"
@@ -199,6 +200,23 @@ jobs:
             --env DISPLAY= --env WAYLAND_DISPLAY= \
             --env PYTHONDONTWRITEBYTECODE=1 \
             "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_direct_dns.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
+
+          # Seventh independent network-none native Core. Exact Proxy DNS
+          # TCP queries must traverse synthetic Selected SOCKS (audit DNS
+          # port + raw DNS question), while Direct UDP DNS and Outbound/Node
+          # DNS stay isolated. No DNS through WAN or local direct fallback.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_proxy_dns.py \
             --arch "${{ matrix.arch }}" \
             --app /opt/t24/app \
             --core /opt/t24/core \

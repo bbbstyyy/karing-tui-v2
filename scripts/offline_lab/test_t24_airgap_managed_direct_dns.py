@@ -277,7 +277,7 @@ class DirectDNSPolicyTests(unittest.TestCase):
             self.assertEqual(direct.SAFE_CODES[msg], code)
         self.assertNotIn("credentials", direct.SAFE_CODES)
 
-    def test_workflow_keeps_six_native_airgaps_and_no_capabilities(self):
+    def test_workflow_keeps_seven_native_airgaps_and_no_capabilities(self):
         workflow = (Path(__file__).resolve().parents[2] /
                     ".github/workflows/core-provenance.yml").read_text()
         for needle in (
@@ -285,7 +285,7 @@ class DirectDNSPolicyTests(unittest.TestCase):
             "--network none --cap-drop ALL",
             "--user 10001:10001 --read-only",
         ):
-            self.assertEqual(workflow.count(needle), 6)
+            self.assertEqual(workflow.count(needle), 7)
         self.assertIn("t24_airgap_managed_direct_dns.py", workflow)
         self.assertIn("t24_airgap_managed_dns.py", workflow)
 
