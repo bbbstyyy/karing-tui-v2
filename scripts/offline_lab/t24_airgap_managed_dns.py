@@ -26,6 +26,7 @@ import t24_airgap_loopback_core as loopback
 NODE_DOMAIN = b"t24-node.invalid"
 DIRECT_DOMAIN = b"t24-direct.invalid"
 PROXY_DOMAIN = b"t24-selected.invalid"
+GROUP_DOMAIN = b"t24-group.invalid"
 MAX_DNS_DATAGRAM = 512
 MAX_DNS_RECEIPTS = 12
 
@@ -71,7 +72,7 @@ def answer_node_dns(packet, expected_name=NODE_DOMAIN):
     Ignore only bounded optional EDNS query metadata, never serve its contents.
     """
     require(type(expected_name) is bytes and
-            expected_name in (NODE_DOMAIN, DIRECT_DOMAIN, PROXY_DOMAIN),
+            expected_name in (NODE_DOMAIN, DIRECT_DOMAIN, PROXY_DOMAIN, GROUP_DOMAIN),
             "unapproved DNS fixture name")
     require(type(packet) is bytes and 17 <= len(packet) <= MAX_DNS_DATAGRAM,
             "invalid DNS question bounds")
@@ -146,7 +147,7 @@ class NodeDNSServer(socketserver.ThreadingUDPServer):
 
     def __init__(self, address, allowed_name=NODE_DOMAIN):
         require(type(allowed_name) is bytes and
-                allowed_name in (NODE_DOMAIN, DIRECT_DOMAIN, PROXY_DOMAIN),
+                allowed_name in (NODE_DOMAIN, DIRECT_DOMAIN, PROXY_DOMAIN, GROUP_DOMAIN),
                 "unapproved DNS fixture name")
         super().__init__(address, NodeDNSResponder)
         self.allowed_name = allowed_name

@@ -96,6 +96,7 @@ jobs:
           install -m 0444 scripts/offline_lab/t24_airgap_managed_dns.py "$stage/t24_airgap_managed_dns.py"
           install -m 0444 scripts/offline_lab/t24_airgap_managed_direct_dns.py "$stage/t24_airgap_managed_direct_dns.py"
           install -m 0444 scripts/offline_lab/t24_airgap_managed_proxy_dns.py "$stage/t24_airgap_managed_proxy_dns.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_group_dns.py "$stage/t24_airgap_managed_group_dns.py"
           # Host-only staging: root-own the approved Core artifact so the
           # non-root Daemon artifact verifier accepts it in a read-only bind.
           sudo chown 0:0 "$stage/core"
@@ -217,6 +218,24 @@ jobs:
             --env DISPLAY= --env WAYLAND_DISPLAY= \
             --env PYTHONDONTWRITEBYTECODE=1 \
             "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_proxy_dns.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
+
+          # Eighth independent network-none native managed Core. A single
+          # custom domain-matched Rule group binds an explicit Group TCP DNS
+          # profile with Selected detour. Separate raw DNS A question and
+          # Selected SOCKS destination-port receipts are required, and the
+          # global Proxy TCP resolver must remain isolated from Group DNS.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_group_dns.py \
             --arch "${{ matrix.arch }}" \
             --app /opt/t24/app \
             --core /opt/t24/core \
