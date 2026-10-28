@@ -8,7 +8,7 @@ import (
 // validateProxyDNSRouteBindings checks the *actual* native route sequence.
 // A stray resolve rule elsewhere is not proof that Selected/Global or a
 // proxy-bound user group will query its declared Proxy DNS before routing.
-func validateProxyDNSRouteBindings(bound BoundRouting, dns CompiledDNS) error {
+func validateProxyDNSRouteBindings(bound BoundRouting, dns CompiledDNS, targets TargetCatalog) error {
 	tag := dns.ProxyResolverTag
 	if tag == "" {
 		return nil
@@ -19,6 +19,9 @@ func validateProxyDNSRouteBindings(bound BoundRouting, dns CompiledDNS) error {
 	for index, rule := range bound.Rules {
 		if isSelectedSyntheticRoute(rule) {
 			selectedCount++
+			if rule.Outbound != targets.CurrentSelectedTag {
+				return fmt.Errorf("%w: Selected proxy route changed its application target", ErrNativeConfigClosure)
+			}
 			if err := requireProxyResolveRoutePair(bound.Rules, index, tag); err != nil {
 				return err
 			}
@@ -49,6 +52,10 @@ func validateProxyDNSRouteBindings(bound BoundRouting, dns CompiledDNS) error {
 	}
 	for _, entry := range bound.SourceMap {
 		if entry.Action == "route" && entry.DNSProfileID == "" && isProxyTarget(entry.Target) {
+			expectedOutbound, err := targets.ResolveTarget(entry.Target)
+			if err != nil || expectedOutbound == "" || entry.Outbound != expectedOutbound {
+				return fmt.Errorf("%w: proxy-bound source-map target/outbound mismatch", ErrNativeConfigClosure)
+			}
 			if entry.RuleIndex < 1 {
 				return fmt.Errorf("%w: proxy-bound user route has no preceding resolve", ErrNativeConfigClosure)
 			}
