@@ -28,7 +28,6 @@ def node_fixture():
     node.echo_port = 41010
     node.http_port = 41004
     node.group_dns_port = 41005
-    node.group_hostname = group.GROUP_DOMAIN
     return node
 
 
@@ -53,7 +52,7 @@ class NativeGroupDNSTests(unittest.TestCase):
                          "proxy-selected-tcp")
         self.assertEqual(doc["routing"]["custom"], [{
             "id": "group-only-domain", "order": 1, "enabled": True,
-            "target": {"kind": "current_selected"},
+            "target": {"kind": "direct"},
             "dns_profile_id": "group-selected-tcp",
             "match": {"op": "atom", "predicate": {
                 "kind": "domain", "value": "t24-group.invalid",
@@ -192,36 +191,24 @@ class NativeGroupDNSTests(unittest.TestCase):
                         group.probe_group_domain(port, payload)
                     dial.assert_not_called()
 
-    def test_upstream_receipt_requires_two_dns_detours_and_two_echoes(self):
+    def test_upstream_receipt_requires_group_dns_detour_not_group_app(self):
         node = node_fixture()
-        def add(host, dns_port):
-            node.destination_receipts.extend([
-                (None, "127.0.0.1", dns_port),
-                (host, "127.0.0.1", 41010),
-            ])
-            node.hostname_requests.append((host, 41010))
-            node.calls += 2
-        add(group.GROUP_DOMAIN, 41005)
+        # Matching group application is DIRECT. Its Group DNS transport
+        # must nonetheless connect through Selected to the Group TCP port.
+        node.destination_receipts.append((None, "127.0.0.1", 41005))
+        node.calls = 1
         self.assertEqual(group.verify_upstream(
-            node, 41010, 41004, 41005, True, False), (2, 1, 0))
-        add(group.PROXY_DOMAIN, 41004)
+            node, 41010, 41004, 41005, True, False), (1, 1, 0))
+        node.destination_receipts.extend([
+            (None, "127.0.0.1", 41004),
+            (group.PROXY_DOMAIN, "127.0.0.1", 41010)])
+        node.hostname_requests.append((group.PROXY_DOMAIN, 41010))
+        node.calls = 3
         self.assertEqual(group.verify_upstream(
-            node, 41010, 41004, 41005, True, True), (4, 1, 1))
-        # After explicit Group resolve, sing-box can pass the A address
-        # (SOCKS5 ATYP=1) to Selected, instead of the original domain.
-        # Group DNS A query + selected DNS-port CONNECT + echo-port CONNECT
-        # are still mandatory; a direct DNS bypass must still be rejected.
-        resolved = node_fixture()
-        resolved.destination_receipts = list(node.destination_receipts)
-        resolved.destination_receipts[1] = (
-            None, "127.0.0.1", 41010)
-        resolved.hostname_requests = [(group.PROXY_DOMAIN, 41010)]
-        resolved.calls = 4
-        self.assertEqual(group.verify_upstream(
-            resolved, 41010, 41004, 41005, True, True), (4, 1, 1))
+            node, 41010, 41004, 41005, True, True), (3, 1, 1))
         for defect in ("wrong-port", "external-address", "missing-group",
-                       "missing-proxy", "extra-echo", "node-denied",
-                       "node-failed", "forged-hostname"):
+                       "missing-proxy", "extra-group-app", "duplicate-proxy-app",
+                       "node-denied", "node-failed", "forged-hostname"):
             with self.subTest(defect=defect):
                 another = node_fixture()
                 another.destination_receipts = list(node.destination_receipts)
@@ -237,11 +224,17 @@ class NativeGroupDNSTests(unittest.TestCase):
                     another.destination_receipts.pop(0)
                     another.calls -= 1
                 elif defect == "missing-proxy":
-                    another.destination_receipts.pop(2)
+                    another.destination_receipts.pop(1)
                     another.calls -= 1
-                elif defect == "extra-echo":
+                elif defect == "extra-group-app":
+                    another.destination_receipts.insert(
+                        1, (None, "127.0.0.1", 41010))
+                    another.calls += 1
+                elif defect == "duplicate-proxy-app":
                     another.destination_receipts.append(
-                        (group.GROUP_DOMAIN, "127.0.0.1", 41010))
+                        (group.PROXY_DOMAIN, "127.0.0.1", 41010))
+                    another.hostname_requests.append(
+                        (group.PROXY_DOMAIN, 41010))
                     another.calls += 1
                 elif defect == "node-denied":
                     another.rejections = 1
@@ -281,10 +274,9 @@ class NativeGroupDNSTests(unittest.TestCase):
                 if defect == "group-used-direct":
                     dd.receipts.append((dns.DIRECT_DOMAIN, 1))
                 if defect != "group-upstream-bypass":
-                    node.destination_receipts.extend([
-                        (None, "127.0.0.1", 41005),
-                        (None, "127.0.0.1", 41010)])
-                    node.calls += 2
+                    node.destination_receipts.append(
+                        (None, "127.0.0.1", 41005))
+                    node.calls += 1
             def selected_control(_port, _payload):
                 pd.receipts.append((dns.PROXY_DOMAIN, 1))
                 node.destination_receipts.extend([
@@ -297,7 +289,7 @@ class NativeGroupDNSTests(unittest.TestCase):
                 if defect == "proxy-used-direct":
                     dd.receipts.append((dns.DIRECT_DOMAIN, 1))
                 if defect == "proxy-upstream-bypass":
-                    node.destination_receipts.pop(2)
+                    node.destination_receipts.pop(1)
                     node.calls -= 1
                 if defect == "proxy-denied":
                     node.rejections = 1
@@ -335,8 +327,8 @@ class NativeGroupDNSTests(unittest.TestCase):
             self.assertEqual(workflow.count(item), 8)
         self.assertIn("t24_airgap_managed_group_dns.py", workflow)
         self.assertEqual(group.SAFE_CODES[
-            "Group DNS application did not use Selected SOCKS"],
-            "group-dns-app-bypass")
+            "Group DNS Direct application leaked into Selected SOCKS"],
+            "group-dns-app-leak")
         self.assertNotIn("password", group.SAFE_CODES)
 
 

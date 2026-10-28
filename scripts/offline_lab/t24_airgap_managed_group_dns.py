@@ -55,7 +55,7 @@ def group_dns_document(node_port, node_dns_port, direct_port,
     })
     doc["routing"]["custom"].append({
         "id": GROUP_ID, "order": 1, "enabled": True,
-        "target": {"kind": "current_selected"},
+        "target": {"kind": "direct"},
         "dns_profile_id": GROUP_PROFILE_ID,
         "match": {"op": "atom", "predicate": {
             "kind": "domain", "value": GROUP_DOMAIN.decode("ascii"),
@@ -79,7 +79,7 @@ def assert_group_document(doc, node_port, node_dns_port, direct_port,
     })
     expected["routing"]["custom"].append({
         "id": GROUP_ID, "order": 1, "enabled": True,
-        "target": {"kind": "current_selected"},
+        "target": {"kind": "direct"},
         "dns_profile_id": GROUP_PROFILE_ID,
         "match": {"op": "atom", "predicate": {
             "kind": "domain", "value": GROUP_DOMAIN.decode("ascii"),
@@ -136,40 +136,34 @@ def verify_upstream(node, echo_port, proxy_port, group_port,
         failed = node.failed
     allowed_ports = {echo_port, proxy_port, group_port}
     require(accepted == len(destinations) and accepted > 0 and
-            accepted <= 2 * proxy.MAX_TCP_DNS_QUERIES + 2 and
+            accepted <= 2 * proxy.MAX_TCP_DNS_QUERIES + 1 and
             rejections == 0 and not denied and not failed and
             not node.reject_connections and
             all(addr == "127.0.0.1" and port in allowed_ports
                 for _, addr, port in destinations) and
-            all(name in (GROUP_DOMAIN, PROXY_DOMAIN) and port == echo_port
+            all(name == PROXY_DOMAIN and port == echo_port
                 for name, port in hostname_receipts),
             "Group DNS unexpected Selected upstream destinations")
     group_count = sum(port == group_port for _, _, port in destinations)
     proxy_count = sum(port == proxy_port for _, _, port in destinations)
-    # Sing-box may replace the application destination DOMAIN with the IP
-    # yielded by this Group resolve action before using the selected SOCKS.
-    # Such an ATYP=1 hop is legitimate ONLY when a real Group DNS A packet,
-    # matching Group TCP detour and exact local application echo are proven.
-    group_app = sum(host in (GROUP_DOMAIN, None) and port == echo_port
-                    for host, _, port in destinations)
+    # Group's APPLICATION target is explicitly DIRECT; its own DNS transport
+    # is separately detoured over Selected SOCKS. A Group app connection
+    # through Selected is a failure, even if an identical echo came back.
+    echo_count = sum(port == echo_port for _, _, port in destinations)
     proxy_app = sum(host == PROXY_DOMAIN and port == echo_port
                     for host, _, port in destinations)
-    echo_count = sum(port == echo_port for _, _, port in destinations)
-    expected_echo = int(expect_group) + int(expect_proxy)
-    expected_hostnames = sorted(
+    require(sorted(hostname_receipts) == sorted(
         (host, port) for host, _, port in destinations
-        if host is not None and port == echo_port)
-    require(hostname_receipts == expected_hostnames or
-            sorted(hostname_receipts) == expected_hostnames,
-            "Group DNS raw SOCKS hostname receipts drifted")
+        if host is not None and port == echo_port),
+        "Group DNS raw SOCKS hostname receipts drifted")
     require((1 <= group_count <= proxy.MAX_TCP_DNS_QUERIES
              if expect_group else group_count == 0),
             "Group DNS TCP transport did not use Selected SOCKS")
     require((1 <= proxy_count <= proxy.MAX_TCP_DNS_QUERIES
              if expect_proxy else proxy_count == 0),
             "Proxy DNS TCP transport did not use Selected SOCKS")
-    require(group_app == int(expect_group) and echo_count == expected_echo,
-            "Group DNS application did not use Selected SOCKS")
+    require(echo_count == int(expect_proxy),
+            "Group DNS Direct application leaked into Selected SOCKS")
     require(proxy_app == int(expect_proxy),
             "Selected control did not use its Proxy DNS application")
     return accepted, group_count, proxy_count
@@ -182,7 +176,6 @@ def audit_managed_group_dns(sock, generation, expected_pid, echo_port,
             type(echo_port) is int and 1023 < echo_port < 65536 and
             node.calls == 0 and node.rejections == 0 and
             not node.failed and not node.reject_connections and
-            getattr(node, "group_hostname", None) == GROUP_DOMAIN and
             getattr(node, "destination_receipts", None) == [] and
             node.echo_port == echo_port and
             node.http_port == proxy_dns.server_address[1] and
@@ -220,7 +213,7 @@ def audit_managed_group_dns(sock, generation, expected_pid, echo_port,
         require(not node_dns.receipts and not proxy_dns.receipts and
                 not group_dns.receipts,
                 "Group DNS control queried unrelated resolver")
-    # Custom group match on Rule:2080, explicit group resolver and detour.
+    # Custom Rule group target DIRECT, but its DNS resolver detours via Selected.
     probe_group_domain(echo_port, b"group-explicit-selected-route")
     group_count = proxy.assert_proxy_dns_receipts(
         group_dns, expected_name=GROUP_DOMAIN)
@@ -286,7 +279,6 @@ def run_native_group_dns(args):
             node.echo_port = echo_port
             node.http_port = proxy_dns.server_address[1]
             node.group_dns_port = group_dns.server_address[1]
-            node.group_hostname = GROUP_DOMAIN
             node.destination_receipts = []
             servers = (echo, node, node_dns, direct_dns,
                        proxy_dns, group_dns)
@@ -389,7 +381,7 @@ SAFE_CODES = {
     "Group DNS raw SOCKS hostname receipts drifted": "group-dns-raw-host-drift",
     "Group DNS TCP transport did not use Selected SOCKS": "group-dns-tcp-detour",
     "Proxy DNS TCP transport did not use Selected SOCKS": "group-dns-proxy-detour",
-    "Group DNS application did not use Selected SOCKS": "group-dns-app-bypass",
+    "Group DNS Direct application leaked into Selected SOCKS": "group-dns-app-leak",
     "Selected control did not use its Proxy DNS application": "group-dns-proxy-app-bypass",
     "Group DNS managed Core fixture invalid": "group-dns-preflight",
     "Group DNS started on wrong Core or LKG": "group-dns-stale-core",

@@ -557,31 +557,26 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
                 address = socket.inet_ntoa(exact_read(incoming, 4))
             else:
                 length = exact_read(incoming, 1)[0]
-                group_name = getattr(self.server, "group_hostname", None)
-                require(group_name is None or
-                        group_name == b"t24-group.invalid",
-                        "Core requested unapproved SOCKS domain")
-                allowed = ((SOCKS_DOMAIN_TARGET,) if group_name is None
-                           else (SOCKS_DOMAIN_TARGET, group_name))
-                require(length in tuple(len(name) for name in allowed),
+                require(length == len(SOCKS_DOMAIN_TARGET),
                         "Core requested unapproved SOCKS domain")
                 hostname = exact_read(incoming, length)
-                require(hostname in allowed,
+                require(hostname == SOCKS_DOMAIN_TARGET,
                         "Core requested unapproved SOCKS domain")
                 # Only the test relay maps this reserved hostname to loopback.
                 # No recursive DNS, public resolver or external connection.
                 address = "127.0.0.1"
             port = struct.unpack("!H", exact_read(incoming, 2))[0]
             http_port = getattr(self.server, "http_port", None)
-            group_port = getattr(self.server, "group_dns_port", None)
-            group_name = getattr(self.server, "group_hostname", None)
-            allowed_ports = (self.server.echo_port, http_port, group_port)
+            group_dns_port = getattr(self.server, "group_dns_port", None)
             require(address == "127.0.0.1" and (
-                    (hostname is None and any(
-                        type(p) is int and 0 < p < 65536 and port == p
-                        for p in allowed_ports)) or
-                    (hostname is not None and
-                     hostname in (SOCKS_DOMAIN_TARGET, group_name) and
+                    (hostname is None and
+                     (port == self.server.echo_port or
+                      (type(http_port) is int and 0 < http_port < 65536
+                       and port == http_port) or
+                      (type(group_dns_port) is int and
+                       1023 < group_dns_port < 65536 and
+                       port == group_dns_port))) or
+                    (hostname == SOCKS_DOMAIN_TARGET and
                      port == self.server.echo_port)),
                     "Core attempted to forward to a nonlocal target")
             if self.server.reject_connections:
