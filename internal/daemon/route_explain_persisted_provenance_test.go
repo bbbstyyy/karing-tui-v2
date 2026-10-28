@@ -22,25 +22,25 @@ func persistedRouteExplainFixture() ([]compiler.RouteRule, []compiler.RouteSourc
 				{Inbound: []string{domain.InboundTagRule}},
 				{DomainSuffix: []string{"blocked.invalid"}},
 			},
-			Action: "reject",
+			Action:    "reject",
 		},
 		{Inbound: []string{domain.InboundTagRule}, Action: "route", Outbound: compiler.DirectOutboundTag},
 	}
 	sourceMap := []compiler.RouteSourceMapEntry{
 		{
 			RuleIndex: 2,
-			Layer: domain.LayerCustom,
-			GroupID: "blocked",
-			Target: domain.TargetRef{Kind: domain.TargetBlock},
+			Layer:     domain.LayerCustom,
+			GroupID:   "blocked",
+			Target:    domain.TargetRef{Kind: domain.TargetBlock},
 			Action: "reject",
 		},
 		{
 			RuleIndex: 3,
-			Layer: domain.LayerFinal,
-			Final: true,
-			Target: domain.TargetRef{Kind: domain.TargetDirect},
-			Action: "route",
-			Outbound: compiler.DirectOutboundTag,
+			Layer:     domain.LayerFinal,
+			Final:     true,
+			Target:    domain.TargetRef{Kind: domain.TargetDirect},
+			Action:    "route",
+			Outbound:  compiler.DirectOutboundTag,
 		},
 	}
 	return rules, sourceMap
@@ -63,7 +63,7 @@ func TestRouteExplainAcceptsConsistentPersistedRouteProvenance(t *testing.T) {
 func TestRouteExplainRejectsRehashedButMisleadingSourceMap(t *testing.T) {
 	id := int64(42)
 	tests := []struct {
-		name string
+		name   string
 		mutate func(*[]compiler.RouteRule, *[]compiler.RouteSourceMapEntry)
 	}{
 		{"BLOCK relabelled DIRECT", func(_ *[]compiler.RouteRule, s *[]compiler.RouteSourceMapEntry) {
@@ -137,14 +137,14 @@ func TestRouteExplainRejectsRehashedButMisleadingSourceMap(t *testing.T) {
 			// The missing evidence is semantic agreement, not SHA validation.
 			artifacts := routeExplainTestArtifacts(t, rules, mapped)
 			coordinator, err := NewRouteExplainCoordinator(&fakeRouteExplainStore{
-				snapshot: storage.Snapshot{AppliedGenerationID: &id},
+				snapshot:  storage.Snapshot{AppliedGenerationID: &id},
 				artifacts: artifacts,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if _, err := coordinator.Explain(context.Background(), apiv1.RouteExplainRequest{
-				Domain: "api.blocked.invalid",
+				Domain:  "api.blocked.invalid",
 				Network: "tcp",
 			}); !errors.Is(err, ErrRouteExplainIntegrity) {
 				t.Fatalf("coherently rehashed false provenance was accepted: %v", err)
