@@ -177,7 +177,7 @@ func TestValidateGroupDNSRouteBindingsRejectsTamperedEvidence(t *testing.T) {
 	}
 	tag := stableDNSTag("group-dns")
 	dns := CompiledDNS{
-		Servers: []DNSServerConfig{{Type: "tcp", Tag: tag, Server: "127.0.0.1", ServerPort: 5300}},
+		Servers:       []DNSServerConfig{{Type: "tcp", Tag: tag, Server: "127.0.0.1", ServerPort: 5300}},
 		GroupBindings: []DNSGroupBinding{{GroupID: "group", ProfileID: "group-dns", RuntimeTag: tag}},
 	}
 	valid, err := BindGroupDNSRouting(BoundRouting{CompiledRouting: routing}, dns)
@@ -188,14 +188,14 @@ func TestValidateGroupDNSRouteBindingsRejectsTamperedEvidence(t *testing.T) {
 		t.Fatalf("untampered route rejected: %v", err)
 	}
 	cases := map[string]func(*BoundRouting){
-		"wrong resolver in native rule": func(b *BoundRouting) { b.Rules[6].Server = "dns-unrelated" },
+		"wrong resolver in native rule":  func(b *BoundRouting) { b.Rules[6].Server = "dns-unrelated" },
 		"wrong outbound in native route": func(b *BoundRouting) { b.Rules[7].Outbound = "other" },
-		"predicate mismatch": func(b *BoundRouting) { b.Rules[6].Domain = []string{"other.example"} },
-		"nonadjacent source map": func(b *BoundRouting) { b.SourceMap[1].RuleIndex = 8 },
-		"fabricated resolver metadata": func(b *BoundRouting) { b.SourceMap[0].Server = "dns-unrelated" },
-		"duplicate rule index": func(b *BoundRouting) { b.SourceMap[1].RuleIndex = 6 },
-		"out of bounds index": func(b *BoundRouting) { b.SourceMap[0].RuleIndex = len(b.Rules) },
-		"wrong route action": func(b *BoundRouting) { b.Rules[7].Action = "reject" },
+		"predicate mismatch":             func(b *BoundRouting) { b.Rules[6].Domain = []string{"other.example"} },
+		"nonadjacent source map":         func(b *BoundRouting) { b.SourceMap[1].RuleIndex = 8 },
+		"fabricated resolver metadata":   func(b *BoundRouting) { b.SourceMap[0].Server = "dns-unrelated" },
+		"duplicate rule index":           func(b *BoundRouting) { b.SourceMap[1].RuleIndex = 6 },
+		"out of bounds index":            func(b *BoundRouting) { b.SourceMap[0].RuleIndex = len(b.Rules) },
+		"wrong route action":             func(b *BoundRouting) { b.Rules[7].Action = "reject" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
