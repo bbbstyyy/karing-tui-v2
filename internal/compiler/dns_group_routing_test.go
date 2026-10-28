@@ -156,3 +156,54 @@ func TestGroupDNSAndProxyDNSDoNotDoubleResolve(t *testing.T) {
 		t.Fatalf("resolve counts = group:%d proxy:%d; map=%+v", groupResolve, proxyResolve, bound.SourceMap)
 	}
 }
+
+func TestValidateGroupDNSRouteBindingsRejectsTamperedEvidence(t *testing.T) {
+	targets, err := NewTargetCatalog(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := domain.Atom(domain.Predicate{Kind: domain.PredicateDomain, Value: "group.example"})
+	routing, err := CompileRouting(domain.RoutingPlan{
+		Custom: []domain.RouteGroup{{
+			ID: "group", Layer: domain.LayerCustom, Order: 1, Match: &match,
+			Binding: domain.RouteBinding{
+				Enabled: true, Target: domain.TargetRef{Kind: domain.TargetDirect}, DNSProfileID: "group-dns",
+			},
+		}},
+		Final: domain.TargetRef{Kind: domain.TargetDirect},
+	}, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag := stableDNSTag("group-dns")
+	dns := CompiledDNS{
+		Servers: []DNSServerConfig{{Type: "tcp", Tag: tag, Server: "127.0.0.1", ServerPort: 5300}},
+		GroupBindings: []DNSGroupBinding{{GroupID: "group", ProfileID: "group-dns", RuntimeTag: tag}},
+	}
+	valid, err := BindGroupDNSRouting(BoundRouting{CompiledRouting: routing}, dns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateGroupDNSRouteBindings(valid, dns); err != nil {
+		t.Fatalf("untampered route rejected: %v", err)
+	}
+	cases := map[string]func(*BoundRouting){
+		"wrong resolver in native rule": func(b *BoundRouting) { b.Rules[6].Server = "dns-unrelated" },
+		"wrong outbound in native route": func(b *BoundRouting) { b.Rules[7].Outbound = "other" },
+		"predicate mismatch": func(b *BoundRouting) { b.Rules[6].Domain = []string{"other.example"} },
+		"nonadjacent source map": func(b *BoundRouting) { b.SourceMap[1].RuleIndex = 8 },
+		"fabricated resolver metadata": func(b *BoundRouting) { b.SourceMap[0].Server = "dns-unrelated" },
+		"duplicate rule index": func(b *BoundRouting) { b.SourceMap[1].RuleIndex = 6 },
+		"out of bounds index": func(b *BoundRouting) { b.SourceMap[0].RuleIndex = len(b.Rules) },
+		"wrong route action": func(b *BoundRouting) { b.Rules[7].Action = "reject" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			altered := cloneBoundRouting(valid)
+			mutate(&altered)
+			if err := validateGroupDNSRouteBindings(altered, dns); !errors.Is(err, ErrNativeConfigClosure) {
+				t.Fatalf("tampered binding accepted: %v", err)
+			}
+		})
+	}
+}
