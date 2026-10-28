@@ -1,6 +1,9 @@
 package compiler
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 func BindGroupDNSRouting(bound BoundRouting, dns CompiledDNS) (BoundRouting, error) {
 	rebound := cloneBoundRouting(bound)
@@ -67,25 +70,57 @@ func BindGroupDNSRouting(bound BoundRouting, dns CompiledDNS) (BoundRouting, err
 }
 
 func validateGroupDNSRouteBindings(routing BoundRouting, dns CompiledDNS) error {
+	// A source-map entry is evidence only when it describes the actual native rule.
+	// An orphan, reordered or fabricated resolve must never satisfy a Group DNS binding.
+	entries := make(map[int]RouteSourceMapEntry, len(routing.SourceMap))
+	for _, entry := range routing.SourceMap {
+		if entry.RuleIndex < 0 || entry.RuleIndex >= len(routing.Rules) {
+			return fmt.Errorf("%w: Group DNS source-map index is out of bounds", ErrNativeConfigClosure)
+		}
+		if _, duplicated := entries[entry.RuleIndex]; duplicated {
+			return fmt.Errorf("%w: duplicate Group DNS source-map index", ErrNativeConfigClosure)
+		}
+		entries[entry.RuleIndex] = entry
+	}
 	for _, binding := range dns.GroupBindings {
-		resolveFound := false
-		routeFound := false
-		for _, entry := range routing.SourceMap {
+		pairs := 0
+		for index, entry := range entries {
 			if entry.GroupID != binding.GroupID || entry.DNSProfileID != binding.ProfileID {
 				continue
 			}
-			switch entry.Action {
-			case "resolve":
-				if entry.Server == binding.RuntimeTag && entry.Outbound == "" {
-					resolveFound = true
-				}
-			case "route":
-				if entry.Server == "" {
-					routeFound = true
-				}
+			if entry.Action != "resolve" {
+				continue
 			}
+			if index+1 >= len(routing.Rules) {
+				return fmt.Errorf("%w: Group DNS resolve has no following route", ErrNativeConfigClosure)
+			}
+			routeEntry, exists := entries[index+1]
+			if !exists || routeEntry.Action != "route" ||
+				routeEntry.GroupID != binding.GroupID ||
+				routeEntry.DNSProfileID != binding.ProfileID ||
+				routeEntry.Layer != entry.Layer ||
+				routeEntry.Final != entry.Final ||
+				!reflect.DeepEqual(routeEntry.Target, entry.Target) {
+				return fmt.Errorf("%w: Group DNS resolve/route source-map pair is not adjacent", ErrNativeConfigClosure)
+			}
+			resolveRule := routing.Rules[index]
+			routeRule := routing.Rules[index+1]
+			if entry.Server != binding.RuntimeTag || entry.Outbound != "" ||
+				resolveRule.Action != "resolve" || resolveRule.Server != binding.RuntimeTag || resolveRule.Outbound != "" ||
+				routeEntry.Server != "" || routeEntry.Outbound != routeRule.Outbound ||
+				routeRule.Action != "route" || routeRule.Server != "" || routeRule.Outbound == "" {
+				return fmt.Errorf("%w: Group DNS source-map action differs from native route", ErrNativeConfigClosure)
+			}
+			// Only action and resolver/outbound are allowed to differ; all
+			// matching predicates and ordering constraints must be identical.
+			resolveRule.Action, resolveRule.Server, resolveRule.Outbound = "", "", ""
+			routeRule.Action, routeRule.Server, routeRule.Outbound = "", "", ""
+			if !reflect.DeepEqual(resolveRule, routeRule) {
+				return fmt.Errorf("%w: Group DNS resolve and route have different predicates", ErrNativeConfigClosure)
+			}
+			pairs++
 		}
-		if !resolveFound || !routeFound {
+		if pairs == 0 {
 			return fmt.Errorf("%w: group %q DNS profile %q is not bound to a resolve/route pair", ErrNativeConfigClosure, binding.GroupID, binding.ProfileID)
 		}
 	}
