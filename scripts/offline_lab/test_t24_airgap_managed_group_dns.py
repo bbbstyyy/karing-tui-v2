@@ -79,8 +79,8 @@ class NativeGroupDNSTests(unittest.TestCase):
                 "match"]["predicate"].update({"value": "other.invalid"})),
             ("group disabled", lambda d: d["routing"]["custom"][0].update(
                 {"enabled": False})),
-            ("group direct route", lambda d: d["routing"]["custom"][0].update(
-                {"target": {"kind": "direct"}})),
+            ("group selected route", lambda d: d["routing"]["custom"][0].update(
+                {"target": {"kind": "current_selected"}})),
             ("group wildcard route", lambda d: d["routing"]["custom"][0][
                 "match"]["predicate"].update({"kind": "domain_suffix"})),
             ("more groups", lambda d: d["routing"]["custom"].append(
@@ -206,6 +206,16 @@ class NativeGroupDNSTests(unittest.TestCase):
         node.calls = 3
         self.assertEqual(group.verify_upstream(
             node, 41010, 41004, 41005, True, True), (3, 1, 1))
+        # Sing-box may pass the exact A=127.0.0.1 result instead of
+        # the Selected target hostname after the verified Proxy resolve.
+        numeric = node_fixture()
+        numeric.destination_receipts = list(node.destination_receipts)
+        numeric.destination_receipts[-1] = (
+            None, "127.0.0.1", 41010)
+        numeric.hostname_requests = []
+        numeric.calls = 3
+        self.assertEqual(group.verify_upstream(
+            numeric, 41010, 41004, 41005, True, True), (3, 1, 1))
         for defect in ("wrong-port", "external-address", "missing-group",
                        "missing-proxy", "extra-group-app", "duplicate-proxy-app",
                        "node-denied", "node-failed", "forged-hostname"):

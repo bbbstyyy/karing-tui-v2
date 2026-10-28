@@ -150,7 +150,11 @@ def verify_upstream(node, echo_port, proxy_port, group_port,
     # is separately detoured over Selected SOCKS. A Group app connection
     # through Selected is a failure, even if an identical echo came back.
     echo_count = sum(port == echo_port for _, _, port in destinations)
-    proxy_app = sum(host == PROXY_DOMAIN and port == echo_port
+    # Post-resolve Selected application may carry the original DOMAIN or
+    # the exact previously observed local Proxy DNS A address (ATYP=1).
+    # Either way, one genuine Proxy DNS A question and its Selected SOCKS
+    # DNS-port tunnel remain mandatory in the outer traffic audit.
+    proxy_app = sum(host in (PROXY_DOMAIN, None) and port == echo_port
                     for host, _, port in destinations)
     require(sorted(hostname_receipts) == sorted(
         (host, port) for host, _, port in destinations
