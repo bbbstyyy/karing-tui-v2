@@ -257,6 +257,9 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 	if input.DNS.ProxyResolverTag != "" && !routeRulesUseResolver(input.Routing.Rules, input.DNS.ProxyResolverTag) {
 		return NativeConfigArtifact{}, fmt.Errorf("%w: proxy resolver %q is not bound to route resolution", ErrNativeConfigClosure, input.DNS.ProxyResolverTag)
 	}
+	if err := validateProxyDNSRouteBindings(input.Routing, input.DNS); err != nil {
+		return NativeConfigArtifact{}, err
+	}
 
 	config := nativeConfig{
 		Log: nativeLogConfig{
