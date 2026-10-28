@@ -4463,9 +4463,9 @@ class AppliedManagedPolicyTests(unittest.TestCase):
     def test_workflow_requires_seven_separate_native_network_none_probes(self):
         workflow = (Path(__file__).resolve().parents[2] /
                     ".github/workflows/core-provenance.yml").read_text()
-        self.assertEqual(workflow.count("docker run --rm --pull never"), 7)
-        self.assertEqual(workflow.count("--network none --cap-drop ALL"), 7)
-        self.assertEqual(workflow.count("--user 10001:10001 --read-only"), 7)
+        self.assertEqual(workflow.count("docker run --rm --pull never"), 8)
+        self.assertEqual(workflow.count("--network none --cap-drop ALL"), 8)
+        self.assertEqual(workflow.count("--user 10001:10001 --read-only"), 8)
         self.assertIn("t24_airgap_managed_applied.py", workflow)
         self.assertIn("t24_airgap_managed_dns.py", workflow)
         self.assertIn("--core-sha256 \"$expected_core_sha\"", workflow)

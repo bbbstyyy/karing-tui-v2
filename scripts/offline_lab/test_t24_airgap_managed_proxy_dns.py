@@ -283,13 +283,13 @@ class NativeProxyDNSTests(unittest.TestCase):
                             "/sock", 7, 222, 41001, node,
                             outbound, direct_dns, tcp)
 
-    def test_workflow_retains_seven_native_airgaps_and_safe_diagnostics(self):
+    def test_workflow_retains_eight_native_airgaps_and_safe_diagnostics(self):
         workflow = (Path(__file__).resolve().parents[2] /
                     ".github/workflows/core-provenance.yml").read_text()
         for marker in ("docker run --rm --pull never",
                        "--network none --cap-drop ALL",
                        "--user 10001:10001 --read-only"):
-            self.assertEqual(workflow.count(marker), 7)
+            self.assertEqual(workflow.count(marker), 8)
         self.assertIn("t24_airgap_managed_proxy_dns.py", workflow)
         self.assertEqual(proxy.SAFE_CODES[
             "Proxy DNS did not traverse exact Selected SOCKS upstream"],

@@ -567,11 +567,15 @@ class LocalSocksNode(socketserver.BaseRequestHandler):
                 address = "127.0.0.1"
             port = struct.unpack("!H", exact_read(incoming, 2))[0]
             http_port = getattr(self.server, "http_port", None)
+            group_dns_port = getattr(self.server, "group_dns_port", None)
             require(address == "127.0.0.1" and (
                     (hostname is None and
                      (port == self.server.echo_port or
                       (type(http_port) is int and 0 < http_port < 65536
-                       and port == http_port))) or
+                       and port == http_port) or
+                      (type(group_dns_port) is int and
+                       1023 < group_dns_port < 65536 and
+                       port == group_dns_port))) or
                     (hostname == SOCKS_DOMAIN_TARGET and
                      port == self.server.echo_port)),
                     "Core attempted to forward to a nonlocal target")

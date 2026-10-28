@@ -94,7 +94,8 @@ class ProxyTCPDNSResponder(socketserver.BaseRequestHandler):
                 require(17 <= size <= dns.MAX_DNS_DATAGRAM,
                         "unapproved Proxy DNS TCP question length")
                 packet = applied.exact_read(conn, size)
-                reply, receipt = dns.answer_node_dns(packet, PROXY_DOMAIN)
+                reply, receipt = dns.answer_node_dns(
+                    packet, self.server.allowed_name)
                 with self.server.counter_lock:
                     require(len(self.server.receipts) < MAX_TCP_DNS_QUERIES,
                             "too many Proxy DNS TCP questions")
@@ -114,17 +115,21 @@ class ProxyTCPDNSServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, address):
+    def __init__(self, address, allowed_name=PROXY_DOMAIN):
+        require(type(allowed_name) is bytes and
+                allowed_name in (PROXY_DOMAIN, dns.GROUP_DOMAIN),
+                "unapproved TCP DNS fixture name")
         require(address[0] == "127.0.0.1" and
                 type(address[1]) is int and address[1] == 0,
                 "Proxy DNS must listen on ephemeral loopback")
         super().__init__(address, ProxyTCPDNSResponder)
+        self.allowed_name = allowed_name
         self.counter_lock = threading.Lock()
         self.receipts = []
         self.failed = False
 
 
-def assert_proxy_dns_receipts(server):
+def assert_proxy_dns_receipts(server, expected_name=PROXY_DOMAIN):
     require(type(getattr(server, "receipts", None)) is list and
             getattr(server, "counter_lock", None) is not None and
             not getattr(server, "failed", True),
@@ -132,9 +137,9 @@ def assert_proxy_dns_receipts(server):
     with server.counter_lock:
         receipts = list(server.receipts)
     require(1 <= len(receipts) <= MAX_TCP_DNS_QUERIES and
-            any(name.lower() == PROXY_DOMAIN and kind == 1
+            any(name.lower() == expected_name and kind == 1
                 for name, kind in receipts) and
-            all(type(name) is bytes and name.lower() == PROXY_DOMAIN and
+            all(type(name) is bytes and name.lower() == expected_name and
                 type(kind) is int and kind in (1, 28, 65)
                 for name, kind in receipts),
             "Proxy DNS TCP A query not independently observed")
@@ -341,6 +346,7 @@ def run_native_proxy_dns(args):
 
 SAFE_CODES = {
     "invalid Proxy DNS fixture port": "proxy-dns-fixture-port",
+    "unapproved TCP DNS fixture name": "proxy-dns-fixture-name",
     "Proxy DNS fixture ports alias": "proxy-dns-port-alias",
     "unapproved Proxy DNS declaration": "proxy-dns-document",
     "Proxy DNS must listen on ephemeral loopback": "proxy-dns-listener",
