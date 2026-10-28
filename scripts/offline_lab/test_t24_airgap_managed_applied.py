@@ -2,6 +2,7 @@
 """Fast fail-closed ADR 0149 policy tests; no Core/Docker/remote sockets."""
 from __future__ import annotations
 
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import socket
@@ -1560,51 +1561,66 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 node.calls += 1
             return conn
 
-        with mock.patch.object(applied, "unix_json", side_effect=api):
-            with mock.patch.object(applied.boot, "checked",
-                                   side_effect=command) as cli:
-                with mock.patch.object(applied, "wait_status", side_effect=wait):
-                    with mock.patch.object(applied, "verify_child") as verify:
-                        with mock.patch.object(applied, "probe_isolated_routes",
-                                               side_effect=routes) as probe:
-                            with mock.patch.object(applied, "probe_isolated_failure",
-                                                   side_effect=refusal) as denied:
-                                with (mock.patch.object(applied, "verify_stopped_ports") as closed,
-                                      mock.patch.object(applied, "probe_bounded_reconnect_churn",
-                                                        return_value=72) as churn,
-                                      mock.patch.object(applied, "probe_http_route_isolation",
-                                                        return_value=3) as http_route,
-                                      mock.patch.object(applied, "probe_http_selected_failure_isolation",
-                                                        return_value=3) as http_failure,
-                                      mock.patch.object(applied, "probe_parallel_http_connects",
-                                                        return_value=12) as parallel_http,
-                                      mock.patch.object(applied, "probe_parallel_http_selected_denials",
-                                                        return_value=12) as parallel_denials,
-                                      mock.patch.object(applied, "probe_split_write_http_route_isolation",
-                                                        return_value=3) as split_http,
-                                      mock.patch.object(applied, "probe_http_absolute_route_isolation",
-                                                        return_value=3) as absolute_http,
-                                      mock.patch.object(
-                                          applied, "probe_http_absolute_selected_failure_isolation",
-                                          return_value=3) as absolute_denial,
-                                      mock.patch.object(applied, "probe_selected_socks_domain_route",
-                                                        return_value=1) as domain_probe,
-                                      mock.patch.object(
-                                          applied, "probe_selected_socks_domain_failure_isolation",
-                                          return_value=1) as domain_denial,
-                                      mock.patch.object(
-                                          applied, "probe_selected_http_connect_domain_route",
-                                          return_value=1) as http_domain,
-                                      mock.patch.object(applied, "open_held_http_echo",
-                                                        side_effect=held_http_open) as held_dial,
-                                      mock.patch.object(applied, "assert_held_http_closed") as held_eof):
-                                    stages = []
-                                    pid = applied.probe_restart_after_held_stop(
-                                        "/app", {}, "/daemon.sock", 100,
-                                        "/approved-core", 5, 9,
-                                        41001, node, "b" * 64,
-                                        http_origin=origin,
-                                        stage_hook=stages.append)
+        # Flatten the shared patch scope: Python limits statically nested
+        # blocks, while each added real-Core audit needs an extra mock.
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(
+                applied, "unix_json", side_effect=api))
+            cli = stack.enter_context(mock.patch.object(
+                applied.boot, "checked", side_effect=command))
+            stack.enter_context(mock.patch.object(
+                applied, "wait_status", side_effect=wait))
+            verify = stack.enter_context(mock.patch.object(
+                applied, "verify_child"))
+            probe = stack.enter_context(mock.patch.object(
+                applied, "probe_isolated_routes", side_effect=routes))
+            denied = stack.enter_context(mock.patch.object(
+                applied, "probe_isolated_failure", side_effect=refusal))
+            closed = stack.enter_context(mock.patch.object(
+                applied, "verify_stopped_ports"))
+            churn = stack.enter_context(mock.patch.object(
+                applied, "probe_bounded_reconnect_churn", return_value=72))
+            http_route = stack.enter_context(mock.patch.object(
+                applied, "probe_http_route_isolation", return_value=3))
+            http_failure = stack.enter_context(mock.patch.object(
+                applied, "probe_http_selected_failure_isolation",
+                return_value=3))
+            parallel_http = stack.enter_context(mock.patch.object(
+                applied, "probe_parallel_http_connects", return_value=12))
+            parallel_denials = stack.enter_context(mock.patch.object(
+                applied, "probe_parallel_http_selected_denials",
+                return_value=12))
+            split_http = stack.enter_context(mock.patch.object(
+                applied, "probe_split_write_http_route_isolation",
+                return_value=3))
+            absolute_http = stack.enter_context(mock.patch.object(
+                applied, "probe_http_absolute_route_isolation",
+                return_value=3))
+            absolute_denial = stack.enter_context(mock.patch.object(
+                applied, "probe_http_absolute_selected_failure_isolation",
+                return_value=3))
+            domain_probe = stack.enter_context(mock.patch.object(
+                applied, "probe_selected_socks_domain_route",
+                return_value=1))
+            domain_denial = stack.enter_context(mock.patch.object(
+                applied, "probe_selected_socks_domain_failure_isolation",
+                return_value=1))
+            http_domain = stack.enter_context(mock.patch.object(
+                applied, "probe_selected_http_connect_domain_route",
+                return_value=1))
+            http_domain_denial = stack.enter_context(mock.patch.object(
+                applied, "probe_selected_http_connect_domain_failure_isolation",
+                return_value=1))
+            held_dial = stack.enter_context(mock.patch.object(
+                applied, "open_held_http_echo",
+                side_effect=held_http_open))
+            held_eof = stack.enter_context(mock.patch.object(
+                applied, "assert_held_http_closed"))
+            stages = []
+            pid = applied.probe_restart_after_held_stop(
+                "/app", {}, "/daemon.sock", 100,
+                "/approved-core", 5, 9, 41001, node, "b" * 64,
+                http_origin=origin, stage_hook=stages.append)
         self.assertEqual(stages, [
             "http-restart-preflight", "http-restart-core-start",
             "http-restart-socks-routes", "http-restart-socks-refusal",
@@ -1619,6 +1635,7 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             "http-restart-selected-socks-domain",
             "http-restart-selected-socks-domain-denial",
             "http-restart-selected-http-connect-domain",
+            "http-restart-selected-http-connect-domain-denial",
             "http-restart-held-http-open", "http-restart-final-stop",
             "http-restart-held-http-close",
         ])
@@ -1660,6 +1677,11 @@ class AppliedManagedPolicyTests(unittest.TestCase):
             domain_denial.call_args.kwargs["stage_hook"]))
         http_domain.assert_called_once_with(
             "/daemon.sock", 5, 9, 222, 41001, node)
+        http_domain_denial.assert_called_once()
+        self.assertEqual(http_domain_denial.call_args.args,
+                         ("/daemon.sock", 5, 9, 222, 41001, node))
+        self.assertTrue(callable(
+            http_domain_denial.call_args.kwargs["stage_hook"]))
         self.assertEqual(probe.call_count, 2)
         denied.assert_called_once_with(41001, b"after-held-stop-failed-", node)
         self.assertEqual(payloads, [
@@ -2953,6 +2975,296 @@ class AppliedManagedPolicyTests(unittest.TestCase):
                 RuntimeError(message)), expected)
         self.assertEqual(applied.safe_airgap_failure_code(
             RuntimeError("private token in origin header")), "unclassified")
+
+    def test_http_connect_domain_refusal_client_is_bounded_and_fail_closed(self):
+        class Conn:
+            def __init__(self, data, error=None, send_error=None):
+                self.buffer = bytearray(data)
+                self.error = error
+                self.send_error = send_error
+                self.sent = []
+                self.closed = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                self.closed = True
+            def settimeout(self, n):
+                self.timeout = n
+            def sendall(self, data):
+                self.sent.append(data)
+                if self.send_error is not None:
+                    raise self.send_error
+            def recv(self, n):
+                if self.buffer:
+                    result = bytes(self.buffer[:n])
+                    del self.buffer[:n]
+                    return result
+                if self.error is not None:
+                    raise self.error
+                return b""
+
+        authority = applied.SOCKS_DOMAIN_TARGET + b":41001"
+        exact_request = (
+            b"CONNECT " + authority + b" HTTP/1.1\r\n" +
+            b"Host: " + authority + b"\r\n\r\n")
+        for data, error, send_error in (
+            (b"", None, None),
+            (b"", ConnectionResetError("reset"), None),
+            (b"", ConnectionAbortedError("abort"), None),
+            (b"", None, BrokenPipeError("closed-on-send")),
+            (b"HTTP/1.1 503 Service Unavailable\r\n"
+             b"Content-Length: 0\r\n\r\n", None, None),
+            (b"HTTP/1.0 403 Forbidden\r\n\r\n", None, None),
+            (b"HTTP/1.1 200 Connection established\r\n\r\n", None, None),
+            (b"HTTP/1.1 200 OK\r\n\r\n",
+             ConnectionResetError("after early 200"), None),
+        ):
+            with self.subTest(response=data[:28],
+                              error=type(error).__name__,
+                              send_error=type(send_error).__name__):
+                conn = Conn(data, error=error, send_error=send_error)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn) as dial:
+                    applied.probe_selected_http_connect_domain_refusal(41001)
+                dial.assert_called_once_with(("127.0.0.1", 2082), timeout=4)
+                self.assertEqual(conn.timeout, 4)
+                self.assertEqual(conn.sent[0], exact_request)
+                if data.startswith(b"HTTP/1.1 200"):
+                    self.assertEqual(conn.sent[1],
+                                     b"http-domain-must-not-echo")
+                self.assertTrue(conn.closed)
+
+        for data, error in (
+            (b"HTTP/1.1 200 OK\r\n\r\napplication-leaked", None),
+            (b"HTTP/1.1 200 OK\r\n\r\n", socket.timeout("stall")),
+            (b"HTTP/1.1 302 Redirect\r\n\r\n", None),
+            (b"HTTP/1.1 204 No Content\r\n\r\n", None),
+            (b"HTTP/1.1 600 Wrong\r\n\r\n", None),
+            (b"NOT-HTTP 502 Bad Gateway\r\n\r\n", None),
+            (b"HTTP/1.1 502 Gateway Error\r\nMalformed\r\n\r\n", None),
+            (b"HTTP/1.1 502 Bad Gateway\r\n", None),
+            (b"HTTP/1.1 502 Bad Gateway\r\n",
+             ConnectionResetError("after partial")),
+            (b"HTTP/1.1 502 Bad Gateway\r\nX: " + b"x" * 1100, None),
+            (b"", socket.timeout("stalled before header")),
+        ):
+            with self.subTest(bad=data[:25], error=type(error).__name__):
+                conn = Conn(data, error=error)
+                with mock.patch.object(applied.socket, "create_connection",
+                                       return_value=conn):
+                    with self.assertRaises((RuntimeError, socket.timeout)):
+                        applied.probe_selected_http_connect_domain_refusal(
+                            41001)
+                self.assertTrue(conn.closed)
+
+        for bad_port in (0, True, 65536, "41001", 41001.5):
+            with self.subTest(port=bad_port):
+                with mock.patch.object(applied.socket, "create_connection") as dial:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_http_connect_domain_refusal(
+                            bad_port)
+                    dial.assert_not_called()
+
+    def test_http_connect_domain_refusal_audits_upstream_and_recovers_same_core(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.failed = False
+                self.reject_connections = False
+                self.hostname_requests = []
+                self.rejected_hostname_requests = []
+                self.counter_lock = threading.Lock()
+
+        node = Node()
+        target = (applied.SOCKS_DOMAIN_TARGET, 41001)
+        visited = []
+        def healthy(port, echo_port, payload):
+            self.assertTrue(node.reject_connections)
+            self.assertEqual(echo_port, 41001)
+            self.assertIn(port, (2080, 2081))
+            self.assertEqual(payload,
+                             b"http-domain-healthy-" + str(port).encode())
+            visited.append(port)
+        def deny(port):
+            self.assertTrue(node.reject_connections)
+            self.assertEqual(port, 41001)
+            with node.counter_lock:
+                node.rejections += 1
+                node.rejected_hostname_requests.append(target)
+        def recover(sock, old, new, pid, echo_port, selected):
+            self.assertEqual((sock, old, new, pid, echo_port),
+                             ("/daemon.sock", 5, 9, 222, 41001))
+            self.assertIs(selected, node)
+            self.assertFalse(node.reject_connections)
+            with node.counter_lock:
+                node.calls += 1
+                node.hostname_requests.append(target)
+            return 1
+
+        with (mock.patch.object(
+                applied, "unix_json",
+                return_value=self.promoted_status(pid=222)) as api,
+              mock.patch.object(applied, "probe_http_connect_ip",
+                                side_effect=healthy) as probe,
+              mock.patch.object(
+                  applied, "probe_selected_http_connect_domain_refusal",
+                  side_effect=deny) as rejected,
+              mock.patch.object(
+                  applied, "probe_selected_http_connect_domain_route",
+                  side_effect=recover) as restored):
+            stages = []
+            self.assertEqual(
+                applied.probe_selected_http_connect_domain_failure_isolation(
+                    "/daemon.sock", 5, 9, 222, 41001, node,
+                    stage_hook=stages.append), 1)
+        self.assertEqual(visited, [2080, 2081])
+        self.assertEqual(probe.call_count, 2)
+        rejected.assert_called_once_with(41001)
+        restored.assert_called_once_with(
+            "/daemon.sock", 5, 9, 222, 41001, node)
+        self.assertEqual(api.call_count, 2)
+        self.assertEqual((node.calls, node.rejections), (9, 4))
+        self.assertEqual(node.hostname_requests, [target])
+        self.assertEqual(node.rejected_hostname_requests, [target])
+        self.assertFalse(node.failed)
+        self.assertFalse(node.reject_connections)
+        self.assertEqual(stages, [
+            "http-domain-denial-preflight", "http-domain-denial-rule",
+            "http-domain-denial-direct", "http-domain-denial-selected",
+            "http-domain-denial-upstream-audit",
+            "http-domain-denial-identity-after-restore",
+            "http-domain-denial-recovery", "http-domain-denial-final-audit",
+        ])
+
+    def test_http_connect_domain_refusal_blocks_bypass_and_resets_toggle(self):
+        class Node:
+            def __init__(self):
+                self.calls = 8
+                self.rejections = 3
+                self.failed = False
+                self.reject_connections = False
+                self.hostname_requests = []
+                self.rejected_hostname_requests = []
+                self.counter_lock = threading.Lock()
+
+        good = self.promoted_status(pid=222)
+        wrong = self.promoted_status(pid=333)
+        target = (applied.SOCKS_DOMAIN_TARGET, 41001)
+        defects = (
+            "stale-core", "rule-crossing", "direct-refusal",
+            "selected-success", "selected-origin-leak",
+            "missing-refusal", "wrong-refused-name",
+            "wrong-refused-port", "duplicate-refusal", "refusal-storm",
+            "failed-node", "client-tunnel-leak", "replaced-core",
+            "recovery-incomplete", "recovery-direct-bypass",
+            "recovery-duplicate", "recovery-extra-refusal",
+        )
+        for defect in defects:
+            with self.subTest(defect=defect):
+                node = Node()
+                def healthy(port, _echo_port, _payload):
+                    self.assertTrue(node.reject_connections)
+                    if port == 2080 and defect == "rule-crossing":
+                        node.calls += 1
+                    if port == 2081 and defect == "direct-refusal":
+                        node.rejections += 1
+                def denied(_port):
+                    self.assertTrue(node.reject_connections)
+                    if defect == "client-tunnel-leak":
+                        raise RuntimeError(
+                            "HTTP CONNECT domain premature 200 forwarded data")
+                    if defect == "selected-success":
+                        node.calls += 1
+                    if defect == "selected-origin-leak":
+                        node.hostname_requests.append(target)
+                    if defect == "failed-node":
+                        node.failed = True
+                    if defect == "missing-refusal":
+                        return
+                    count = 5 if defect == "refusal-storm" else 1
+                    node.rejections += count
+                    receipts = [target] * count
+                    if defect == "wrong-refused-name":
+                        receipts = [(b"wrong.invalid", 41001)]
+                    if defect == "wrong-refused-port":
+                        receipts = [(applied.SOCKS_DOMAIN_TARGET, 41002)]
+                    if defect == "duplicate-refusal":
+                        receipts.append(target)
+                    with node.counter_lock:
+                        node.rejected_hostname_requests.extend(receipts)
+                def recovered(*_args):
+                    self.assertFalse(node.reject_connections)
+                    if defect == "recovery-incomplete":
+                        return 0
+                    node.hostname_requests.append(target)
+                    if defect != "recovery-direct-bypass":
+                        node.calls += 1
+                    if defect == "recovery-duplicate":
+                        node.hostname_requests.append(target)
+                    if defect == "recovery-extra-refusal":
+                        node.rejections += 1
+                    return 1
+
+                statuses = ([wrong] if defect == "stale-core" else
+                            [good, wrong] if defect == "replaced-core" else
+                            [good, good])
+                with (mock.patch.object(
+                        applied, "unix_json", side_effect=statuses),
+                      mock.patch.object(applied, "probe_http_connect_ip",
+                                        side_effect=healthy) as clients,
+                      mock.patch.object(
+                          applied, "probe_selected_http_connect_domain_refusal",
+                          side_effect=denied),
+                      mock.patch.object(
+                          applied, "probe_selected_http_connect_domain_route",
+                          side_effect=recovered)):
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_http_connect_domain_failure_isolation(
+                            "/daemon.sock", 5, 9, 222, 41001, node)
+                self.assertFalse(node.reject_connections)
+                if defect == "stale-core":
+                    clients.assert_not_called()
+
+        for defect in ("bad-port", "failed-node", "stale-toggle",
+                       "missing-ledger", "bad-hook"):
+            with self.subTest(fixture=defect):
+                node = Node()
+                port = 41001
+                hook = None
+                if defect == "bad-port":
+                    port = True
+                elif defect == "failed-node":
+                    node.failed = True
+                elif defect == "stale-toggle":
+                    node.reject_connections = True
+                elif defect == "missing-ledger":
+                    node.rejected_hostname_requests = None
+                else:
+                    hook = "not callable"
+                with mock.patch.object(applied, "unix_json") as api:
+                    with self.assertRaises(RuntimeError):
+                        applied.probe_selected_http_connect_domain_failure_isolation(
+                            "/sock", 5, 9, 222, port, node, stage_hook=hook)
+                    api.assert_not_called()
+
+        for msg, code in (
+            ("invalid HTTP CONNECT domain refusal target",
+             "http-domain-denial-target"),
+            ("partial HTTP CONNECT domain refusal header",
+             "http-domain-denial-partial"),
+            ("HTTP CONNECT domain premature 200 forwarded data",
+             "http-domain-denial-leak"),
+            ("HTTP CONNECT domain refusal bypassed exact upstream",
+             "http-domain-denial-bypass"),
+            ("HTTP CONNECT domain refusal recovery drifted",
+             "http-domain-denial-drift"),
+        ):
+            self.assertEqual(
+                applied.safe_airgap_failure_code(RuntimeError(msg)), code)
+        self.assertEqual(
+            applied.safe_airgap_failure_code(
+                RuntimeError("private hostname token")), "unclassified")
 
     def test_selected_http_connect_domain_exact_authority_response_and_echo(self):
         class Conn:
