@@ -49,6 +49,7 @@ func TestCompileNativeConfigRejectsForgedProxyDNSRoutePairs(t *testing.T) {
 		mutate func(*BoundRouting)
 	}{
 		{"selected resolver spoofed", func(b *BoundRouting) { b.Rules[1].Server = "dns-out" }},
+		{"selected route silently direct", func(b *BoundRouting) { b.Rules[2].Outbound = input.Targets.DirectTag }},
 		{"selected resolve predicates differ", func(b *BoundRouting) { b.Rules[1].ClashMode = "Global" }},
 		{"global resolve omitted", func(b *BoundRouting) { b.Rules[4].Action = "route" }},
 		{"global mode target altered", func(b *BoundRouting) { b.Rules[5].Outbound = input.Targets.DirectTag }},
