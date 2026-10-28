@@ -260,6 +260,9 @@ func CompileNativeConfig(input NativeConfigInput) (NativeConfigArtifact, error) 
 	if err := validateProxyDNSRouteBindings(input.Routing, input.DNS, input.Targets); err != nil {
 		return NativeConfigArtifact{}, err
 	}
+	if err := validateNativeRouteProvenance(input.Routing, input.Targets, input.DNS); err != nil {
+		return NativeConfigArtifact{}, err
+	}
 
 	config := nativeConfig{
 		Log: nativeLogConfig{

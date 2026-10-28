@@ -1852,3 +1852,10 @@ docs/
 - 再由 Selected:2082 真实请求 `t24-selected.invalid`，必须由全局 Proxy TCP DNS 收到 A 问题且合成 Selected SOCKS 独立记录到 **Proxy DNS TCP 端口** 的 CONNECT，再有一次精确应用回显；Selected 应用 SOCKS 目标可为原固定域名，或由已独立证实的 Proxy DNS A=127.0.0.1 产生的数字地址，但必须真实到达 Selected 上游 echo 端口。Group TCP DNS 收据不变，Node/Direct DNS 不增加查询。只允许固定这两个 DNS 端口与 Selected 控制请求的本机 echo 端口的 SOCKS 目标，DNS TCP QNAME/QTYPE 有界且两个服务各自只回答对应 `.invalid` 名称（A=127.0.0.1、TTL 1s；AAAA/HTTPS NODATA），无公网/递归或别名。缓存复用与 TCP 重试可改变查询次数，因此仅限制 1–12 次、禁止无查询通过或角色交叉。
 - 前后核验 Core PID、config/declaration revision、Applied generation、LKG 一致，必须 `finally` 停止 Core、核验所有代理入口关闭与批准二进制哈希不变。无 Core 负向测试覆盖 V1 精确组匹配/Target/DNS role/detour、错误端口和 DNS 名称、错误应用 SOCKS 原始域名字节、虚假或缺失 DNS/Selected 收据、跨角色查询、DNS 直连绕过及 Core 状态漂移。仅在该提交的普通 CI、Go Race 4/4、Managed Core、原生 amd64+arm64 **全部通过**后才接受分项 `T22_AIRGAP_GROUP_DNS_TCP_SELECTED_DETOUR=ok`。
 - 此前两架构对 Group Target=CurrentSelected 且解析到私有回环 IP 的应用 Selected 收据均未成立，该场景保持待查，不纳入本次成功证据。本切片不是全组/跨层优先级、Group DNS 跨版本缓存隔离、真实公共/远程 DNS、UDP ASSOCIATE、完整 GeoIP 预解析、CN 28 组/五层规则及许可、T20 千次重连、T25 72h/7d/30d、物理掉电或 Restore/GC、稳定发行的完成证明。继续保持 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`、`core_distribution=false`、`cn_preset_offline_bundle=false`；不修改稳定 `main` 或发行 Draft PR #1。
+
+
+### 2026-10-28 — M5 ADR 0180 T26 原生路由 source-map 五层证明边界
+
+- 继 ADR 0178/0179 的 Group/Proxy DNS 配对防伪后，新增原生配置发射前的五层 `source_map` 完整性检查：Custom → GeoSite → GeoIP → ACL → FINAL 的来源必须有序，每条用户作用域规则必须存在实际 native rule 与 source-map 双向对应；不能插入订阅/ISP 来源层、删除用户分流来源、伪造 BLOCK/FINAL 或替换已声明目标。
+- 对 GROUP/Proxy DNS `resolve → route` 的同组、同目标、同谓词和相邻关系再次执行通用闭包校验。FINAL 必须是作用于 Rule 入口的唯一无条件终止目标，BLOCK 必须是真正 `reject`，目标标签需与 TargetCatalog 解析一致；不一致时 `ErrNativeConfigClosure` 拒绝编译。
+- 新增无需联网/真实 Core 的五层正反例测试；须通过同一提交的普通 CI、Race 4/4、Managed Core 与 amd64/arm64 原生 Core 后才能合并。本项仅强化 T26 *编译期* 来源证明，不代表真实观察 `observed`、Group DNS 解析私有 IP 经 Selected 应用出口、CN 28 组带许可资源闭包、完整 T10/T22/T24、T20 千次重连、T25 长时运行或正式发布。保持全部未验收发布标志 `false`，不引入 TUN、订阅/ISP 分流层，不改稳定 `main`。
