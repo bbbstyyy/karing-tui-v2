@@ -24,6 +24,7 @@ import t24_airgap_managed_applied as applied
 import t24_airgap_loopback_core as loopback
 
 NODE_DOMAIN = b"t24-node.invalid"
+DIRECT_DOMAIN = b"t24-direct.invalid"
 MAX_DNS_DATAGRAM = 512
 MAX_DNS_RECEIPTS = 12
 
@@ -62,12 +63,15 @@ def encode_qname(name):
     return b"".join(bytes([len(label)]) + label for label in labels) + b"\x00"
 
 
-def answer_node_dns(packet):
+def answer_node_dns(packet, expected_name=NODE_DOMAIN):
     """Parse one bounded DNS question; answer only fixed A as 127.0.0.1.
 
     No recursive forwarding, DNS search, alternate names or socket dial.
     Ignore only bounded optional EDNS query metadata, never serve its contents.
     """
+    require(type(expected_name) is bytes and
+            expected_name in (NODE_DOMAIN, DIRECT_DOMAIN),
+            "unapproved DNS fixture name")
     require(type(packet) is bytes and 17 <= len(packet) <= MAX_DNS_DATAGRAM,
             "invalid DNS question bounds")
     ident, flags, qd, an, ns, ar = struct.unpack("!6H", packet[:12])
@@ -89,7 +93,7 @@ def answer_node_dns(packet):
     else:
         raise RuntimeError("DNS question label limit exceeded")
     name = b".".join(labels)
-    require(name.lower() == NODE_DOMAIN, "unapproved DNS question name")
+    require(name.lower() == expected_name, "unapproved DNS question name")
     require(pos + 4 <= len(packet), "truncated DNS question type")
     question_end = pos + 4
     qtype, qclass = struct.unpack("!HH", packet[pos:question_end])
@@ -123,7 +127,7 @@ class NodeDNSResponder(socketserver.BaseRequestHandler):
         try:
             require(self.client_address[0] == "127.0.0.1",
                     "non-loopback DNS client")
-            reply, receipt = answer_node_dns(packet)
+            reply, receipt = answer_node_dns(packet, self.server.allowed_name)
             with self.server.counter_lock:
                 require(len(self.server.receipts) < MAX_DNS_RECEIPTS,
                         "unbounded local DNS attempts")
@@ -139,8 +143,12 @@ class NodeDNSServer(socketserver.ThreadingUDPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, address):
+    def __init__(self, address, allowed_name=NODE_DOMAIN):
+        require(type(allowed_name) is bytes and
+                allowed_name in (NODE_DOMAIN, DIRECT_DOMAIN),
+                "unapproved DNS fixture name")
         super().__init__(address, NodeDNSResponder)
+        self.allowed_name = allowed_name
         self.counter_lock = threading.Lock()
         self.receipts = []
         self.failed = False
@@ -301,6 +309,7 @@ def run_native_node_dns(args):
 SAFE_CODES = {
     "invalid node DNS fixture port": "dns-node-fixture-port",
     "unapproved node DNS declaration": "dns-node-declaration",
+    "unapproved DNS fixture name": "dns-node-fixture-name",
     "invalid DNS question bounds": "dns-node-question-bounds",
     "unapproved DNS query header": "dns-node-question-header",
     "unapproved DNS question name": "dns-node-question-name",
