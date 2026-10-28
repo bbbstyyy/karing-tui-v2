@@ -205,6 +205,20 @@ func inspectInertCandidateFile(candidate *InertRestoreCandidate, allowAbsent boo
 func StageInertRestoreCandidate(
 	ctx context.Context, sourceArchive, candidateParent string, key [32]byte,
 ) (result *InertRestoreCandidate, err error) {
+	return stageInertRestoreCandidate(ctx, sourceArchive, candidateParent, key, nil)
+}
+
+// stageInertRestoreCandidate has a test-only, fixed-label phase probe. Production
+// always passes nil: no user-facing diagnostics, error detail, retries, or
+// additional files are introduced. Returning false in a test forces exactly
+// the same fail-closed cleanup path as an admission refusal.
+func stageInertRestoreCandidate(
+	ctx context.Context, sourceArchive, candidateParent string, key [32]byte,
+	probe func(string) bool,
+) (result *InertRestoreCandidate, err error) {
+	checkpoint := func(phase string) bool {
+		return probe == nil || probe(phase)
+	}
 	if ctx == nil || key == ([32]byte{}) ||
 		!validSealedArchivePath(sourceArchive) ||
 		verifySealedArchiveParent(candidateParent) != nil ||
@@ -216,17 +230,24 @@ func StageInertRestoreCandidate(
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*sealedArchiveTimeout)
 	defer cancel()
+	if !checkpoint("source_preflight") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	report, err := PreflightInertArchive(ctx, sourceArchive, key, nil)
 	if err != nil || !report.SQLiteLogicalVerified || !report.SchemaCatalogVerified ||
 		report.RestoreReady || report.RestoreSupported ||
 		!validLowerSHA(report.ArchiveSHA256) || report.ArchiveBytes <= 0 {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if requireSealedArchiveSpace(candidateParent, report.ArchiveBytes) != nil {
+	if !checkpoint("disk_reserve") ||
+		requireSealedArchiveSpace(candidateParent, report.ArchiveBytes) != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	// Parent flock serializes slot reservations with other stage operations,
 	// and closes the new-dir -> child-lock gap against other adopters.
+	if !checkpoint("parent_lock") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	parentLock, err := lockSealedArchiveParent(ctx, candidateParent)
 	if err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
@@ -234,9 +255,17 @@ func StageInertRestoreCandidate(
 	var candidate *InertRestoreCandidate
 	func() {
 		defer parentLock.Close()
+		if !checkpoint("parent_inventory") {
+			err = ErrUnsafeInertRestoreCandidate
+			return
+		}
 		var count int
 		count, err = inspectCandidateParent(ctx, parentLock)
 		if err != nil || count >= MaxInertRestoreCandidates {
+			err = ErrUnsafeInertRestoreCandidate
+			return
+		}
+		if !checkpoint("create_scope") {
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
@@ -253,7 +282,8 @@ func StageInertRestoreCandidate(
 			_ = os.Remove(directory)
 			return
 		}
-		if syncSealedArchiveDir(candidateParent) != nil {
+		if !checkpoint("scope_locked") ||
+			syncSealedArchiveDir(candidateParent) != nil {
 			err = ErrUnsafeInertRestoreCandidate
 		}
 	}()
@@ -268,13 +298,25 @@ func StageInertRestoreCandidate(
 			err = errors.Join(err, candidate.discardLocked(false))
 		}
 	}()
+	if !checkpoint("cipher_copy") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	if err = copyInertCandidateCipher(ctx, sourceArchive, candidate.archive, report); err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if !checkpoint("scope_sync") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if err = syncSealedArchiveDir(candidate.directory); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	if !checkpoint("parent_sync") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	if err = syncSealedArchiveDir(candidateParent); err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if !checkpoint("candidate_revalidation") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	var checked InertArchivePreflight

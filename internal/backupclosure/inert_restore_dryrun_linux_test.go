@@ -33,7 +33,14 @@ func createInertDryRunFixture(
 		t.Fatal(err)
 	}
 	parent := newInertCandidateParent(t, f.stateRoot)
-	candidate, err := StageInertRestoreCandidate(context.Background(), source, parent, key)
+	// The phase marker is a constant diagnostic label, never a path, key,
+	// domain, archive digest, or other potentially sensitive input.
+	phase := "admission"
+	candidate, err := stageInertRestoreCandidate(context.Background(), source, parent, key,
+		func(current string) bool {
+			phase = current
+			return true
+		})
 	if err != nil {
 		// Race shard regressions occasionally fail in the staging fixture,
 		// before any write-boundary assertion runs. Preserve the refusal but
@@ -43,8 +50,8 @@ func createInertDryRunFixture(
 		fsErr := syscall.Statfs(parent, &fs)
 		rechecked, preflightErr := PreflightInertArchive(context.Background(), source, key, nil)
 		spaceErr := requireSealedArchiveSpace(parent, rechecked.ArchiveBytes)
-		t.Fatalf("encrypted candidate staging refused: %v; fs_error=%v block_size=%d available_blocks=%d; independent_preflight_error=%v archive_bytes=%d schema_verified=%t sqlite_verified=%t reserve_check=%v",
-			err, fsErr, fs.Bsize, fs.Bavail, preflightErr, rechecked.ArchiveBytes,
+		t.Fatalf("encrypted candidate staging refused: %v; stage=%s; fs_error=%v block_size=%d available_blocks=%d; independent_preflight_error=%v archive_bytes=%d schema_verified=%t sqlite_verified=%t reserve_check=%v",
+			err, phase, fsErr, fs.Bsize, fs.Bavail, preflightErr, rechecked.ArchiveBytes,
 			rechecked.SchemaCatalogVerified, rechecked.SQLiteLogicalVerified, spaceErr)
 	}
 	t.Cleanup(func() {
