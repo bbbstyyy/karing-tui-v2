@@ -16,9 +16,9 @@ func persistedRouteExplainFixture() ([]compiler.RouteRule, []compiler.RouteSourc
 		{Inbound: []string{domain.InboundTagDirect}, Action: "route", Outbound: compiler.DirectOutboundTag},
 		{Inbound: []string{domain.InboundTagSelected}, Action: "route", Outbound: compiler.CurrentSelectedOutboundTag},
 		{
-			Type:   "logical",
-			Mode:   "and",
-			Rules:  []compiler.RouteRule{
+			Type: "logical",
+			Mode: "and",
+			Rules: []compiler.RouteRule{
 				{Inbound: []string{domain.InboundTagRule}},
 				{DomainSuffix: []string{"blocked.invalid"}},
 			},
@@ -110,9 +110,9 @@ func TestRouteExplainRejectsRehashedButMisleadingSourceMap(t *testing.T) {
 		}},
 		{"unmapped native user route", func(r *[]compiler.RouteRule, _ *[]compiler.RouteSourceMapEntry) {
 			*r = append(*r, compiler.RouteRule{
-				Type:   "logical",
-				Mode:   "and",
-				Rules:  []compiler.RouteRule{
+				Type: "logical",
+				Mode: "and",
+				Rules: []compiler.RouteRule{
 					{Inbound: []string{domain.InboundTagRule}},
 					{Domain: []string{"unmapped.invalid"}},
 				},
