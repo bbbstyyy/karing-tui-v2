@@ -31,7 +31,17 @@ func TestInertRestoreStageProbeFailClosedAtEveryBoundary(t *testing.T) {
 
 	for _, rejectedAt := range []string{
 		"source_preflight",
+		"disk_reserve",
+		"parent_lock",
 		"parent_inventory",
+		"create_scope",
+		"scope_created",
+		"scope_child_open",
+		"scope_child_fd_opened",
+		"scope_child_flock",
+		"scope_child_lock_held",
+		"scope_child_identity",
+		"scope_child_identity_verified",
 		"scope_locked",
 		"cipher_copy",
 		"scope_sync",

@@ -84,7 +84,22 @@ func verifyCandidateDirLock(path string, lock *os.File) (os.FileInfo, error) {
 }
 
 func openLockedInertRestoreCandidate(path string) (*InertRestoreCandidate, error) {
+	return openLockedInertRestoreCandidateProbed(path, nil)
+}
+
+// The private probe only receives bounded constant stage identifiers.
+// Production opens a candidate with a nil probe and identical safety checks.
+// Failed probe checkpoints close all acquired descriptors before returning.
+func openLockedInertRestoreCandidateProbed(
+	path string, probe func(string) bool,
+) (*InertRestoreCandidate, error) {
+	checkpoint := func(stage string) bool {
+		return probe == nil || probe(stage)
+	}
 	if !validInertRestoreCandidateDir(path) || verifySealedArchiveParent(path) != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if !checkpoint("scope_child_open") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|
@@ -93,6 +108,10 @@ func openLockedInertRestoreCandidate(path string) (*InertRestoreCandidate, error
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	lock := os.NewFile(uintptr(fd), path)
+	if !checkpoint("scope_child_fd_opened") || !checkpoint("scope_child_flock") {
+		_ = lock.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = lock.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
@@ -100,10 +119,18 @@ func openLockedInertRestoreCandidate(path string) (*InertRestoreCandidate, error
 		}
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	if !checkpoint("scope_child_lock_held") || !checkpoint("scope_child_identity") {
+		_ = lock.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	identity, err := verifyCandidateDirLock(path, lock)
 	if err != nil {
 		_ = lock.Close()
 		return nil, err
+	}
+	if !checkpoint("scope_child_identity_verified") {
+		_ = lock.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	return &InertRestoreCandidate{
 		directory:         path,
@@ -275,7 +302,13 @@ func stageInertRestoreCandidate(
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		candidate, err = openLockedInertRestoreCandidate(directory)
+		if !checkpoint("scope_created") {
+			// Nothing has been written to this exact newly created empty dir.
+			_ = os.Remove(directory)
+			err = ErrUnsafeInertRestoreCandidate
+			return
+		}
+		candidate, err = openLockedInertRestoreCandidateProbed(directory, probe)
 		if err != nil {
 			// Only remove an empty, specifically named directory created by
 			// this call. Never recursively remove an unknown scope.

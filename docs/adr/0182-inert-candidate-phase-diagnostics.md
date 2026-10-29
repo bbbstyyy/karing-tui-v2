@@ -42,3 +42,26 @@ network requirement or stable `main` modification.
 
 Merge only after exact-head ordinary CI, four Race shards, Managed Core and
 both native Linux Core Provenance jobs have succeeded.
+
+## 2026-10-29 follow-up: exact failed-stage evidence
+
+The new CI race (2/4) on head `0f881e065df28b` captured a second
+stage refusal at `stage=create_scope` in
+`TestSealedCompletionRequiresAllLeavesGoneAndRetainsEveryProof`. Independent
+preflight, SQLite and disk-reserve checks passed. The original checkpoint
+could not distinguish `MkdirTemp` refusal from subsequent child-directory
+open/flock/identity refusal. No cause has yet been established.
+
+The stage probe now exposes distinct **test-only** checkpoints after creating
+the exact empty scope and within the opened child (directory fd, exclusive
+flock and inode/permission checks). All injected failures close descriptors,
+remove only the empty scope created by this call or use the existing
+ownership-safe discard path. Production remains nil-probe; the public error
+is unchanged. This improves repeatability and narrows future evidence, but
+**does not turn the recurring failure into a pass or close Issue #59**.
+
+The same head also failed managed-core dependency download at
+`github.com/sagernet/sing-shadowtls@v0.2.1` with HTTP/2 INTERNAL_ERROR
+from the Go module proxy. Do not change the pinned dependency or assert a
+source-code defect from this network-layer failure. Require a new exact-head
+managed-core green result before merge.
