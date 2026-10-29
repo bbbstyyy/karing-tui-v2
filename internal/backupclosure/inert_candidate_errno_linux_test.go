@@ -13,7 +13,7 @@ import (
 func TestInertCandidateFailureClassificationNeverExposesErrorText(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		err error
+		err  error
 		want string
 	}{
 		{"no_space", syscall.ENOSPC, "storage_capacity"},
@@ -46,8 +46,8 @@ func TestInertCandidateFailureClassificationNeverExposesErrorText(t *testing.T) 
 func TestInertCandidateFailureProbeReportsOnlyFixedClasses(t *testing.T) {
 	for _, test := range []struct {
 		operation string
-		err error
-		want string
+		err       error
+		want      string
 	}{
 		{"scope_mkdir", syscall.ENOSPC, "scope_mkdir_failed_storage_capacity"},
 		{"scope_child_open", syscall.EMFILE, "scope_child_open_failed_descriptor_pressure"},
