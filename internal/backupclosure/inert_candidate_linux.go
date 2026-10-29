@@ -26,6 +26,42 @@ var (
 	ErrInertRestoreCandidateBusy   = errors.New("inert encrypted restore candidate has an active lease")
 )
 
+// inertCandidateErrnoClass converts syscall failures to a bounded vocabulary.
+// Only the private test probe receives these labels. The exported API still
+// returns the same fail-closed sentinel without filenames or OS error text.
+func inertCandidateErrnoClass(err error) string {
+	switch {
+	case errors.Is(err, syscall.ENOSPC), errors.Is(err, syscall.EDQUOT):
+		return "storage_capacity"
+	case errors.Is(err, syscall.EMFILE), errors.Is(err, syscall.ENFILE):
+		return "descriptor_pressure"
+	case errors.Is(err, syscall.EWOULDBLOCK), errors.Is(err, syscall.EAGAIN):
+		return "lock_contention"
+	case errors.Is(err, syscall.EINTR):
+		return "interrupted"
+	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		return "permission"
+	case errors.Is(err, syscall.ENOENT):
+		return "missing_path"
+	case errors.Is(err, syscall.ELOOP):
+		return "symlink"
+	case errors.Is(err, syscall.EIO):
+		return "io_error"
+	default:
+		return "other"
+	}
+}
+
+func recordInertCandidateSyscallFailure(
+	probe func(string) bool, operation string, err error,
+) {
+	if probe != nil {
+		// Callers pass fixed operation constants. The class cannot contain
+		// private paths, arbitrary error strings, archive content or keys.
+		_ = probe(operation + "_failed_" + inertCandidateErrnoClass(err))
+	}
+}
+
 // InertRestoreCandidate represents an EXCLUSIVE, cross-process Linux flock
 // on a private directory containing exactly one independently copied,
 // authenticated encrypted archive. Nothing plaintext or executable is staged.
@@ -97,6 +133,9 @@ func openLockedInertRestoreCandidateProbed(
 		return probe == nil || probe(stage)
 	}
 	if !validInertRestoreCandidateDir(path) || verifySealedArchiveParent(path) != nil {
+		if probe != nil {
+			_ = probe("scope_child_precheck_refused")
+		}
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !checkpoint("scope_child_open") {
@@ -105,6 +144,7 @@ func openLockedInertRestoreCandidateProbed(
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|
 		syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
+		recordInertCandidateSyscallFailure(probe, "scope_child_open", err)
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	lock := os.NewFile(uintptr(fd), path)
@@ -113,6 +153,7 @@ func openLockedInertRestoreCandidateProbed(
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		recordInertCandidateSyscallFailure(probe, "scope_child_flock", err)
 		_ = lock.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return nil, ErrInertRestoreCandidateBusy
@@ -125,6 +166,9 @@ func openLockedInertRestoreCandidateProbed(
 	}
 	identity, err := verifyCandidateDirLock(path, lock)
 	if err != nil {
+		if probe != nil {
+			_ = probe("scope_child_identity_refused")
+		}
 		_ = lock.Close()
 		return nil, err
 	}
@@ -299,6 +343,7 @@ func stageInertRestoreCandidate(
 		var directory string
 		directory, err = os.MkdirTemp(candidateParent, inertRestoreCandidatePrefix)
 		if err != nil {
+			recordInertCandidateSyscallFailure(probe, "scope_mkdir", err)
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}

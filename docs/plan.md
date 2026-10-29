@@ -1878,3 +1878,9 @@ docs/
 
 - PR #62 首次完整同头 CI 中，Go Race 2/4 再次复现加密恢复候选暂存拒绝，`stage=create_scope`；独立归档鉴权/SQLite 和磁盘配额检查仍成功。此前阶段标记尚不能区分目录创建、子目录 O_NOFOLLOW 打开、flock 与 inode/权限检查。增加 `scope_created` 及独立子目录打开、描述符、排它锁和身份核对的**仅测试**安全阶段标记，并注入各阶段安全拒绝，原已批准代码流程与不递归清理约束保持不变。
 - 同批 Managed Core 在 `sing-shadowtls` 依赖拉取遇到 HTTP/2 INTERNAL_ERROR，属网络下载失败证据，不能当作 Go 业务逻辑错误，也不能将失败忽略。下一次合并须同一 head 的普通 CI、Race 全四片、Managed Core、原生两架构全部通过；Issue #59 根因仍未解决，不改变 T15/T23/T20/T25、T22/T24 等发布阻塞标志，不改 stable main 或运行发行。
+
+
+### 2026-10-29 — M5 ADR 0183 / Issue #59 候选暂存系统调用拒绝分类
+
+- ADR 0182 的最新同头 CI（Race 4/4、Managed Core、双原生架构）已通过并合入集成分支；但单次通过不代表原先 `create_scope` 偶发拒绝根因已解决。追加仅测试可见的固定系统调用错误类别：在 mkdir、子目录 O_NOFOLLOW open、flock 失败后分别记录 storage_capacity、descriptor_pressure、lock_contention、permission、interrupted、missing_path、symlink、io_error 或 other，不打印系统错误原文、私有路径、凭证与密文内容。
+- 生产候选暂存公开 API、原有拒绝哨兵、目录属主与权限校验、原子清理和无自动重试策略全部保持不变。新增 errno 分类及私密错误文本不外泄的确定性回归。Issue #59 继续开放；这只是 T15/T23 恢复可靠性的诊断闭包，不代表真正修复、运行恢复或长期发布门槛完成。须等该 PR 同一提交普通 CI、Race 4/4、Managed Core、Linux 原生 amd64/arm64 均绿后才合并；不改 stable main、TUN、订阅/ISP 分流与所有 false 发布门槛。
