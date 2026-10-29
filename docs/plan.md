@@ -1884,3 +1884,9 @@ docs/
 
 - ADR 0182 的最新同头 CI（Race 4/4、Managed Core、双原生架构）已通过并合入集成分支；但单次通过不代表原先 `create_scope` 偶发拒绝根因已解决。追加仅测试可见的固定系统调用错误类别：在 mkdir、子目录 O_NOFOLLOW open、flock 失败后分别记录 storage_capacity、descriptor_pressure、lock_contention、permission、interrupted、missing_path、symlink、io_error 或 other，不打印系统错误原文、私有路径、凭证与密文内容。
 - 生产候选暂存公开 API、原有拒绝哨兵、目录属主与权限校验、原子清理和无自动重试策略全部保持不变。新增 errno 分类及私密错误文本不外泄的确定性回归。Issue #59 继续开放；这只是 T15/T23 恢复可靠性的诊断闭包，不代表真正修复、运行恢复或长期发布门槛完成。须等该 PR 同一提交普通 CI、Race 4/4、Managed Core、Linux 原生 amd64/arm64 均绿后才合并；不改 stable main、TUN、订阅/ISP 分流与所有 false 发布门槛。
+
+
+### 2026-10-29 — M5 ADR 0184 / Issue #59 私有候选作用域锁与 inode 回归
+
+- ADR 0183 的 errno 类别诊断已在最新同头普通 CI、四片 Race、Managed Core 与两种 Linux Core 架构全绿后合并；Issue #59 的 `create_scope` 间歇性拒绝仍缺乏确定性根因。本阶段新增 **128 轮**隔离私有目录创建、目录独占 flock、防止第二租约获取、关闭后再获取、精确删除空目录及最终零残留测试，专门覆盖曾出现拒绝的候选目录建立与 fd 生命周期边界。
+- 同时在测试专用 `scope_child_lock_held` 窗口模拟原路径被不同 0700 inode 替代、变成符号链接或权限降低，确保持有旧 inode flock 不会把新路径认作可信候选；拒绝仍为 `ErrUnsafeInertRestoreCandidate`，无凭据、密文或真实恢复动作。此项仅是 T15/T23 的锁与 inode 确定性回归，不意味着找到/修复偶发 errno、恢复功能完成或发布门槛满足。保持 Issue #59 开放，须经同一 head 全部 CI 与原生双架构成功后合并。不引入 TUN、订阅/ISP 来源层，不改 `main` 与发布标志。
