@@ -1866,3 +1866,15 @@ docs/
 - ADR 0180 已在编译发射前约束五层 `route.rules` 与 `source_map` 的双向关系。本切片进一步在 `route explain` 从 SQLite 读取已应用代际、完成配置/manifest/source-map 独立 SHA-256 校验之后，重新核对层次顺序、FINAL 无条件 Rule 入口、BLOCK/出口目标/原生谓词、全部用户作用域来源与 Group/Proxy DNS 相邻解析配对，不信任仅重算哈希的错误来源标签。异常只返回 `ErrRouteExplainIntegrity`，不伪造已观测的连接证据。
 - 使用确定性目标标签约定重建最小 `TargetCatalog`，只验证已持久化字节间能独立交叉核对的关系；不声称能认证原始声明、检测完全协调改写后的语义有效字节或还原 DNS detour/实时 Core 连接。负向用例主动重算三份元数据哈希，证明本次额外拒绝条件；正向用例必须允许真实 Group DNS 与 Proxy DNS 的编译配对。
 - 本项只属于 T26 *已应用代际模拟诊断的读取侧一致性*。需在同一 commit 普通 CI、四片 Race、Managed Core、双原生 amd64/arm64 全绿后才合并；不将 T26 标记完成。既有 Group Target=CurrentSelected 解析私有回环 IP 的实际应用出口问题、CN 许可规则资产、T20 千次重连、T25 长时运行及真实 Restore/GC、T22/T24 整体验收仍是独立阻塞项，未验收发布标志保持 false。无 TUN、订阅/ISP 分流层，稳定 main 和发行 Draft PR #1 不动。
+
+
+### 2026-10-29 — M5 ADR 0182 / Issue #59 加密恢复候选阶段诊断
+
+- 上一轮出现 `StageInertRestoreCandidate` 偶发拒绝，同一提交重试可成功；独立只读预检、SQLite 验证与磁盘空间检查正常，但尚未定位真正拒绝点。为 T15/T23 可靠性排障提供**仅测试代码可见**的固定阶段标签，覆盖源归档预检、配额、父目录锁和扫描、候选锁、密文复制、fsync 与复制品二次认证。不打印密码、密文、私有路径、域名或归档 digest；正式 Stage API 及安全拒绝行为不变。
+- 新增每个关键阶段的确定性拒绝注入和原有作用域的精确清理回归，验证失败不保留新候选、不删除原始归档；正常路径仍需独立 Verify。此变更只为下一次 CI 重现定位提供证据，**不宣称已找到或修复偶发故障**；Issue #59 和 T15/T23 未验收门槛保持，原有发布标志 false。须在同一提交普通 CI、Race 4/4、Managed Core、原生 amd64/arm64 全绿后合并。无 TUN、订阅/ISP 分流层，不改 stable main。
+
+
+### 2026-10-29 — M5 ADR 0182 Race 分片 2 复现与更细分证据（Issue #59）
+
+- PR #62 首次完整同头 CI 中，Go Race 2/4 再次复现加密恢复候选暂存拒绝，`stage=create_scope`；独立归档鉴权/SQLite 和磁盘配额检查仍成功。此前阶段标记尚不能区分目录创建、子目录 O_NOFOLLOW 打开、flock 与 inode/权限检查。增加 `scope_created` 及独立子目录打开、描述符、排它锁和身份核对的**仅测试**安全阶段标记，并注入各阶段安全拒绝，原已批准代码流程与不递归清理约束保持不变。
+- 同批 Managed Core 在 `sing-shadowtls` 依赖拉取遇到 HTTP/2 INTERNAL_ERROR，属网络下载失败证据，不能当作 Go 业务逻辑错误，也不能将失败忽略。下一次合并须同一 head 的普通 CI、Race 全四片、Managed Core、原生两架构全部通过；Issue #59 根因仍未解决，不改变 T15/T23/T20/T25、T22/T24 等发布阻塞标志，不改 stable main 或运行发行。
