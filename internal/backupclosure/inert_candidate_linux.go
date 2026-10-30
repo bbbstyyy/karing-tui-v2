@@ -185,6 +185,32 @@ func openLockedInertRestoreCandidateProbed(
 	}, nil
 }
 
+// sameNewInertScopeIdentity checks whether the path still names the exact
+// private inode captured immediately after MkdirTemp. A path-only cleanup is
+// unsafe after a test hook or another same-UID actor replaces that pathname.
+// This is a best-effort identity guard, not an atomic compare-and-unlink.
+func sameNewInertScopeIdentity(path string, created os.FileInfo) bool {
+	if created == nil || !created.IsDir() || created.Mode().Perm() != 0o700 ||
+		!validInertRestoreCandidateDir(path) || verifySealedArchiveParent(path) != nil {
+		return false
+	}
+	current, err := os.Lstat(path)
+	return err == nil && current.IsDir() && current.Mode().Perm() == 0o700 &&
+		os.SameFile(created, current)
+}
+
+func removeNewEmptyInertScopeIfIdentical(path string, created os.FileInfo) error {
+	if !sameNewInertScopeIdentity(path, created) {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	// os.Remove refuses nonempty directories: never recursively remove
+	// ciphertext or unknown files, even if the name and identity still match.
+	if err := os.Remove(path); err != nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	return nil
+}
+
 // inspectCandidateParent uses the locked parent fd to refuse unknown entries,
 // symlinks and quota overruns. It never removes a completed/incomplete scope.
 func inspectCandidateParent(ctx context.Context, lock *os.File) (int, error) {
@@ -347,17 +373,37 @@ func stageInertRestoreCandidate(
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
+		// Bind cleanup and adoption to the inode actually created here,
+		// before any test checkpoint can replace the pathname.
+		created, statErr := os.Lstat(directory)
+		if statErr != nil || !sameNewInertScopeIdentity(directory, created) {
+			// Ownership is uncertain. Do not guess which path to remove.
+			err = ErrUnsafeInertRestoreCandidate
+			return
+		}
 		if !checkpoint("scope_created") {
-			// Nothing has been written to this exact newly created empty dir.
-			_ = os.Remove(directory)
+			_ = removeNewEmptyInertScopeIfIdentical(directory, created)
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
 		candidate, err = openLockedInertRestoreCandidateProbed(directory, probe)
 		if err != nil {
-			// Only remove an empty, specifically named directory created by
-			// this call. Never recursively remove an unknown scope.
-			_ = os.Remove(directory)
+			// An untrusted actor could have replaced the empty scope while
+			// this process held the parent advisory flock. Never unlink
+			// the replacement merely because it occupies our old name.
+			_ = removeNewEmptyInertScopeIfIdentical(directory, created)
+			return
+		}
+		if candidate == nil || candidate.directoryIdentity == nil ||
+			!os.SameFile(created, candidate.directoryIdentity) ||
+			!sameNewInertScopeIdentity(directory, created) {
+			if candidate != nil {
+				// The opened fd may belong to a replaced scope. Release its
+				// lock only; never discard or unlink that foreign inode.
+				_ = candidate.Close()
+			}
+			candidate = nil
+			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
 		if !checkpoint("scope_locked") ||
