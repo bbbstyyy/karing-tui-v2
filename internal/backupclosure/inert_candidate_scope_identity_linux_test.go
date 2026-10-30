@@ -30,9 +30,9 @@ func TestInertRestoreStageRefusesReplacedFreshScopeWithoutDeletingReplacement(t 
 	parent := newInertCandidateParent(t, f.stateRoot)
 
 	for _, tc := range []struct {
-		name string
-		phase string
-		replacement string
+		name                  string
+		phase                 string
+		replacement           string
 		continueAfterMutation bool
 	}{
 		{"post_create_replacement", "scope_created", "directory", true},
