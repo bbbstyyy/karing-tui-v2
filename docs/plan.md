@@ -1890,3 +1890,9 @@ docs/
 
 - ADR 0183 的 errno 类别诊断已在最新同头普通 CI、四片 Race、Managed Core 与两种 Linux Core 架构全绿后合并；Issue #59 的 `create_scope` 间歇性拒绝仍缺乏确定性根因。本阶段新增 **128 轮**隔离私有目录创建、目录独占 flock、防止第二租约获取、关闭后再获取、精确删除空目录及最终零残留测试，专门覆盖曾出现拒绝的候选目录建立与 fd 生命周期边界。
 - 同时在测试专用 `scope_child_lock_held` 窗口模拟原路径被不同 0700 inode 替代、变成符号链接或权限降低，确保持有旧 inode flock 不会把新路径认作可信候选；拒绝仍为 `ErrUnsafeInertRestoreCandidate`，无凭据、密文或真实恢复动作。此项仅是 T15/T23 的锁与 inode 确定性回归，不意味着找到/修复偶发 errno、恢复功能完成或发布门槛满足。保持 Issue #59 开放，须经同一 head 全部 CI 与原生双架构成功后合并。不引入 TUN、订阅/ISP 来源层，不改 `main` 与发布标志。
+
+
+### 2026-10-30 — M5 ADR 0185 / T15/T23 新建候选目录 inode 归属守卫
+
+- 审阅最新 ADR 0184 锁和路径替换测试后发现：候选 `MkdirTemp` 后的两条预采纳失败清理路径此前按文件名直接 `os.Remove`，若同 UID 实体在获锁但尚未核对原创建 inode 期间换名，可能误删并非本次创建的空目录；打开替换目录后也须与刚创建 inode 交叉核对。现在记录创建后的 `Lstat` 身份；仅同 inode、私有 0700 的空目录允许失败清理；子目录租约身份与创建 inode 不一致时只释放租约并拒绝采纳，不删替代对象。
+- 增加在 `scope_created`、`scope_child_open`、`scope_child_lock_held` 的测试专用路径替换、symlink、失败回滚等确定性攻击回归，并明确承认 `Lstat` 到 `Remove` 之间仍存在更窄的非原子 TOCTOU，**不得声称已抵御主动 same-UID 纳秒级竞态**。这不是 Issue #59 的间歇性 `create_scope` 拒绝根因；问题继续打开。不提升 T15/T23、T20/T25 或发行门槛，PR 同头普通 CI、Race 4/4、Managed Core、双原生验证全绿后才能合并；稳定 main 不动，无 TUN、订阅/ISP 分流。
