@@ -425,7 +425,7 @@ func stageInertRestoreCandidate(
 	if !checkpoint("cipher_copy") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if err = copyInertCandidateCipher(ctx, sourceArchive, candidate.archive, report); err != nil {
+	if err = copyInertCandidateCipher(ctx, sourceArchive, candidate, report, probe); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !checkpoint("scope_sync") {
@@ -448,6 +448,12 @@ func stageInertRestoreCandidate(
 	if err != nil || !sameInertPreflightEvidence(report, checked) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// The final authenticated path still has to refer to the original
+	// locked inode, not merely contain matching ciphertext.
+	locked, lockErr := verifyCandidateDirLock(candidate.directory, candidate.dir)
+	if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	candidate.receipt = checked
 	return candidate, nil
 }
@@ -463,9 +469,23 @@ func sameInertPreflightEvidence(a, b InertArchivePreflight) bool {
 		!a.RestoreSupported && !b.RestoreSupported
 }
 
+// copyInertCandidateCipher creates the ciphertext relative to the LOCKED
+// directory fd, not a pathname whose intermediate components a same-UID actor
+// could replace after admission. A path-based post-write check is still
+// required: the fd anchor prevents foreign writes, but cannot authorize a
+// renamed or unlinked candidate directory.
 func copyInertCandidateCipher(
-	ctx context.Context, sourcePath, targetPath string, expected InertArchivePreflight,
+	ctx context.Context, sourcePath string, candidate *InertRestoreCandidate,
+	expected InertArchivePreflight, probe func(string) bool,
 ) error {
+	if candidate == nil || candidate.dir == nil ||
+		candidate.directoryIdentity == nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	locked, lockErr := verifyCandidateDirLock(candidate.directory, candidate.dir)
+	if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) {
+		return ErrUnsafeInertRestoreCandidate
+	}
 	file, err := openSealedArchiveNoFollow(sourcePath)
 	if err != nil {
 		return ErrUnsafeInertRestoreCandidate
@@ -475,17 +495,28 @@ func copyInertCandidateCipher(
 	if err != nil || verifySealedFile(file, sourcePath, info, expected.ArchiveBytes, true) != nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
-	fd, err := syscall.Open(targetPath, syscall.O_WRONLY|syscall.O_CREAT|
-		syscall.O_EXCL|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o600)
-	if err != nil {
+	// A test probe may replace candidate.directory right here. Openat must
+	// still create only inside the inode whose exclusive lease we hold.
+	if probe != nil && !probe("cipher_before_openat") {
 		return ErrUnsafeInertRestoreCandidate
 	}
+	fd, err := syscall.Openat(int(candidate.dir.Fd()), inertRestoreCipherName,
+		syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|
+			syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o600)
+	if err != nil {
+		recordInertCandidateSyscallFailure(probe, "cipher_openat", err)
+		return ErrUnsafeInertRestoreCandidate
+	}
+	targetPath := candidate.archive
 	target := os.NewFile(uintptr(fd), targetPath)
 	if target == nil {
 		_ = syscall.Close(fd)
 		return ErrUnsafeInertRestoreCandidate
 	}
 	defer target.Close()
+	if probe != nil && !probe("cipher_target_fd_opened") {
+		return ErrUnsafeInertRestoreCandidate
+	}
 	hasher := sha256.New()
 	n, err := io.CopyN(io.MultiWriter(target, hasher),
 		sealedContextReader{ctx: ctx, src: file}, expected.ArchiveBytes)
@@ -510,6 +541,10 @@ func copyInertCandidateCipher(
 		return ErrUnsafeInertRestoreCandidate
 	}
 	if target.Sync() != nil || ctx.Err() != nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	locked, lockErr = verifyCandidateDirLock(candidate.directory, candidate.dir)
+	if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) {
 		return ErrUnsafeInertRestoreCandidate
 	}
 	return nil
