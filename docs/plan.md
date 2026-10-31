@@ -1896,3 +1896,9 @@ docs/
 
 - 审阅最新 ADR 0184 锁和路径替换测试后发现：候选 `MkdirTemp` 后的两条预采纳失败清理路径此前按文件名直接 `os.Remove`，若同 UID 实体在获锁但尚未核对原创建 inode 期间换名，可能误删并非本次创建的空目录；打开替换目录后也须与刚创建 inode 交叉核对。现在记录创建后的 `Lstat` 身份；仅同 inode、私有 0700 的空目录允许失败清理；子目录租约身份与创建 inode 不一致时只释放租约并拒绝采纳，不删替代对象。
 - 增加在 `scope_created`、`scope_child_open`、`scope_child_lock_held` 的测试专用路径替换、symlink、失败回滚等确定性攻击回归，并明确承认 `Lstat` 到 `Remove` 之间仍存在更窄的非原子 TOCTOU，**不得声称已抵御主动 same-UID 纳秒级竞态**。这不是 Issue #59 的间歇性 `create_scope` 拒绝根因；问题继续打开。不提升 T15/T23、T20/T25 或发行门槛，PR 同头普通 CI、Race 4/4、Managed Core、双原生验证全绿后才能合并；稳定 main 不动，无 TUN、订阅/ISP 分流。
+
+
+### 2026-10-30 — M5 ADR 0186 / T15/T23 候选密文写入目录 fd 锚定
+
+- ADR 0185 已对新建目录的 inode 创建/采纳和早期清理加校验；本轮继续消除复制密文时经绝对路径创建目标文件的中间目录重命名窗口。现在 `copyInertCandidateCipher` 在确认持锁目录身份后，使用 Linux `openat(candidate.dir.Fd(), "candidate.ktbackup", O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600)` 在原持锁 inode 内创建，保留完整源归档 SHA/长度、目标文件权限/身份与 fsync/二次认证闭包，并在复制结束及最终预检后重新确认目录身份。
+- 新增测试在复制入口、openat 前、目标 fd 打开后替换候选目录为同 UID 私有空目录或指向另一个私有目录的符号链接，必须失败关闭、不得写入替代目录或删除外部路径；注入 openat 前拒绝时不得自动重试或留下新候选。**本项仅修复独立的密文写入重定向风险，不声称 Issue #59 的偶发 create_scope 失败根因得到解决，也无法授权真实 Restore 或推翻 T15/T23 的未验收条件。** 其余 T20/T25、CN 离线资产和所有发布门槛保持 false；禁止 TUN、订阅/ISP 来源层，stable main 不动。同一提交须通过普通 CI、Race 4/4、Managed Core、原生 amd64/arm64 后才能合并。

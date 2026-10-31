@@ -44,6 +44,8 @@ func TestInertRestoreStageProbeFailClosedAtEveryBoundary(t *testing.T) {
 		"scope_child_identity_verified",
 		"scope_locked",
 		"cipher_copy",
+		"cipher_before_openat",
+		"cipher_target_fd_opened",
 		"scope_sync",
 		"parent_sync",
 		"candidate_revalidation",
