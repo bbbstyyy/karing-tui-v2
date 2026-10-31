@@ -1902,3 +1902,10 @@ docs/
 
 - ADR 0185 已对新建目录的 inode 创建/采纳和早期清理加校验；本轮继续消除复制密文时经绝对路径创建目标文件的中间目录重命名窗口。现在 `copyInertCandidateCipher` 在确认持锁目录身份后，使用 Linux `openat(candidate.dir.Fd(), "candidate.ktbackup", O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600)` 在原持锁 inode 内创建，保留完整源归档 SHA/长度、目标文件权限/身份与 fsync/二次认证闭包，并在复制结束及最终预检后重新确认目录身份。
 - 新增测试在复制入口、openat 前、目标 fd 打开后替换候选目录为同 UID 私有空目录或指向另一个私有目录的符号链接，必须失败关闭、不得写入替代目录或删除外部路径；注入 openat 前拒绝时不得自动重试或留下新候选。**本项仅修复独立的密文写入重定向风险，不声称 Issue #59 的偶发 create_scope 失败根因得到解决，也无法授权真实 Restore 或推翻 T15/T23 的未验收条件。** 其余 T20/T25、CN 离线资产和所有发布门槛保持 false；禁止 TUN、订阅/ISP 来源层，stable main 不动。同一提交须通过普通 CI、Race 4/4、Managed Core、原生 amd64/arm64 后才能合并。
+
+
+### 2026-10-31 — M5 ADR 0187 / T15/T23 已锁候选密文读取与重开身份复验
+
+- 在 ADR 0186 将密文创建改为持锁目录 fd 相对 `openat` 后，本切片将 `inspectInertCandidateFile` 的密文叶子读取也改为 `openat(candidate.dir.Fd(), "candidate.ktbackup", O_RDONLY|O_NOFOLLOW)`；保留单叶子、0600、单链接与 UID、fd/path 相同 inode 的交叉证据，尾部再次核对目录锁身份。候选目录 fsync 使用同一持锁 fd，避免对替换路径执行 fsync。
+- `ReopenInertRestoreCandidate` 完成独立认证的多轮 preflight 后，重新读取并比较候选密文 inode/大小/mtime 与原始锁目录身份；测试用仅内部可见回调在认证后替换目录路径，必须失败关闭并保留原加密归档和替换目录。另一测试在已锁目录 ReadDir 后/叶子打开前替换为其他 0700+0600 密文目录或符号链接，禁止接受外部对象。保留公开 API 和错误哨兵、不自动重试、不发放真实恢复许可。
+- **限制**：多轮 HMAC/SQLite 预检仍通过路径定位，回调仅覆盖确定性竞态，尚未证明完全消除同 UID 对手的中间路径 TOCTOU；需未来独立审查 fd 绑定的完整认证过程。此项不证明 Issue #59 偶发 `create_scope` 失败已修复，Issue 继续开放；T15/T23、T20/T25、CN 许可资产和正式发行门槛不提升。普通 CI、Race 四片、Managed Core、原生 amd64/arm64 必须在该 PR 同一提交全部通过后才能合并；保持 Linux 无 TUN、无订阅/ISP 来源层，stable main 不动。
