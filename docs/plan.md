@@ -902,6 +902,8 @@ $XDG_RUNTIME_DIR/karing-tui-v2/        socket、锁、瞬时运行标识
 
 备份不意味着无条件可执行导入内容，也不能覆盖原始备份。敏感备份应支持现成加密格式；明文导出需提示并使用私有权限。
 
+> M4 阶段性实现（内部安全前置条件，非产品备份）：已具备受限 WAL 一致 SQLite 快照，并通过 Linux 目录 flock 实现跨进程活跃快照保护、崩溃遗留文件的限额清理与故障注入回归（ADR 0094、0095）。内部另新增 ADR 0096：从已确认的 WAL 数据库快照而非实时库读取所有保留代际，严格验证编译 manifest、声明版本、source-map、原生 local 规则路径；按限额固定并复制 SHA-256 规则资源，产生不含秘密的版本化内存完整性清单。ADR 0097 还提供经锁定哈希校验的 Linux sing-box 内核原始 inode 固定与隔离只读副本，并用内部 v2 清单绑定架构、来源提交、版本和 SHA-256；通过真实批准内核 CI 验证，不允许从快照执行内核。**仍未完成**：跨重启持久资源租约、加密备份封装、磁盘预留、完整备份导出/导入、恢复事务及 rollback-of-rollback；不会开放 backup/restore API、CLI 或 TUI，也不将内存清单视为完整备份。
+
 ### 18.4 Karing 数据迁移
 
 P1 支持从用户提供的 Karing 备份或导出文件只读迁移。由于关键备份工具和模型转换代码在已审查公开快照中不完整，不能提前保证任意版本 ZIP 都可导入。[S03][S04]
@@ -1038,6 +1040,8 @@ CI 启用 Go race 检查和取消/超时测试。内核不可通过 Go 应用 ra
 完成恶意终端内容处理、窄屏和中文显示、多客户端冲突、敏感信息脱敏。
 
 **门槛：** 普通用户可以不编辑运行 JSON，完成订阅导入、组选择、规则/DNS 调整、状态查看、故障定位和回滚。
+
+**T15/T23 隔离断电实验入口（M4 ADR 0128，尚未验收）：** 在正式恢复/元数据删除能力开放前，新增只用于开发实验的 `scripts/recovery_lab/vm_power_cut.py`，以及 [独立 disposable VM 操作手册](runbooks/t15-t23-virtual-powercut-lab.md)。宿主侧默认只预检；仅对 `qemu:///session` 下显式确认的 disposable VM（固定 UUID、唯一 nonce、真实 guest 阶段标记、专用 XDG 0700 lab 路径、精确环境确认）才可强制模拟 VM 断电，写入仅表示**停机事件**的 fsync intent/observation。普通 CI 仅运行 mock libvirt 安全测试，不会停止任何 VM。VM 强制关机**不等于真实硬件突然断电**；未实施独立 guest 真实故障点、完整重启后 SQLite/journal/Applied/LKG/资源/归档/Core 检查，故 T15/T23、`PowerLossReplayVerified`、`RestoreSupported`、`RestoreReady` 均保持未通过/false，无自动删除、恢复事务或新公开接口。
 
 ### M5：发行候选与长期稳定性
 
@@ -1209,3 +1213,692 @@ docs/
 [S26]: https://curl.se/docs/manpage.html
 [S27]: https://karing.app/clash
 [S28]: https://karing.app/tutorial/backup-sync
+
+### 2026-10-09 M4 只读 TUI 首个切片
+
+- 采用精确锁定的 Bubble Tea `v1.3.10`（v1 API，不混用 v2），`karing-tui tui` 启动终端界面。
+- 仅读取版本化 Unix Socket API：Dashboard、Profiles、Nodes 三个界面；异步、限时、可取消请求，不在 `Update/View` 中阻塞 IO。
+- 使用请求序号拒绝旧响应，列表展示数量和节点分页有界；窄屏、中文显示宽度、终端控制字符及 bidi 格式字符统一受保护。
+- `q`/Ctrl-C 只退出界面，不写 daemon/core 状态；错误安全概括，不输出订阅凭据或原始错误文本。
+- 仅为 M4 UI 基础，不表示 M3 协议支持、路由/DNS 编辑、CN 资源闭包或正式稳定门槛已完成。
+
+
+### 2026-10-09 M4 CurrentSelected CAS 与 TUI 候选切换切片
+
+- schema v16 的选择修订号与已应用代际/声明 SHA-256 条件更新已落地，旧 PUT 也递增相同 revision；409 冲突不写入，502/超时后先回读，不假定回滚。
+- TUI Selector 使用绑定到已应用声明的 CurrentSelected 成员列表，仅支持固定节点、Global URLTest 和 Custom URLTest；候选上限 128，超出时明确截断并禁用编辑。
+- Enter 提议、y 确认、Esc 取消；写入有界异步、单操作在途，提交后必须重新 GET 选择及 live readback；终端退出不停止 daemon/core。
+- 此切片不变更五层分流、订阅/ISP 排除策略、CN 28 组、DNS 或内核版本；仍不表示 M4 全功能和 M5 发布门槛完成。详见 ADR 0076、0077。
+
+### 2026-10-09 M4 Applied Routing/DNS 脱敏检查切片
+
+- 增加只读 `GET /v1/config/inspection`：验证应用代际 manifest、原生配置哈希与已应用声明 SHA-256 的一致性；恢复中、应用中、无已应用代际或竞态漂移时失败关闭。
+- Routing TUI 页 `7` 采用与编译器相同的 CN 28 组交错及地区自动追加机制重建声明分层，仅展示五层/组启用状态、顺序、目标和 DNS 绑定；不把重建信息误称为实际规则命中或原生配置全量验证。
+- DNS TUI 页 `8` 只展示角色、传输、引导引用、detour 目标、IP/主机名类型和绑定；不显示 DNS 上游地址、用户节点密钥，不把绑定等同于已观测的 DNS 解析路径。
+- 当前声明与应用声明不同版本时，仅展示 Routing/DNS/RuleSet 语义变化指标，不静默应用或声称已生效。接口与客户端双重限制输出数量/字节；终端异步刷新、旧结果失效且不保存原始载荷。
+- 本切片并未实现规则/DNS 安全编辑、完整差异预览、备份恢复，T10/T23 和正式长期稳定性门槛仍未关闭。见 ADR 0078。
+
+### 2026-10-09 M4 严格编译路由/DNS 绑定预览与 CAS 暂存切片
+
+- 增加窄范围的 `config route-preview`/`config route-stage` CLI 和版本化 `/v1/config/route-edit/{context,preview,stage}` 本地 API，不允许用户在此接口上传任意运行 JSON。
+- 单次仅修改已有组的一个字段：enabled、TargetRef 或 group-role DNS profile 绑定；CN 28 组通过 pinned `cn_preset.overrides` 表达；地区自动追加组、FINAL DNS、分流层/顺序、规则匹配及 DNS 服务器配置不可越权修改。
+- 预览基于权威当前声明和 CurrentSelected 状态生成候选，复用严格真实编译器和已有规则资源 resolver，返回候选声明与编译原生配置 SHA-256、可显示的变更摘要，`compiler_validated=true`、`core_validated=false`、`staged=false`、`applied=false`。
+- 确认时必须复验双 digest、声明修订/哈希、配置修订、应用代际、CurrentSelected revision，再原子提交一个新的声明修订。操作门闩序列化应用/选择切换，SQLite CAS 同时防止旧客户端覆盖；409 不写入，502/超时后回读而不盲目重试。
+- CLI 回执文件独占创建，`0600` 权限，stage 拒绝 symlink 和非私有/非本人普通文件。运行中 core、DNS 路径、五层顺序和订阅/ISP 排除策略均不受本次暂存直接改变。完整 TUI 编辑、显式代际应用/回滚、T10/T23 和长期稳定验收尚未关闭。见 ADR 0079。
+
+
+### 2026-10-09 M4 当前声明显式应用的校验回执切片
+
+- 新增 `GET /v1/config/apply/preview`：在 daemon OperationGate 中读取未应用的**当前声明头**，核对声明 SHA 与配置修订、已应用代际、CurrentSelected 修订，重新严格编译并返回无敏感内容的原生 SHA-256/规则资源统计；不进行真实 core check 或运行态变更。
+- 新增 `POST /v1/config/apply/confirm`：接收预览签认的固定标识与原生哈希，在同一 Gate 内复验、重新编译，调用既有原子代际应用协调器完成 `check -> activate -> verify -> commit`，失败交由既有 journal/rollback/recovery。冲突回执不得再应用；超时/断链不盲重试。
+- CLI 提供 `config apply-preview [--out=0600_FILE]`、`config apply --receipt=PRIVATE_FILE --confirm`，拒绝 symlink、非私有/非本人文件、失效摘要或缺少明确确认；成功后校验代际与配置修订回读。应用可能替换 core 并影响连接，不因预览或 TUI 页面切换而自动发生。
+- 当前仅是 **CLI 当前头版本应用闭环**，不能宣称 TUI 版本回滚、历史代际主动恢复、一致性备份或 M4 完成。五层路由/CN 预置/订阅 ISP 排除、Linux 普通用户和无 TUN 不变。详见 ADR 0082。
+
+
+### 2026-10-09 M4 Dashboard 受保护应用交互切片
+
+- Dashboard (TUI 页面 `1`) 增加 `a` 编译预览当前**未应用**的声明；按用户明确 `y` 才请求应用，`Esc` 放弃；预览只读取验证过的声明摘要、已应用代际、选择修订与资源计数，`core_validated=false`，无写入。
+- 确认界面必须完整显示声明/配置修订、声明 SHA 与原生配置 SHA 摘要、已应用代际、CurrentSelected 修订、内核可能重启及连接中断警告；终端小于 64×16 或缩小到不满足尺寸时禁止确认，过期/跨页预览失效。
+- 调用已有 `/v1/config/apply/confirm` 受保护 API，单次、限时、异步，不在 Bubble Tea `Update/View` 中阻塞；写入后对响应和状态回读执行同一代际/修订核验，失败或超时标记不确定且不自动重试。运行中禁止第二次请求；TUI 退出不停止 daemon/core，已被 daemon 接收的应用仍可能完成。
+- 此切片**不提供手动历史代际回滚或备份恢复**。现有应用 journal 的自动失败回滚保留；真正的恢复目标选择、旧配置的完整原生资源闭包、T10 DNS 实际路径验证与长期稳定门槛仍待完成。详见 ADR 0083。
+
+
+### 2026-10-09 M4 已确认历史代际只读完整性审计切片
+
+- SQLite 按成功 `committed` 的 journal + archived history 生成有界（最多 12 条）去重代际目录，记录已持久化修订号与 payload 是否被 retention 清理，绝不把 prepared/rolled_back/failed 候选当作可恢复配置。
+- 新增 `GET /v1/config/recovery/audit` 和 `config recovery-audit` 只读入口：逐代际复核原生配置、manifest、source-map 的 SHA-256 与 JSON、原生 schema、声明 revision/hash 及声明本体，并对 manifest 指向的私有 content-addressed 规则资源复用 no-follow/owner/hash 验证；禁止将任意存储路径当作规则文件打开。
+- 返回只有脱敏状态枚举、代际、修订号及完整性布尔值；配置、DNS 上游、节点密钥、rule-set 路径或原始错误不输出。状态与声明在采集前后变化则 409 拒绝拼接快照；资源已经清理或损坏时标记不可用，不悄悄回退为直连。
+- **所有 `restore_ready=false`，`restore_supported=false`**：哈希验证仅说明存储内容与规则文件在该时刻可核查，并不代表该历史配置现在可应用。手动历史代际回滚必须先补齐 CurrentSelected/运行路由策略绑定、规则资源闭包的应用时再校验、可恢复代际 CAS、内核严格检查/事务激活与故障注入测试，不能绕过保护直接复用历史 native JSON。见 ADR 0084。
+
+
+### 2026-10-09 M4 历史代际严格编译与内核 Check（无激活）切片
+
+- 在 ADR 0084/0085 的只读历史审计和 ADR 0086 的 SQLite 原子候选准备基础上，新增仅供 daemon 内部调用的 `CheckHistoricalGeneration`。不注册 HTTP、CLI、TUI 或能力开关，不允许终端直接触发历史配置替换。
+- 在与 core 生命周期和配置应用共享的 OperationGate 内，先核查成功提交的历史代际和当前应用/LKG 资源闭包、CurrentSelected、routing mode 与目标状态；旧声明必须由**当前编译器及控制面参数**重新编译，要求原生 JSON、manifest、source-map 和历史存档逐字节一致。
+- 单个 SQLite CAS 事务将历史代际复制为新候选，使用现有 journal/配额/崩溃恢复机制；只调用 core.Check，不进入 activate/verify/commit。检查后即使连接取消或 core.Check 失败，也以独立清理超时回收 prepared 活动槽，检测变更/回收失败时报错；成功回执永远不表示可恢复。
+- 自动失败回滚及配置生效路径不变。**仍然未开放手动历史代际恢复**，`restore_supported=false`、所有 `restore_ready=false`。后续必须完成真实资源 inode/lease 固定、核验与激活间的隔离、可验证的双层回滚、操作回执、T15/T23 断点故障注入和实际流量健康验证；此切片不等同于 M4 完成。详见 ADR 0087。
+
+
+### 2026-10-09 M4 历史恢复规则资源 inode 钉住检查切片
+
+- 在仅 daemon 内部执行、无激活的历史代际 core Check（ADR 0087）中，针对目标代际与已应用/LKG 回退代际，建立去重且受文件数/累计字节预算约束的源/二进制规则集文件句柄。
+- 打开时坚持 content-addressed 私有根目录、Linux no-follow、普通文件、属主、权限及 SHA-256；Check 前后在**同一打开文件描述符**上核查哈希、大小、权限及路径是否仍指向原 inode，拒绝“同内容新 inode 替换”。
+- 同时对历史目标、当前应用及 LKG 在 SQLite 中的原生 JSON、manifest、source-map 的内容与 SHA-256 作前后快照对比，拒绝检查过程中的回退代际元数据变化，并确保检查结束撤销 prepared 活动 journal。
+- 此改进仍只是进程内检测：无法凭文件描述符阻止路径短暂替换再还原（ABA），不代表已经获得真实激活期间的资源租约，更不支持手动恢复。下一步仍需隔离恢复资源、核验与激活之间的状态/权限锁、双层回滚故障注入及一致备份；M4/T15/T23 未验收。详见 ADR 0088。
+
+
+### 2026-10-09 M4 历史配置 Check 候选空间回收切片
+
+- 在 ADR 0086–0088 的内部安全检查基础上，修复重复检查可造成 SQLite `generations` 已失败候选积累、耗尽保留预算的问题；禁止以宽泛的历史清理来换取恢复检查空间。
+- 检查成功、失败或取消时，先使用独立超时将 prepared journal 标记为明确的未激活检查失败，再在**单个 SQLite 事务**内验证恢复来源、专用标记、无活动状态、无 recovery_required、无其他 journal/history 引用、不属于 applied/LKG，归档失败记录后仅删除这一失败候选的存储 payload。清理出错仍是硬失败，不会激活 core。
+- 测试覆盖重复检查、配额紧张、历史 tombstone 保留、普通失败应用/回滚失败/中断恢复和其他代际引用均不可误删，防止因只读兼容检查影响长期运行正常配置写入。进程在清理前崩溃时依赖既有 recovery/retention 清理遗留候选。
+- **仍不开放手动恢复或备份恢复**；继续优先实现隔离的不可变运行规则文件快照、跨重启租约、故障注入验证的双层回滚。M4/T15/T23 及长时间稳定性门槛尚未关闭。详见 ADR 0089。
+
+
+### 2026-10-10 M4 隔离规则资源快照（仅历史兼容检查）
+
+- 在 ADR 0088 的规则文件句柄钉住、ADR 0089 的检查候选回收基础上，新建只供 daemon 内部调用的隔离副本构建器 `coreartifact.StagePinnedRuleSetSnapshot`：对历史目标、当前已应用和 LKG 的规则文件闭包去重，限定 128 个文件、128 MiB 总量以及单个 64 MiB 上限。
+- 从此前已校验并保持打开的文件描述符复制，**不是硬链接**：复制前后重查来源 inode 与哈希；以私有随机目录、独占新文件、`0400` 权限、文件及目录 fsync 形成检查期临时副本。内核 Check 前后核对副本和来源，检测路径替换、内容和权限变化；成功/失败/取消均定向清理并拒绝清理未知文件或被替换目录。
+- 完整隔离运行配置尚未实现：当前内核 `Check` 的原生配置仍引用原始 content-addressed 路径，隔离副本目前**只用于验证可物化的资源闭包**，不能作为激活许可证。进程崩溃可留下临时目录，未来需完成带跨进程互斥和磁盘预算的孤儿回收，隔离副本的原生路径重绑定及恢复目标/回退链跨重启租约。
+- 无手动恢复 HTTP/CLI/TUI，无核心激活；`restore_supported=false`、所有 `restore_ready=false`，T15/T23/M4 未验收。参见 ADR 0090。
+
+
+### 2026-10-10 M4 跨进程快照锁与崩溃遗留目录安全回收
+
+- 对 ADR 0090 的临时规则文件副本，持有基于 Linux 目录文件描述符的独占 `flock` 直到 `core.Check` 完成并清理结束；回收仅对成功取得非阻塞独占锁的遗留 scope 动手，仍处于其它进程使用中的目录一律跳过。创建新 scope 与回收扫描还使用短时、支持 context 超时的**父目录锁**，防止新建和加锁之间的短暂窗口被误回收。
+- 回收严格限制：每批最多 32 个 scope；单个 scope 最多 128 个普通文件、128 MiB 总量、单文件 64 MiB；仅接受 `.check-` 随机目录及小写 SHA-256 `.json/.srs` 文件名、当前 UID 所有、私有 `0400/0600` 权限、独立 inode。使用锁定目录 fd 相对 `unlinkat` 和父目录 fsync，拒绝符号链接、未知额外文件、不安全权限/硬链接，绝不递归清空。进程崩溃留下的部分拷贝可按同一规则回收。
+- 仅在下一次**内部历史配置兼容检查**准备新快照前机会式扫描；不影响已运行 core，不要求停止代理，不建立公共清理 API。历史 native JSON 仍未绑定副本路径，手动恢复仍关闭；剩余跨重启资源租约、备份恢复、故障注入与 T15/T23/M4 验收均未完成。详见 ADR 0091。
+
+
+### 2026-10-10 M4 隔离原生配置规则路径重绑定及内核 Check（仍无激活）
+
+- 在 ADR 0090/0091 的目标/应用/LKG 私有规则副本及跨进程快照锁基础上，新增**只在内部历史兼容 Check 使用**的规则路径重绑定：先以当前编译器严格重编历史声明并验证原始 JSON/manifest/source-map 与 SQLite 哈希完全一致，再仅按 manifest 一一核对 native `route.rule_set` 的 local tag/format/原始 path，将 `path` 改成已独立复制并锁定的私有文件。DNS、outbound、分流规则、选择器及控制密钥不改，历史代际原始字节/哈希/manifest 不写回。
+- 为重绑定后的原生 JSON 单独计算 SHA-256，将最多**一份**检查配置独占创建到同一私有快照目录，以 `0400` 权限、文件和目录 fsync 及 inode/哈希复核管理；其文件数量和字节数计入原有单 scope 配额和崩溃孤儿清理。存在规则集时内核必须实现 `CheckIsolated`，否则安全拒绝；原有 ManagedCore 先验证**原始** SQLite 代际，直接对临时路径调用 core Check，不执行正常 `Stage/Bind/Activate/Verify`，不更新 applied/LKG/journal 中已确认的代际。空规则闭包保留原严格 Check。
+- 检查前后再次验证固定资源、临时 native 文件以及 SQLite/CAS 状态；退出时只删除锁定 scope 和失败的临时候选。新增原生字节不变性、路径精准替换、错误格式/Tag/SHA、缺失内核适配器、临时文件篡改与无激活回归测试。
+- **仍不允许手动历史恢复或备份恢复**：临时文件不持久化为可跨重启激活的资源租约，二次回滚及 T15/T23 断点故障注入尚未完成。保留 `restore_supported=false` 与所有 `restore_ready=false`。详见 ADR 0092。
+
+### 2026-10-13 M4 内部快照清单独立严格校验
+
+- 为 ADR 0096/0097 的 v1/v2 内部清单增加 `ParseInertInventory`：要求调用方提供精确 SHA-256，拒绝不规范 JSON、重复/未知字段、版本不匹配、伪造的 `restore_ready=true`、重复/乱序代际、非法规则相对路径、单文件/总容量越界及非锁定内核身份。
+- `Closure.Verify` 进一步核对 SQLite 快照实际哈希/大小与清单，并逐项比对已打开规则句柄的来源哈希、格式、相对文件名和长度；拒绝仅修改内存结构而未更新清单序列化数据的情况。
+- 校验是 **内部、无副作用的元数据闸门**：调用方提供的 digest 不是签名，不验证外部文件持有权，不是恢复授权。依旧无备份导出、恢复、HTTP/CLI/TUI 写入口；`restore_ready=false`。T15/T23、持久归档加密与跨进程恢复仍待完成，保持 Linux 无 TUN、CN 28 组、五层分流且不引入订阅/ISP 路由。
+
+### 2026-10-13 M4 内部加密一致性归档切片
+
+- ADR 0099：在已有 SQLite WAL 快照、规则资源副本、批准内核副本与 v1/v2 严格清单之上，增加**仅内部调用**的限额 AES-CTR + Encrypt-then-MAC(HMAC-SHA-256) 对称加密归档写入与无解包只读验签/哈希校验；密钥由内部调用方提供 32 字节高熵随机值，尚无密钥托管、口令 KDF 或自动化。
+- 输出必须在已有私有 0700 目录、私有 0600 文件、原子无覆盖发布；复核数据库、规则及内核长度和 SHA-256；拒绝错误密钥、损坏、截断、尾随数据、符号链接、已存在目标和取消操作。真实批准内核 v2 归档列入集成测试。
+- **仍不是正式可恢复的备份格式**：不提供 CLI/HTTP/TUI、导入/恢复、持久密钥、跨重启文件租约、归档孤儿回收、签名/密钥轮换或双层回滚；`restore_ready=false` 保持。初步磁盘剩余空间检查不等于预留配额，T15/T23/M4/M5 仍未验收。
+
+### 2026-10-13 M4 加密归档临时文件安全回收与保留预算
+
+- ADR 0100：加密归档新写入器只创建 `.ktui-sealed-v2-*` 临时密文，Linux 父目录 `flock` 串行化创建和扫描，写入期间用独立文件 `flock` 保持从加密到原子发布完成的持有关系。崩溃后仅清理确认为无锁、同 UID、0600、单硬链接、大小受限的 v2 临时密文，目录 fsync；对旧版未租赁文件、额外条目、符号链接或已发布硬链接歧义拒绝清理。
+- 完整 `.ktbackup` 文件只计数不删除：最多 8 份完成项、32 个临时项和对应累计密文字节预算；达到上限时拒绝创建新备份，由未来显式运维策略处理；无后台自动轮转，`InspectSealedArchiveRetention` 只是内部脱敏计数。跨进程活跃写入和 SIGKILL 回收纳入测试。
+- 此阶段不执行解包、恢复、密钥托管、强制清理、备份轮转或历史代际激活；`restore_ready=false`、`restore_supported=false` 保持，T15/T23 与 M4/M5 发布门槛仍待验收。
+
+- 并发归档容量保护：加密中的每个 v2 临时文件提前占用一份最终归档名额与最坏情况字节预算；在父目录锁内检查预留值，杜绝多个写入同时超额发布。中断后的名额仅在可信的安全回收后释放。
+
+### 2026-10-13 M4 加密归档恢复前只读预检
+
+- ADR 0101：新增内部 `PreflightInertArchive`，在全量加密/HMAC 认证、包含的数据库/规则/批准内核资源 SHA-256 验证后，再次遍历完整密文并确认不变，才解析小型规范化清单并返回脱敏的版本/架构兼容判断。无内核 v1、与当前 Linux 架构不符的 v2 均明确标记限制；即使是架构匹配的 v2，`TargetMetadataCompatible` 也仅代表元数据层符合当前锁定内核，绝不授予恢复资格。
+- 可选输入是仍处于 inode/哈希验证有效期的当前快照闭包：前后验证原有闭包，代际按配置/manifest/source-map 哈希与声明修订号统计摘要差异，不把数据库自增 ID 当成跨库同一代际；规则集只按已验证内容哈希比较，不展示私有源路径、订阅/token 和节点配置；独立离线预检可省略当前闭包。
+- **保持阻断**：无恢复前 SQLite 关系型独立检查、资源在实际激活时的持久租约、CAS 恢复/双层回滚与故障注入；`RestoreSupported=false`、`RestoreReady=false`，没有 HTTP/CLI/TUI 恢复入口。T15/T23 和 M4/M5 仍未验收。
+
+### 2026-10-13 M4 已认证归档的独立 SQLite 逻辑完整性预检
+
+- ADR 0102：在前一阶段密文 HMAC、资源 SHA-256 和整档复读绑定成功后，再第三次遍历密文核对整档哈希，并仅在内存解密 SQLite 记录，经 `modernc.org/sqlite` 已固定驱动的 `Deserialize` 进入独立 `:memory:` 只读连接；不落盘明文 SQLite，不触碰当前数据库或活动代理。
+- 严格 `PRAGMA integrity_check`、`foreign_key_check`、17 条完整迁移记录、声明修订/父子关系与文档 SHA、数据库单例状态；复用编译器强验证检查全部保留代际的配置/manifest/source-map、声明引用、原生 local 规则路径，并与已认证的归档规则闭包逐项比对。报告只增加 `SQLiteLogicalVerified` 与 `DeclarationCount`，不输出私密明文、SQL 错误或原始路径。
+- 内存预算先限 **64 MiB SQLite 载荷**（与现有 768 MiB 加密运输预算不同）：超限一律拒绝预检，不进行大内存反序列化。经过重新签封且 MAC/资源摘要均正确、但声明/代际/schema/FK 不一致的归档也必须拒绝。
+- **仍未完成**：完整 DDL / 未引用领域表的语义鉴定、跨版本数据迁移、大库分块验证、真实资源跨重启租约、隔离恢复、CAS 应用与二次回滚。所有 `RestoreSupported=false`、`RestoreReady=false`，没有 HTTP/CLI/TUI 恢复入口；T15/T23/M4/M5 保持开放。
+
+### 2026-10-13 M4 加密归档 Schema 精确校验与订阅节点领域审计
+
+- ADR 0103：在完整加密 HMAC、资源摘要、三遍整档绑定与内存 SQLite `integrity_check` / FK 检验之后，用另一个**独立内存数据库**按当前 `storage.Store.migrate` 原始代码建立 17 版标准 schema，并与归档 `sqlite_schema` 全部表、索引、内部自动索引及触发器目录精确比较（128 对象 / 1 MiB DDL 上限）；禁止伪造 `schema_migrations` 但篡改表、索引或触发器通过。
+- 对最多 4096 个 Profile 快照及 65536 个节点，校验快照来源、节点 ID / 原始键、连续序号、1 MiB 单节点 JSON 与 SHA-256、64 MiB 单快照载荷，以及 current/previous 快照是否属于对应 profile；最多 2048 个订阅源和 65536 个节点覆盖使用现有 `scanProfileSource` / `scanProfileNodeOverlay` 规范校验，补充选择意图 JSON 与时间戳验证。
+- 返回摘要只含 `SchemaCatalogVerified`、Profile / 节点 / 订阅源 / 覆盖数量；不暴露订阅链接、节点配置或错误原文。通过重新加密认证的异常结构及异常节点数据必须在逻辑审计阶段拒绝，且不写任何明文数据库或修改当前运行配置。
+- 该审计**不授予恢复资格**：暂不处理超过 64 MiB 的 SQLite 内存预检、跨版本迁移、持久候选隔离租约、完整应用日志语义及 CAS / 二层失败回滚。保留 `RestoreSupported=false`、`RestoreReady=false` 和全部 T15/T23/M4/M5 发布阻断。
+
+### 2026-10-13 M4 持久密文恢复候选与跨进程独占领用（无恢复权限）
+
+- ADR 0104：在已有 v1/v2 归档完整认证、内存 SQLite/schema/profile 审计通过后，新增内部 `StageInertRestoreCandidate`：在单独存在的当前 UID 私有 0700 目录内，最多保留 8 个 `.ktui-restore-v1-*` 候选 scope，每个只允许一份已认证的 0600 密文 `candidate.ktbackup`；对原始归档和隔离复制后的归档分别完整预检，前后核对字节大小与 SHA-256，fsync，不产生明文数据库或规则/内核文件。
+- Linux 父目录 `flock` 负责候选创建与领用串行化，单个候选目录持有独占 `flock`；`Close` 或 SIGKILL 只释放本进程租约，**不会删除持久密文**。重启后必须调用内部 `ReopenInertRestoreCandidate`、显式再提供密钥并完成 HMAC、资源哈希、SQLite/schema/profile 全链重新认证才能重新领用。有效候选可内部 `Verify`，仅可经明确 `Discard` 对持锁的一份已知密文进行无递归清理。未知额外文件、符号链接、硬链接歧义、异常私有权限或满额均失败关闭，绝无自动清理或恢复。
+- **边界**：目录锁并非跨进程死亡仍存在的持久资源租约，不证明恢复权限；没有任何数据库导入/迁移、候选自动枚举、密钥持久化、API/TUI/CLI、CAS 应用、二次回滚、T15/T23 注入；`RestoreSupported=false`、`RestoreReady=false` 不变。CN 28 组、五层分流、Linux 无 TUN、不加入订阅/ISP 分流的产品约束维持。
+
+### 2026-10-13 M4 只读恢复 CAS 围栏与阶段故障注入
+
+- ADR 0105：新增 `storage.ReadInertRestoreFence`，在单个 SQLite 只读事务中绑定已生效/LKG 代际、配置 revision、声明 revision/SHA、CurrentSelected revision/内容 SHA、路由模式、PrivateDirect、core desired 状态，重新哈希已生效及 LKG 的配置/manifest/source-map 与声明本体；活动 apply 或 `recovery_required` 直接失败关闭，不产生 prepared journal。
+- 新增 `backupclosure.InspectInertRestoreDryRun` / `RecheckInertRestoreDryRun`：要求 ADR 0104 仍持有锁定的加密候选，先取 live 围栏，执行两次完整密文及内存 SQLite/schema/profile 认证，最后重新取一个事务性围栏逐字段比较；报告只含脱敏代际/SHA 与只读认证结果，并始终 `RestoreSupported=false`、`RestoreReady=false`。重复检查拒绝已过期或伪造的 caller 回执。
+- 测试在初始围栏后和两次归档认证之间定点注入声明/选择变更、加密文件篡改、错误与取消，验证无恢复事务、无代际应用、无明文解包；真实锁定 Linux core 的 v2 候选加入仅只读恢复围栏集成测试。
+- **不等于 CAS 写事务**：最终读完成后仍可能发生新变更；尚无实际隔离导入、配置原子替换、内核激活、二层回滚、持久资源租约或 T15/T23 掉电故障注入。正式恢复及任何 API/TUI/CLI 恢复入口保持关闭，M4/M5 发布门槛未关闭。
+
+### 2026-10-13 M4 仅回滚的 SQLite 写意图 CAS 与恢复前阶段故障注入
+
+- ADR 0106：在 ADR 0105 脱敏围栏基础上，新增 `storage.CheckInertRestoreWriteCAS`：短时 SQLite 写事务中，使用带配置 revision、applied/LKG、声明 revision/SHA、CurrentSelected revision、core desired、routing mode、private_direct、无活动 journal 和无 recovery_required 的条件 `UPDATE` 获得单写入者保留位；**不改变字段值**。在同一事务内重新校验全部代际、声明及选择 JSON 的 SHA-256，并且必须成功 `ROLLBACK` 才认可本次校验。不能将该检查结果作为未来提交许可，亦不会调用 core、写入导入数据或产生新的 prepared 日志。
+- 新增 `backupclosure.CheckInertRestoreWriteBoundary`：先重新验证持锁密文候选和原有只读回执，再执行上述带写锁的最后一层 CAS。任何状态漂移或伪造回执均失败关闭；全部 `RestoreSupported=false`、`RestoreReady=false`。这层没有 HTTP/CLI/TUI 接口。
+- 新增进程内/跨进程测试：CAS 前修改声明、选择/JSON 内容、路由/核心状态；持锁期间另一 SQLite 连接不能提交真实选择变更；注入错误、取消和 SIGKILL 后写锁释放、未提交变更回滚、正常选择写入继续；真实批准 sing-box 的加密 v2 候选纳入新边界集成测试。
+- **待办**：写意图 CAS 只证明被查询的一瞬间，`ROLLBACK` 后不持有任何租约；真正的原子恢复准备需要将 CAS 与导入资源/ journal 在**同一提交事务**完成、独立隔离解包、持久 inode/资源租约、内核 Check/切换、二次回滚与全边界掉电测试。T15/T23/M4/M5 和正式恢复入口仍未放行。
+
+### 2026-10-13 M4 持久恢复准备日志、Schema v18 与崩溃恢复识别（不允许恢复）
+
+- ADR 0107：Schema 从 v17 事务化升级到 **v18**，仅新增 `inert_restore_preparations` 独立表，不复用有实际生效语义的 `apply_journal`。日志只能在 `prepared` / `abandoned` 两个**不可激活**状态之间按显式操作转换；最多 32 条存量记录、同一时刻最多 1 条 pending。每条只保留私有加密候选目录名、密文/清单哈希和字节数、脱敏配置 CAS 围栏的规范化 JSON + SHA、时间与阶段；绝不存凭据、密钥、恢复出的 SQLite 或 core。
+- 同一个 SQLite 写事务中依次执行 ADR 0106 原子 CAS、复核配额与唯一 pending、插入仅内部准备记录，再提交；故障、取消、CAS 版本竞争与 SQL 冲突必须整笔回滚，不能产生实际应用代际、切换运行核心或影响现有 LKG。加密候选仍需持锁和全量 HMAC/数据库/规则/schema/profile 预检才能调用准备。
+- 重启后 `InspectInertRestoreRecords` 只作有界只读目录；所有 pending 行强制 `RequiresRevalidation=true`，旧 `flock` 失效，下一进程必须重新提供密钥、获取独占候选锁、复核数据库围栏和完整密文后才可只读确认。`AbandonInertRestoreRecord` 仅显式关闭日志，不自动删除密文；目录加密文件回收仍按 ADR 0104 的单独锁定清理接口。
+- 兼容性：现有 v17 加密归档仍可在独立 v17 `:memory:` schema 下严格只读鉴定，新归档使用 v18；v18 密文内若包含未完成 pending 恢复准备日志则拒绝预检，不得通过备份传播陈旧“可恢复”指针。v18 不能用旧 v17 可执行文件直接回退打开主数据库。
+- 增加 SIGKILL-before-commit、SIGKILL-after-commit、错误与取消、重复 slot、存储伪造、跨重启重新认证和真实批准内核候选的无激活测试。**T15/T23、真实恢复/双层回滚、跨重启可执行资源持久租约与 M4/M5 门槛仍未满足；`RestoreSupported=false`、`RestoreReady=false`。**
+
+### 2026-10-14 M4 记录绑定的密文资源独占租约与重启重新认证（ADR 0108）
+
+- 保持 SQLite Schema **v18**，新增内部 `storage.CheckInertRestoreRecordCAS`：在一个带 SQLite 单写入者保留位的短事务中同时完整比较 current/LKG/声明/选择的 SHA 与指定 `prepared` 日志的 ID、密文 SHA、inventory SHA、候选 scope、字节数、规范化围栏和时间戳；最后**必须 ROLLBACK**，不会创建恢复应用记录、修改配置或改变运行 core。原有 `RevalidateInertRestoreCandidateRecord` 的最后状态比对改用此原子只读目的的写事务。
+- 新增 `AcquireInertRestoreResourceLease` / `InertRestoreResourceLease.Revalidate` / `Close`：调用方显式指定日志 ID、已有的私有候选父目录与原始 32 字节密钥。必须先检查有界 v18 pending 日志、重新领取目录独占 `flock`、重新认证密文/清单/内存 SQLite/schema/profile、绑定该次存活租约的加密文件 inode，然后复核 SQLite 日志与当前配置。在同一租约期间，即使替换成**字节完全相同**但 inode 不同的密文也拒绝；Close/SIGKILL 仅释放锁，不删除密文和日志。
+- 新增并发 journal 修改、状态漂移、错误与取消、未知文件、相同密文不同 inode、跨进程 SIGKILL 后重新领用及真实已批准 sing-box v2 的不激活测试。日志放弃与文件删除仍为独立显式操作，不在失败时自动清理。
+- **边界**：磁盘持久的是日志与密文，Linux 的 `flock` 不跨进程死亡持久化；不能把本阶段称为生产级持久核心/规则资源租约，也不能将只读重新认证结果用于恢复提交。尚需真实隔离导入、同事务正式 CAS 应用、持久资源 pin、Check/Activate/Verify、双重回滚及 T15/T23 故障注入。仍无恢复 CLI/TUI/API，`RestoreSupported=false` 与 `RestoreReady=false` 不变。
+
+### 2026-10-14 M4 记录绑定的匿名资源试装载（ADR 0110）
+
+- 在 ADR 0108 已验证的、持锁密文恢复候选之上，新增仅内部调用的 `InertRestoreResourceLease.ProbeAnonymousResources`：全操作保持当前进程 ciphertext scope 的独占 `flock` 与对象互斥；开始与结束均重做完整密文/内存 SQLite/schema/profile 鉴定与 SQLite 记录/已应用及 LKG/声明/选择 CAS。
+- 调用方必须提供独立、已存在、当前 UID 所属的私有 0700 scratch 目录；只通过经 `O_NOFOLLOW` 验证的目录 FD 和 `O_TMPFILE|O_CLOEXEC` 逐个试装载规则集与已批准内核资源。每个暂存 inode 必须无名字、硬链接数为 0、0400 不可执行、长度与 SHA-256 复核、成功/失败均即时关闭；绝不生成带路径的明文资源、内核可执行文件或落盘 SQLite。Linux 文件系统不支持 `O_TMPFILE` 则失败关闭，无降级为普通临时文件。
+- 逐项拷贝仍需通过末尾整档 HMAC/SHA 核对，拒绝密钥错误、密文被替换、journal 或 live CAS 漂移、scratch 目录被替换及取消；返回仅脱敏的资源数量/字节/摘要，绝不返回文件描述符或原始数据。增加并发 Close/资源试装载序列化、无可见明文、脏内容与错误注入测试，以及真实批准 core 的非激活试装载集成。
+- **边界**：O_TMPFILE 没有文件名，不等于磁盘取证级清除或加密临时块；其内容可能短暂留在文件系统页缓存中，故只处理规则和 Core，不解包包含订阅凭据的 SQLite。正式导入、可移植路径重绑定、跨重启永久资源 pin、同事务恢复写 CAS、core Check/Activate/Verify 与双回滚/断电注入仍缺；无备份恢复 CLI/TUI/API，`restore_supported=false`、`restore_ready=false`。T15/T23/M4/M5 门槛继续开放。
+
+### 2026-10-14 M4 内存隔离的跨状态目录路径重绑定预演（ADR 0111）
+
+- 为已完整验证、持有 ADR 0108 journal-bound 密文 lease 的内部恢复候选新增 `PreviewPortableRulePaths`：同步、单租约操作，开始/结束均重新核对密文完整认证、候选 inode、v18 准备日志与 Applied/LKG/声明/选择的完整 CAS；中途始终保持 Linux 目录 `flock`。
+- 仅将经 HMAC/SHA 认证且 SQLite/schema/profile 审计通过的 **≤64 MiB** SQLite 数据库反序列化到独立 `:memory:`；再通过只读 SQL 连接遍历 ≤32 个保留配置代际，严格核对原始 compiler manifest、native config、SHA、原始本地 `route.rule_set` tag/format/path 和加密归档规则集清单。
+- 对 caller 提供的、仅用于预演的规范化 Linux 目标状态目录，逐条计算 `<root>/core/rule-sets/sha256/<digest>.json|.srs` 路径；只修改内存中的本地 rule_set path，重验 Tag/format/path，并计算整体重绑定 SHA-256。返回的只有摘要和有界计数，不返回 JSON、敏感节点、源绝对路径、解密数据库或文件描述符；不触碰当前状态目录，源路径一致时保留原始 config SHA 不做更改。
+- 补充同一目标可重复确定性、不同目标摘要区分、原目录 no-op、混合历史无规则代际、错误目标路径/密钥/manifest、修改中的选择和恢复 journal、候选 inode 同内容替换与并发 Close 检查；真实批准 Core v2 加密归档也进入不执行的预演测试。
+- **尚未实现真正的迁移**：目标文件系统所有权、无符号链接与磁盘预算只是未来恢复阶段的强制条件，当前预演绝不 stat/open/create 目标路径。没有可持久化的明文规则/Core pin、数据库导入、同事务应用写 CAS、内核 Check/Activate/Verify 或双重回滚。继续关闭 CLI/TUI/API 恢复入口，`restore_ready=false` 与 `restore_supported=false`，T15/T23/M4/M5 验收仍开放；保持 CN 28 组、五层分流、无 TUN 和去除订阅/ISP 分流。
+
+### 2026-10-14 M4 目标规则目录的只读描述符验证（ADR 0112）
+
+- 在已认证密文候选的 ADR 0108 独占锁和完整 journal/live CAS 约束下，新增 **仅内部** `InspectPortableTargetRuleTree`：现存 Linux 目标 state root 与 `core/rule-sets/sha256` 目录逐级使用 `openat(O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)` 验证路径真实身份，禁止通过符号链接进入路径，要求目标根与规则目录的 UID 为当前用户、权限 0700、目录 inode 未变化；禁止目标位于持久密文候选目录树中。
+- 对认证清单声明的每个 `sha256/<digest>.json|.srs` 文件：缺失只能计数，不创建、不修复；已存在的文件必须是当前 UID 私有 0400/0600、不可执行、单硬链接、准确字节数及 SHA-256。文件以父目录 FD 为基准 `O_NOFOLLOW` 打开并核对 inode，扫描结束再次验证全部文件是否缺失/存在及 inode/数据身份；目录也重复验证，最终再次执行 journal/live CAS。
+- 返回只含脱敏数量、已验证字节数和归档/目标路径指纹的只读报告；不会写入现有或目标 SQLite、规则/Core 文件或任何申请恢复任务。新增同内容 inode 替换、晚到文件、目录替换、权限/链接、密文密钥、CAS 漂移、跨 goroutine Close 等测试，并在真实批准 Core 集成中验证只读扫描。
+- **仍未实现持久恢复**：返回时目标目录 FD 已关闭，检查结果不能抵御此后同 UID 修改或代替真实写事务；下一阶段仍需受限权限下的持久资源物化、目标运行时配置重新编译、隔离 SQLite schema migration、同事务 CAS、Core Check/Activate/Verify、双回滚以及 T15/T23 故障注入。恢复入口保持禁用；CN 28 组、五层分流、无 TUN 和无订阅/ISP 分流约束不变；保持 PR #1 Draft。
+
+### 2026-10-14 M4 可撤销的进程内匿名资源描述符租约（ADR 0113）
+
+- 将 ADR 0110 的规则/Core 一次性匿名试装载扩展为仅内部的 `PinAnonymousRestoreResources`：原 journal-bound 加密恢复候选持锁，完整复核密文 HMAC/SHA、归档内存 SQLite/schema/profile、v18 恢复日志和当前 Applied/LKG/声明/选择 CAS 后，通过同一个受认证数据流向独立 `O_TMPFILE` 逐个复制规则及可选批准 Core。资源保持原有数量、大小和磁盘预算；每个 FD 都必须为当前 UID、`nlink=0`、0400 不可执行、字节数与 SHA-256 匹配、fsync 后读回再校验。
+- 本轮返回的是进程内私有、受互斥保护的资源租约对象（不导出路径或 FD）。`Revalidate` 在同一对象内先后重新认证原密文及 SQLite 当前状态、scratch 目录身份和每个资源 inode/权限/内容；`Close` 关闭全部匿名 FD、幂等撤销证据且不触碰持久密文及 journal。任何阶段出错都必须关闭全部已创建的匿名资源，不会留下可见明文文件或修改运行配置。
+- 单个密文候选 lease 同时只允许持有 **一组** 匿名资源集合；显式 Close 后才释放名额，防止连续请求积累 FD 或临时磁盘空间。测试覆盖错误密钥/取消、资源篡改/可执行权限、目录 inode 交换、日志放弃/选择更改、parent Close、阶段故障清理、重复 Pin 限额和并发 Close；真实锁定的 Linux sing-box Core 只作为不可执行匿名 FD 持有、复核并立即关闭。
+- **安全限制**：匿名资源租约仅在进程存活期间有效，SIGKILL/重启不持久；不能将 `Evidence` 当作恢复许可或将匿名 FD 传给 sing-box。还没有持久资源发布/跨重启回收、目标 SQLite schema 迁移/原子写 CAS、Core Check/Activate/Verify、双重回滚、T15/T23 断电恢复和 72h/7d/30d 验收；`RestoreSupported=false` 与 `RestoreReady=false`、Draft PR #1、不合并 main 继续保持。
+
+### 2026-10-14 M4 非活动规则资源的隔离持久化与目录原子发布（ADR 0114）
+
+- 在 ADR 0113 已持有、每进程最多一组的已认证匿名规则/Core 描述符基础上，新增 **仅内部** `InertPinnedRestoreResources.StageDormantRuleBundle`：仍持有原 ciphertext/flock、v18 pending 恢复日志和 live Applied/LKG/声明/选择/Core CAS；要求独立存在、位于权威 SQLite 状态库同目录下的固定 `inert-rule-bundles` 私有 0700 父目录，拒绝任意其他私有路径（包括活跃 Core 规则树），严禁进入密文候选目录或匿名 scratch，父目录也通过独占 `flock` 串行化，并拒绝未知、待处理或超过 8 个完成的暂存 scope。
+- 为源密文 SHA-256 建立唯一、无覆盖的私有非活动 `.ktui-inert-rules-v1-<digest>` 目录。规则先在只有 0700 访问权限的 `.ktui-inert-rules-pending-*` 内，以目录 FD 为基准用 `O_CREAT|O_EXCL|O_NOFOLLOW` 复制自独立验证的匿名 FD；文件复制期 0600，SHA/大小核对后 0400 不可执行、fsync。**不复制**批准 Core 可执行文件和含订阅凭据的 SQLite；原匿名文件 `nlink=0` 不变，当前 live `core/rule-sets` 不变。
+- 对暂存目录重新打开独立 FD、核对**完全等于清单**的文件条目集合、每个文件 inode/UID/权限/单硬链接/SHA/大小、目录 inode；注入点后的变更也必须再次执行独立文件扫描、原匿名 FD 核验和完整密文/当前状态 CAS。最终只通过 Linux `renameat2(RENAME_NOREPLACE)` 一次性发布该私有目录并 fsync 目录和父目录，绝不覆盖已有同源资源目录。
+- 常规失败仅删除**已确认本次创建且 inode 未变化**的私有文件，拒绝递归删除未知内容；SIGKILL 或非合作写入导致的残余 pending scope 必须阻止后续发布并等待显式审计。rename 完成但父目录 fsync 失败时，持久结果可能不确定，报错且**不删除**可能已发布的目录。返回仅哈希与数量、`Inactive=true` 和固定的两项恢复禁用标志。
+- **仍非真正持久恢复**：完成的规则暂存包不能直接供 sing-box 使用，也不是跨重启的受信资源租约。未实现 orphan 的跨重启鉴定/安全清理、完整目标资源安装、SQLite 凭据隔离迁移与原子恢复 CAS、Core Check/Activate/Verify、双层回滚及 T15/T23 断电验证；CN 原 28 组、五层分流、无 TUN、排除订阅/ISP 分流约束不变，PR #1 保持 Draft。
+
+### 2026-10-15 — M4 ADR 0115 private dormant-bundle orphan inspection
+
+- Added internal **read-only**, size/count-bounded inspection of the dedicated `inert-rule-bundles` staging root created by ADR 0114. The report distinguishes unfinished pending directories from published-looking but **unauthenticated** directories, returns only scope-name digests, file counts/bytes and pending-journal count, and never exports rule content or absolute paths.
+- Uses the stage-parent `flock`, UID/private-mode/no-follow checks and repeat directory/entry identity scans; unknown entries, symlinks, drift, cancellation and quota overflow refuse the entire report. Added fault-injection tests and ADR 0115.
+- **Not accomplished:** no orphan deletion/adoption, no post-restart rule-byte reauthentication, no live resource publication, SQLite/credential restore or Core activation. `restore_ready` and `restore_supported` remain false. Actual restore T15/T23, long-duration soak, CN offline licensing and release gates are still open; PR #1 remains Draft.
+
+### 2026-10-15 — M4 ADR 0116 重启后的非活动规则包独立内容认证
+
+- 在 ADR 0114 的非活动规则目录原子发布及 ADR 0115 的只读遗留目录盘点之后，增加 **仅内部** `InertRestoreResourceLease.AuthenticateDormantRuleBundle`。原规则/Core 匿名 FD 与旧进程可以完全退出；新进程必须通过明确的 v18 pending 恢复日志 ID、32 字节密钥，重新独占打开加密候选，在全程持有密文 `flock` 与对象互斥的情况下重新验证整档 HMAC/SHA、内存 SQLite/schema/profile、Applied/LKG/声明/选择/Core CAS。
+- 不接受调用者指定的规则文件夹或 scope；只允许现有权威 SQLite 状态目录下的固定私有 `inert-rule-bundles`，独立持有 staging 目录 `flock`，禁止 pending、未知、超过预算、所有者或权限不合格的目录。完成目录必须以同一密文 SHA 命名，并与加密归档认证清单的 **完整文件集合** 逐个一一对应；两次独立读取 SHA-256、准确字节数、inode/硬链接/无符号链接/不可执行权限，验证后重复目录身份与 journal/live CAS。
+- 正向验证包括关闭全部原资源 pin 后重新打开 SQLite 和候选，加上隔离子进程通过认证后 SIGKILL、父进程重新取得 `flock` 并复核；错误密钥、关闭的租约、篡改/替换、未知与 pending 条目、权限错误、晚到文件、选择与恢复日志漂移、取消等场景均必须失败且不得更改 live state。
+- **能力边界**：成功报告只说明该次调用在持锁期间完整比对了字节，`RuleBytesVerified=true` 不能作为后续时刻的持久 inode pin 或正式恢复许可；始终 `Inactive=true`、`RequiresRevalidation=true`、`RestoreSupported=false`、`RestoreReady=false`。本次无删除/领养遗留目录、无当前运行规则树发布、无 SQLite/凭据迁移或 Core 激活。M4 的显式清理、正式恢复同事务 CAS、Check/Activate/Verify、双回滚、T15/T23 与 M5 的 CN 离线资源许可及 72h/7d/30d 仍是发布阻塞项；PR #1 继续 Draft。
+
+### 2026-10-15 — M4 ADR 0117 已认证非活动规则包的显式隔离退役
+
+- 在 ADR 0116 已重开加密候选、完整 HMAC/内存 SQLite/schema/profile 与 live CAS 并认证非活动私有规则目录的基础上，新增 **仅内部调用** `InertRestoreResourceLease.QuarantineDormantRuleBundle(ctx, key, expected)`。调用方须显式提交先前的 `AuthenticatedDormantRuleReport` 作为预期哈希/规则数/字节数，而非恢复或删除许可；真正提交前，仍在同一候选密文 flock + 活动状态 CAS + 私有 staging-root flock 下重新比对整档、journal 与完整文件摘要/inode/权限/单硬链接。
+- 只接受权威 SQLite state-root 下的固定 `inert-rule-bundles` 0700 目录、最多 8 个正常已发布目录，以及确切由已认证 archive SHA 命名的 `.ktui-inert-rules-v1-<digest>`。拒绝未知、pending、已退役、来源目录替换、内容变更、晚到文件、错误密钥、过期选择/恢复日志；故障必须返回空证据。
+- **本阶段的唯一实际磁盘修改是单次不可覆盖的 Linux `renameat2(RENAME_NOREPLACE)`：**把完整、未激活、私有规则包原子改名为 `.ktui-inert-rules-retired-v1-<digest>`，然后复核原名消失、新目录 inode 与全部规则内容未改变并 fsync 目录/父目录。绝不 unlink/delete、移动活动规则集、落盘凭据 SQLite、写入新配置代际或运行 Core。新名字故意不能被普通恢复审计/发布逻辑接受；物理空间未回收。
+- 注入 rename 前文件同内容 inode 替换、字节损坏、未知/待处理 scope、选择/journal CAS 漂移与取消均拒绝退役；rename 后、parent fsync 前故障会返回无成功收据且保留隔离目录待人工复查，禁止自动撤销/再次采用。另有子进程在 rename 后被 SIGKILL 的回归验证、保留规则字节与活动 Applied/LKG 完全不变；真实已锁定 Core 集成同样要求仅退役规则而不复制/执行 Core。详见 ADR 0117。
+- **尚未完成真实清理与恢复：**缺乏已退役 scope 的跨重启明确盘点、inode 精确可恢复物理删除与配额回收；更无正式资源安装、加密凭据迁移、同事务 SQLite 恢复 CAS、Core Check/Activate/Verify、双重回滚及 T15/T23。CN 离线资源许可、72h/7d/30d 长稳验证和发布门槛仍开放。无任何用户可调用的 backup/restore/cleanup 命令；`RestoreSupported=false` 与 `RestoreReady=false`，PR #1 继续 Draft。
+
+### 2026-10-15 — M4 ADR 0118 退役规则跨重启鉴定与零删除的持久回收意图
+
+- 新增 **内部只读** `InertRestoreResourceLease.InspectRetiredDormantRuleBundle`：最初规则匿名 FD 与负责退役的进程都已关闭后，调用方以明确的 v18 pending journal ID 和独立提供的 32 字节密钥重新获取持有 `flock` 的密文 lease，再重做完整 HMAC/SHA、加密归档清单与 SQLite/schema/profile 鉴定及 live Applied/LKG/声明/选择/Core CAS。
+- 专门识别私有 `inert-rule-bundles` 根中的 `.ktui-inert-rules-retired-v1-<archive-sha>`，并要求准确匹配加密认证清单的 **完整** 1–128 个规则叶子（≤128 MiB）：UID/0700 目录、0400 单硬链接常规文件、O_NOFOLLOW 描述符、大小和 SHA-256、两次新 FD 全目录扫描与源数据/CAS 双重校验。允许同时存在其他完整、格式受限的普通或退役 scope，但不接受 pending/未知/回收中的 scope。旧 ADR 0114/0115 与普通恢复入口仍拒绝退役目录；无任何路径或明文泄露。
+- 新增 **显式但仍不删除文件** `BeginRetiredDormantRuleReclaim(ctx, key, expected)`：先前认证报告只是期望哈希/数量，事务再次独立检查原密文、journal/live CAS 与全部规则 inode/内容；在锁定的 0700 根中只执行一次 `renameat2(RENAME_NOREPLACE)`，将完整的 `retired-v1` 目录转换成唯一 `reclaim-v1` 待回收命名空间，再检查 inode/规则字节完全一致并 fsync 目录与父目录。`BytesDeleted=false`、`RestoreSupported=false`、`RestoreReady=false` 永远不变；已在回收中的 scope 无法被旧发布/审计/重启认证操作默默认领。
+- 故障注入覆盖相同内容 inode 替换、篡改、未知/待处理目录、live 选择与 journal 漂移、密钥/期望证据错误、取消、关闭租约、已存在目标、rename 后/父目录 fsync 前注入失败和 Linux 子进程 SIGKILL，检验失败返回零成功凭据，仍保留所有规则字节、Applied/LKG 与日志不变。真实批准 Core 集成要求所有已认证并标记为待回收的资源仍只含规则，不能复制/启动 Core。
+- **本轮不宣称磁盘回收完成**：没有 `unlinkat`、递归删除、按时间/进程号 GC 或回收状态自动恢复；仍缺经持久化校验的逐文件删除日志、允许规则集“剩余子集”的完整认证、SIGKILL/断电后的精确恢复和物理空间回收。真正恢复还缺 SQLite/凭据隔离导入、目标规则正式安装、同事务 CAS、Core Check/Activate/Verify、双回滚、T15/T23、电源故障验证、CN 离线许可及 72h/7d/30d 长稳证据。PR #1 仍 Draft，不提供 backup/restore/cleanup CLI/TUI/API。
+
+### 2026-10-15 — M4 ADR 0119 具名 HMAC 删除计划、逐文件持久化意图与显式物理回收
+
+- 已识别上一阶段最终提交 `162f269` 的完整 CI 阻塞：常规测试与真实已锁定 Core 集成通过，但 `go test -race` 在加密恢复/SQLite 多轮故障验证中达到 Go 默认 10 分钟测试超时；日志没有显示明确数据竞争。保留完整 Race 测试内容，`make test-race` 调整为 `go test -race -timeout 30m ./...`，**不是缩减覆盖**。
+- 在 ADR 0118 的 `.ktui-inert-rules-reclaim-v1-<ciphertext-sha>` 私有、不可导入目录基础上，新增内部 `PrepareDurableRuleReclaim`：持新获得且受 v18 prepared journal 约束的密文候选 flock、私有根 flock，完整重验证归档 HMAC/SHA、SQLite/schema/profile、live Applied/LKG/声明/选择/Core CAS；通过父目录 `openat(O_NOFOLLOW)` 核对确切 1–128 个 0400、UID/单硬链接、规则 SHA/大小的完整名单。将排序后的文件名/SHA/长度/设备与 inode、目录身份、源密文/清单摘要、日志 ID 写成带独立域分隔 HMAC 的精确私有 `.ktui-reclaim-plan-v1`，原子拒绝覆盖并 fsync 文件与包含目录；该步骤完全**不删除规则**。
+- 新增内部 `InspectDurableRuleReclaim`：独立跨进程/重启重认证原密文、日志与已签名的原始完整规则清单。逐个读取私有 `.ktui-reclaim-intent-v1-<三位索引>`，检查独立 HMAC、关联计划 SHA 与确切 basename；只允许其标记已先行落盘的缺失规则，其余规则必须按原持久计划 inode/UID/0400/单硬链接、精确 SHA/字节完整存在。新旧 staging/retired/read-only 接口仍拒绝 reclaim 目录，绝不会把剩余子集重新导入运行规则树。
+- 新增仅显式单次操作 `UnlinkNextDurableReclaimRule(ctx,key,expected)`：过期结果只作乐观 CAS 期望，重新重验归档/SQLite 与私有文件全集；为一条仍在目录中的规则以 `O_EXCL|O_NOFOLLOW` 写入独立 0400 HMAC 意图，并 fsync 规则目录**之后**，再次复核 inode/大小/SHA 与 journal/live CAS 才调用一次 `unlinkat`，然后 fsync 目录并再次复核剩余规则和 live CAS。SIGKILL 如果发生在 intent fsync 与 unlink 之间，规则仍在但已有合法意图；如发生在 unlink 与目录 fsync 之间，规则可能缺失但之前已经存有签名意图。后续操作必须人工/内部显式调用，不自动重试、不递归删除、不误报完整耐久成功。
+- 测试涵盖计划二次创建拒绝、伪造/错密钥、无意图缺失、未知项/符号链接/可执行权限、选择或 journal 漂移、同内容 inode 替换、before/after unlink 故障与 Linux 子进程 SIGKILL 后重新取得新密文 lease/校验缺失子集；真实锁定 Core 集成增加计划持久化和单叶规则删除，不得影响当前 Core、SQLite 或路由配置。
+- **当前仍非完整清理或备份恢复**：回收目录和审计意图保留，`UnlinkedBytes` 是缺失原文件字节数，并非磁盘实际回收保证（原 inode 可能仍被持有）；没有最终 meta 删除/配额/自动 GC、pending 隔离残余处置，也没有真实断电验证、数据库/凭据导入、资源正式安装、同事务恢复 CAS、Core Check/Activate/Verify 和双重回滚。T15/T23、CN 离线许可、72h/7d/30d 长期验收仍开放；PR #1 保持 Draft，外部用户无 backup/restore/cleanup 功能；`RestoreReady=false` 与 `RestoreSupported=false` 不变。
+
+### 2026-10-15 — M4 ADR 0120 已回收规则的签名终态封存与跨重启审计
+
+- 上一阶段 `10a0caa` 的最新 Push/PR CI（含 30 分钟预算下的完整 Go Race 检测）、Go 测试/Vet/格式和真实 sing-box Managed Core Integration **全部通过**；无须跳过加密与 SQLite 故障回归。PR #1 仍 Draft。
+- 在 ADR 0119 的独立 HMAC 原始清单及每条规则的 `fsync` 删除意图之后，新增内部 `SealCompletedDurableReclaim(ctx,key,expected)`。要求确切所有原始 1–128 个规则文件都**已缺失**，每个缺失都有独立、签名且私有的持久意图，任何多余文件、缺失意图、旧报告、错误密钥、可执行/链接文件、live CAS 或恢复日志漂移都失败。仍以原始候选目录 `flock` → `inert-rule-bundles` 根 `flock` 的统一顺序重新验证整档密文 HMAC/SHA、原始 SQLite/schema/profile 和 live Applied/LKG/声明/选择/Core CAS。
+- 在现有 `.ktui-inert-rules-reclaim-v1-<archive-sha>` 0700 目录下，以 O_EXCL/O_NOFOLLOW、单硬链接 UID 0400、文件与目录 fsync 不可覆盖地落盘新的 `.ktui-reclaim-complete-v1`。该 JSON 由单独域分隔的 HMAC-SHA256 绑定 archive/inventory/完整 plan SHA、v18 prepared journal ID、目录 dev/inode、规则数量与已合法删除的原始字节总数。返回的完成报告不含文件路径、key、规则明文或恢复权，仅表示 `CompletionSealed=true`、`MetadataRetained=true`、`RequiresRevalidation=true`，两个 restore flags 仍为 false。
+- 新增 `InspectSealedDurableReclaim(ctx,key)` 供进程重启后显式重新获得密文 lease、反复复核整个私有目录：只允许**精确原始完整计划 + 每叶 HMAC 删除意图 + 终态 HMAC 完成凭据**，不得有任何原规则、未知条目或符号/硬链接。两轮新 FD 全量审计+inode 元数据检查、原密文/journal/live CAS 重新验证。ADR 0119 的普通 `InspectDurableRuleReclaim` / `UnlinkNextDurableReclaimRule` 遇到完成标记仍拒绝，不会再次删除。
+- 故障回归包括：仍有叶文件、缺失意图、伪造计划/字节/计数、错误 key、改变权限/符号链接、额外条目、选择/journal 漂移、提交前晚到故障、提交标记文件 fsync 后与目录 fsync 前的错误返回空凭据、专门子进程 SIGKILL 后新独立 lease 对仍可见元数据重新鉴定。真实锁定 Core 集成新增对规则全部移除后签署完成标记的检查，不能改写活动 Core、规则树、SQLite 或当前代际。
+- **仍无最终目录/元数据删除**：计划、逐规则意图和完成标记永久保留在本阶段的私有不可导入 scope。后续必须设计另行持久化、跨重启/断电可验证的终态证明或保留策略，才能物理移除这些唯一审计证据；不得使用 RemoveAll、TTL/PID GC 或自动完成。仍缺真实电源故障回放 T15/T23、pending orphan 回收、SQLite/凭据隔离恢复、目标资源正式安装、Core Check/Activate/Verify、多级双向回滚、CN 离线资源许可与 72h/7d/30d 长稳测试。无用户可调用 backup/restore/cleanup CLI/TUI/API；PR #1 不合并，`RestoreSupported=false`、`RestoreReady=false`。
+
+### 2026-10-17 — M4 ADR 0121 回收终态的独立外置签名审计（尚非最终清理）
+
+- 按 §13/§18 的数据恢复与安全停止约束，新增仅内部使用的 `AttestSealedDurableReclaim(ctx,key,expected)` 与 `InspectRetainedReclaimAttestation(ctx,key)`。在原规则回收 scope **不删除任何原始 HMAC plan / 每叶删除意图 / completion 证据** 的前提下，将一份单独域分隔 HMAC 签名的只读 0400 证明放在已经存在且 UID 私有的 SQLite 状态目录。位置只能从当前 live DB 导出，不能由 archive、TUI、CLI 或调用者任选。
+- 证明绑定原密文/资源目录 SHA、完成标记、原始计划 SHA、确切 prepared v18 journal ID、回收目录 dev/inode、原始规则数量与已认证缺失字节数。O_EXCL/O_NOFOLLOW 与文件及父目录 fsync；完整重验原始密文、归档 SQLite/schema/profile、CurrentSelected/声明/Applied/LKG/Core/live CAS，已有/损坏证明绝不覆盖或自动修复。外置证明不授予任何物理 unlink/rmdir 或历史恢复权限。
+- 独立跨重启读取必须重新取得原始 ciphertext lease 和用户显式提供的密钥，两次全量校验外部证明与全部原始审计记录的 SHA/HMAC/私有 inode，比较扫描前后的 inode 身份，不能把旧回执或同内容换 inode 当作持久权限。新增专门子进程在外部证明文件 fsync 完成、父目录 fsync 之前遭 SIGKILL 的回归，父进程重新获得 lease 审计仍可见证据；这**不是**真实断电持久性认证。
+- 新提交先修复上一轮 ADR 0121 `gofmt` 门禁失败，并增强 `Makefile` 格式错误输出；完整 Go 单测、Race 与 Managed Core CI 需以最新分支提交结果为准，不能把仅格式通过误称全面通过。
+- **保留全部发布阻塞项**：尚无元数据终态删除/保留期决策、旧 pending orphan 的安全处置、真实断电 T15/T23、完整 SQLite/凭据恢复与资源发布、Core Check/Activate/Verify 双重回滚、CN 规则离线许可闭环及 72h/7d/30d 稳定性结果。PR #1 继续 Draft，不发布 backup/restore/cleanup API、CLI、TUI，`RestoreSupported=false` 与 `RestoreReady=false`。
+
+### 2026-10-17 — M4 ADR 0122 完整签名回收证据的独立私有镜像
+
+- 上轮提交 `f056216` 的常规 CI（含完整 Go Race）与真实锁定 Core 集成全部成功；仍不能替代 T15/T23 的真实断电与长时间稳定验收，PR #1 继续 Draft。
+- ADR 0121 的外置证明只保存原始签名计划、完成标记等证据的摘要。为避免未来误删唯一完整审计记录，新增 **内部显式、非删除型** `MirrorSealedReclaimEvidence(ctx,key,expected)`：在完整复核原候选加密档案、v18 prepared journal、Applied/LKG/声明/选择/Core CAS 和全部每叶签名意图后，把完整 plan、completion、attestation 原始 JSON 及每条删除意图精确 MAC/名称，镜像到由现有 SQLite state parent 派生的 UID 0700 目录中的单一私有 0400 文件。归档原规则二进制、Core 可执行文件、数据库/凭据明文或活动 JSON **不复制**。
+- 镜像以独立域分隔的 HMAC-SHA256 绑定原 archive/inventory/plan/completion/attestation SHA、确切 prepared journal ID、回收目录 dev/inode、规则数量与原始已合法缺失字节总数。严格最多 128 条规则、256 KiB 镜像大小，O_EXCL/O_NOFOLLOW、文件与父目录 fsync、绝不覆盖或自动修补。两轮全量源证据及原外置 attestation inode 验证后方能发布；任何写入后但目录 fsync 前不确定的结果不得报成功。
+- 新增 `InspectMirroredReclaimEvidence(ctx,key)`：独立重启后重新取得原候选 ciphertext flock/key、完整重验原始签名证据、外置 attestation 与镜像并比对两轮源文件和外置证据 inode 身份，只有审计摘要计数返回，无删除/恢复权限。增加错误 key、伪造旧报告、原意图缺失、额外文件、权限/symlink、同字节 inode 替换、选择器 CAS 漂移、子进程 SIGKILL 后重新验证，以及真实已批准 Core 不触及活动规则文件和当前 SQLite 的回归。
+- **范围仍然受限**：镜像当前读取时仍依赖原始目录完整存在；未来必须另行设计独立于原目录的证明验证与运维保留策略，经过断电 T15/T23 试验后才可以审查最终元数据删除。没有可调用的 backup/restore/cleanup CLI/TUI/API、无自动 GC、无 SQLite/凭据导入或 Core 激活。CN 离线许可及 72h/7d/30d 浸泡未通过前不能发布稳定版。两个恢复标志继续为 false。以最新提交对应的 CI/Race/managed-core 结果为准。
+
+### 2026-10-17 — M4 ADR 0123 独立于原回收目录的历史签名证据只读审计
+
+- 在 ADR 0122 完整异地 HMAC 镜像基础上新增 `InertRestoreResourceLease.InspectDetachedReclaimMirror(ctx,key)`：**只验证历史签名证据**，不再打开、枚举或要求原 `inert-rule-bundles` 回收目录存在。仍强制用户显式原始 32 字节密钥、密文目录 flock、完整 archive HMAC/SHA/规则 inventory 与 in-memory SQLite/schema/profile、精确未完成的 v18 prepared journal、当前 Applied/LKG/声明/选择/Core CAS；镜像目录只可来自已存在、UID 私有的 SQLite 状态根。
+- 仅通过 O_NOFOLLOW/owner-private/单硬链接 FD 读取 ADR 0121 attestation 和 ADR 0122 full mirror，两轮对比文件 inode 身份及所有内容。不可只信最外层 HMAC：逐项重验原始 plan、completion、attestation 和 1–128 项原顺序 per-leaf intent 的**不同 HMAC 域**、精确规范 JSON、archive 名称/SHA/大小清单、prepared journal ID、原规则目录 dev/inode、总计原始字节数及各层 SHA 关联，任何缺失/伪造/不一致直接返回零报告。
+- **重要负面承诺**：原目录未被扫描，成功只说明镜像所记载的历史证据有完整签名链，不能说明原规则现在缺失或空间已经释放，也不证明特定 inode 安全删除。报告必须 `ArchiveJournalVerified=true`、`HistoryMACsVerified=true`，同时 `SourceScopeVerified=false`、`RuleAbsenceVerified=false`、`DeletionAuthorized=false`、`RestoreSupported=false`、`RestoreReady=false`。原来的 source-bound inspector 仍要求完整来源，不更改。
+- 测试覆盖原 staging 根原子重命名**但不删除**后，在全新密文 lease 下独立验历史签名链；以及 wrong key/已关闭 lease/取消/旧 journal、源状态 CAS 漂移、外置文件符号/硬链接/公共权限/篡改。额外以正确测试密钥重签**伪造的最外层镜像 HMAC**，验证内部规则数量、journal、目录 inode、原规则字节数、嵌套 plan/completion/attestation SHA、意图顺序及数量不被绕过。
+- 只读接口不导出路径/文件句柄/密钥或规则文本，不写目录、不删原签名文件、不启动 Core、不提供用户 backup/restore/cleanup CLI/TUI/API。下一门槛仍须审查跨断电保留策略、授权协议与实际安全清理，真实 T15/T23 断电、完整 SQLite/凭据恢复、Core Check/Activate/Verify+双回滚、CN 离线许可和 72h/7d/30d 长稳尚未解决；PR #1 Draft。前轮 ADR 0122 `0fcee03` 的真实 Core 集成成功，但 Race 在本次检查时仍运行，不能声称全部通过。
+
+### 2026-10-17 — M4 ADR 0124 元数据保留复核（只读）与完整 Race CI 稳定性治理
+
+- 对上轮 ADR 0123 `c388bb1` 复核：同一 SHA 的 Push/PR 工作流中，真实 sing-box Managed Core 集成成功，完整普通 Go 单测、格式、Vet、集成编译和 Build 通过；一轮完整 30 分钟 Race **成功**，另一轮在 `internal/backupclosure` 大量加密档案/SQLite 故障回归期间达到 `panic: test timed out after 30m0s`。没有日志证实数据竞争，但不能把超时视为绿色验收。
+- 为满足长期稳定运行，不减少加密、SQLite 和崩溃回归测试覆盖：新增 `scripts/test-race-shard.sh`，每次通过 `go test -list` 自动发现所有 `Test/Fuzz/Example` 顶层入口，以固定排序轮询分到 4 个**互不重叠、合计覆盖全集**的 `-race -count=1 -timeout 30m` 分片（子测试随父测试完整执行）；第 0 片另外对所有其他 Go 包跑完整 Race。Makefile `make test-race` 串行执行所有片，`make test-race-shard` 用于 CI；Actions 在完整依赖锁、格式、Vet、普通测试/集成编译、Build 成功后并行运行 4 片，任一失败整体失败，且同分支新提交取消过期 Push/PR 重复执行。**不是跳过测试，也不是将 Race 检验降级为抽样**。
+- 新增内部 `InertRestoreResourceLease.ReviewTerminalReclaimRetention(ctx,key)`：先鉴定 ADR 0123 的离源历史 HMAC 全链，再尝试 ADR 0122 的完整来源目录审计，最后重验历史证据、journal/live CAS，必须比较 archive/inventory/plan/completion/attestation/mirror SHA、原始缺失字节数、规则/镜像计数。将当前来源标记为 `SourceStatus="authenticated"` 或 `"unverifiable"`，缺失/异常时仍可保留明确的*历史有效但来源不可确认*诊断，但不能推断源文件已安全删除。
+- 只读保留复核在所有情况下均固定 `RetentionPolicyApproved=false`、`PowerLossReplayVerified=false`、`PhysicalCleanupAuthorized=false`、`RequiresManualReview=true`、`RestoreSupported=false`、`RestoreReady=false`，绝不返回清理令牌/源路径，不会执行 unlink/rmdir、自动 GC、凭据 SQLite 导入、目标规则安装、Core 动作或 TUI/CLI/API 功能发布。回归包含当前来源完整、只移走原 staging 根、密文 lease 重开、错误密钥、取消和 live 选择 CAS 变更，不改 SQLite 或 prepared journal。
+- **后续阻塞保持**：必须先制定运营保留期与人工授权的原子性回收协议并完成真实断电 T15/T23，再考虑任何最终元数据物理删除；pending orphan、正式恢复及 Core Check/Activate/Verify+双回滚、CN 离线规则许可和 72h/7d/30d 浸泡仍开放。PR #1 保持 Draft。此阶段的最新完整 CI、所有分片 Race 与真实 Core 的最终结果需单独核实，不能提前标绿。
+
+### 2026-10-17 — M4 ADR 0125 独立审计文件容量与孤立名称的有限只读盘点
+
+- 新增内部 `InspectReclaimEvidenceFootprint(ctx,key)`：要求原密文候选持锁、显式密钥、仍 prepared 的 v18 journal、完整 Applied/LKG/声明/选择/Core CAS；经 O_NOFOLLOW 固定的 SQLite 0700 私有父目录，对 ADR 0121 外置 attestation 与 ADR 0122 镜像的**所有名字**做一次 4,096 条父目录上限、最多 256 个自身前缀证明、总计最多 40 MiB 的双次全量扫描。每个文件仍受原 2,048B / 256KiB 私有 0400、单硬链接、owner、inode 与内容 SHA 限制；拒绝无效 64 位小写 digest 名、权限变更、符号/硬链接、同内容 inode 替换与扫描中状态漂移。
+- 返回不含路径/密钥/规则内容的 attestation 数、mirror 数、**按名字匹配**的成对数、不成对文件数与实际字节数。明确 `NamesOnly=true`、`CryptographicProofsVerified=false`、`QuotaEnforced=false`、`PhysicalCleanupAuthorized=false`、`RequiresManualReview=true`、`RestoreSupported=false`、`RestoreReady=false`。对无法持有其他候选原密钥及 journal 的历史记录**绝不声称签名已认证**，更不能仅因名称成对推断来源已删除。容量上限仅界定只读盘点的工作量，**不是写入并发配额**。
+- 回归包括一个独立锚点、成对外部证据、复制签名内容但伪造其他 archive digest 的不成对名字、符号/公共权限与同内容 inode 晚到替换、错误密钥、取消、恢复候选重开和 live 选择漂移；批准真实 Core 集成确认不改 SQLite、活动规则与 Core。上一轮 M4 ADR 0124 `1bdaec3` 的普通单测、构建和已批准 Core 集成成功，4 个完整 Race 分片已启动但需要全部完成后才算绿色。
+- **保留阻塞**：未实现跨候选共享写锁的真正空间限额、持久保留期/人工授权与最终元数据 unlink/rmdir、老 pending orphan 处置、实际掉电 T15/T23、完整凭据 SQLite 恢复和 Core Check/Activate/Verify+双重回滚、CN 离线资源与许可及 72h/7d/30d 长稳。无用户可用的 backup/restore/cleanup TUI/CLI/API，PR #1 继续 Draft。
+
+### 2026-10-17 — M4 ADR 0126 全局共享审计发布预算围栏（仅协作写入者）
+
+- 上轮 M4 ADR 0124 `1bdaec3` 与 ADR 0125 `a4a0c91` 的普通 CI、4/4 Race 分片与已批准真实 Core 集成均全部成功。内部短期 PR #2 已安全合并到开发分支（合并提交 `f877cc88`）；顶层 PR #1 仍 Draft，`main` 未修改。
+- 现有外置 HMAC 审计签名发布与完整签名镜像原先只锁定自己的密文候选，两个不同 archive 可以同时判定状态目录有预算而并发写入。新增内部 `beginRetainedEvidenceAdmission`：**不创建锁文件**，对已通过 UID 私有 0700/O_NOFOLLOW 校验的现有 SQLite state parent 执行非阻塞 `flock(LOCK_EX|LOCK_NB)`，跨独立 archive lease/进程串行两个已知合法证明发布路径。锁竞争直接拒绝，不无限等待。
+- 锁内针对所有已有证明双次运行 ADR 0125 只读扫描，校验文件为 UID 所有、0400 单链接普通文件、规范 64 位小写摘要名称与全部原先 inode/内容 SHA；准许**最多新增一个**文件，新增后父目录总条目 ≤4096、证明文件 ≤256、证明字节总量 ≤40MiB（且单文件仍 ≤2048B 或 ≤256KiB）。创建前再复核同一盘点与来源/精确 prepared journal/live CAS，使用原本 O_EXCL/O_NOFOLLOW/私有权限、文件与目录 fsync，创建后双扫描要求原有证明均原 inode+SHA、且仅出现一个期望内容的新文件。任一状态漂移/预算耗尽/外部不协作写入导致拒绝，不删除/替换/修复任何文件。
+- 回归覆盖两个不同目录 FD 的共享 flock 竞争与释放、两个现有 attestation/mirror 发布者受同一围栏阻挡后恢复、同名字重复创建、已占满 256 个现有私有证明拒绝、先检查后外部新增导致拒绝、规范文件名与合成字节/条目边界、原 HMAC 历史与当前 SQLite 不变；真实已批准 Core 集成仍必须验证无激活、无活动规则改变。
+- **重要限制**：Linux flock 是**建议性锁**，无法阻止不遵守协议的外部写入者；上述容量检查只防止本项目这两个协作写入者越界，不等同 OS 配额，更不授予元数据最终删除或旧 orphan 清理权。仍无自动 GC、TUI/CLI/API 清理、真实掉电 T15/T23、完整凭据 SQLite 恢复、Core Check/Activate/Verify+双回滚、CN 离线许可或 72h/7d/30d 浸泡。新切片完整 CI/Race/Core 需以最新 HEAD 为准，不能提前标绿。
+
+### 2026-10-17 — M4 ADR 0127 审计证据人工保留与容量风险只读分级
+
+- 上阶段 ADR 0126 的最终提交 `d202acc1` 已确认普通 Go CI（含格式、Vet、单测、集成编译、Build）、**4/4 Race 分片**及固定真实 sing-box Core 集成全部成功。内部 PR #3 已合并到开发分支（`00b45ed8`），PR #1 仍 Draft、`main` 不变。
+- 新增内部 `InspectRetainedEvidenceTriage(ctx,key)`：先经 ADR 0124 重证实当前 prepared v18 密文候选 + 显式 32 字节原密钥、完整 archive HMAC/SQLite/schema/profile、Applied/LKG/声明/选择/Core CAS、ADR 0121/0122/0123 签名历史及当前原始规则回收目录。随后对既有 SQLite owner-private 0700/O_NOFOLLOW state-parent 取得**非阻塞共享 flock**，在持锁期间读取 ADR 0125 的所有外置签名证明**仅名称和容量**盘点（4096 条父目录、256 个证明、40 MiB 证据总量），再完整重复签名/来源审计与容量盘点、验证两份结果完全一致，任何漂移/中断/权限错误直接零报告拒绝。共享锁只限制遵守 ADR 0126 的两个发布者，不能阻止任意外部进程。
+- 报告只含源 archive/mirror 摘要和有限计数、可用目录条目/证明文件数/字节数及**假设下一个最大单条 attestation + mirror（2048 + 262144 字节）同时存在**能否满足算术预算。该结果不是磁盘真实空闲块测量、不是资源预留、也不是可写入许可；其他未知档案的文件名即使成对仍**不验证其 HMAC**。
+- 按优先级提示原始来源不可独立验证、其他档案证明名称不成对、有限写入预算不足，或默认“尚无已批准的保留政策”。所有返回报告永远 `ManualHoldRequired=true`、`PolicyApproved=false`、`PowerLossReplayVerified=false`、`PhysicalCleanupAuthorized=false`、`RequiresRevalidation=true`、`RestoreSupported=false`、`RestoreReady=false`。原目录不可验证时即使历史镜像完整也不能认定物理删除安全。
+- 回归覆盖真实封存证明、复制其他名字的未验证证明、仅私有改名但不删除原规则目录、跨重启独立密文 lease、共享/独占 flock 冲突、同字节镜像 inode 替换、错 key/取消/live CAS 漂移，以及从目录条目、文件槽位、40MiB 字节预算精确边界推导的只读风险分级；已批准真实 Core 集成需确保活动 SQLite、规则和 Core 完全不变。最新分支的全部 CI/Race/Core 仍需独立绿色才可并回。
+- **仍阻塞**：真正的人工审核保留期限、外部不可变审计记录/法务保留与可证明最终清理协议、失踪 pending-orphan 的可证明处置、实际断电 T15/T23、完整凭据 SQLite/规则恢复、Core Check/Activate/Verify 与双回滚、CN 离线规则许可证及 72h/7d/30d 长时间浸泡；依然不提供 backup/restore/cleanup TUI/CLI/API。
+
+- **ADR 0127 CI 纠错与停止条件（2026-10-17）**：首轮 `debc6d27` 的 Vet/格式与真实 Core 集成成功，但普通单测 `TestRetainedTriageSharedFlockRejectsCooperatingWriterAndLateReplacement` 发现同内容但不同 inode 的证明替换未被察觉，Race 因依赖单测失败被跳过。修复为在两轮完整 cryptographic review + 全局名字/容量盘点**整个时间窗前后**对所有证明重新扫描并比较每一个文件的 inode 身份、内容 SHA 与大小，且当前档案自己的 attestation/mirror 名称及内容摘要必须与单独重验 HMAC 的报告一致。新增国外档案形状的成对名称仅统计、不授予 HMAC 认证，且该外部证明即使仅同内容 inode 替换也必须被拒绝；另覆盖共享审计锁与独占发布锁的真实冲突。发生替换一律零报告、无修补、无清理许可，完整 CI/Race/真实 Core 重验之前不得合并 PR #4。
+
+### 2026-10-17 — M4 ADR 0129：T15/T23 disposable guest 重启前后 SQLite 子集对照（只读；未完成实际断电验收）
+
+- 上轮 ADR 0128 受显式人工授权的 **虚拟机强制关停实验入口**，PR #5 `66a7b2dd` 完成依赖、格式、Vet、Go 普通测试、4/4 Race 与 mock libvirt 安全单测，合并至开发分支 `96e63f1f`。它没有执行真实 VM 关机、真实电源中断、自动恢复或元数据删除。PR #1 保持 Draft、`main` 未改。
+- 单独追加 **guest 内部** `scripts/recovery_lab/guest_reboot_audit.py`，仅在 disposable VM 的固定私有 XDG guest `state.db` + 同 nonce/UUID/case 的 `recovery-lab` host witness 挂载下运行。要求普通用户、显式实验 ACK、私有 0600/0700 路径和未被符号/硬链接替换的 SQLite inode。只读 SQLite URI `mode=ro`（不使用会忽略 WAL 的 `immutable=1`），打开事务执行 `integrity_check(1)`、外键检查、18 条 schema migrations、daemon/selection 单例、Applied/LKG 配置/manifest/source-map BLOB 的真实 SHA 对比，以及 active apply/独立 prepared journal 基数约束。
+- **中断前** `capture` 专用 0600 O_EXCL+fsync/目录 fsync 基线，只返回基线 SHA 给人工在客体外另存；**手工重启后** `verify` 要求该外部保存的 SHA、先前 ADR 0128 的 `virtual_guest_forced_off_observed` 见证文件与 domain/UUID/case/nonce 精确一致、当前 guest SQLite 直接重新读取、完整子集相同且没有恢复未决/活动 apply。任何 SQLite/生成代际 SHA/选择漂移、非法权限、缺失见证或仍需 recovery，零有效报告拒绝；不尝试维修/解包、重试、清理或激活 Core。
+- 即使子集检查成功，永久明确 `guest_reboot_verified=false`、`physical_power_loss_verified=false`、`core_health_verified=false`、`archive_hmac_verified=false`、`restore_authorized=false`、`metadata_deletion_authorized=false`：此工具**无法证明 VM 实际重启、硬盘掉电语义、所有未引用领域表/外部规则文件或历史签名、实际 Core 端口及双回滚**。仍必须在独立 VM 真的完成故障点触发、关机和重启后由人工核查并建立独立证据，T15/T23/T25 均开放。
+- 新增纯标准库 synthetic SQLite 与模拟 host 停机见证的单测（无需 libvirt、sudo、TUN 或真实用户状态），沿用 `.github/workflows/ci.yml` 的恢复实验 Python 安全回归步。参见 [ADR 0129](adr/0129-disposable-guest-sqlite-replay-subset.md) 与 [实验操作手册](runbooks/t15-t23-guest-sqlite-replay.md)。开发切片完整普通 CI、4/4 Race 验证完成前不得合并。仍未开放公开备份恢复、物理源证据清理及 Core Activate/Verify。
+
+### 2026-10-17 — M4 ADR 0130：真实 v18 SQLite prepared-journal 的 disposable guest T15 故障注入挂起点
+
+- PR #4 的最终 `b3c59a75` 已通过格式、Vet、普通 Go、4/4 Race 和已批准真实 Core 集成；已并入开发分支 `6a8b86e6`，PR #1 继续 Draft，`main` 未修改。PR #6 ADR 0129 的独立 guest 只读 SQLite 前后子集对照，在 PR #4 合并后重新合并文档且在新 HEAD `5b119ab1` 运行完整 CI/Race；没通过这一组合门槛前不合并。
+- 本切片新增 **仅 Go Linux 测试** `TestT15DisposableGuestPreparedBoundary`，将 ADR 0128 的 `ready-<nonce>.txt` 与项目实际 `storage.Open`/v18、`PrepareApply→BeginActivation→BeginVerification→CommitApplied` 基准 Applied/LKG，以及第二次 `PrepareApply` 已持久提交但**尚未 Core 激活**的真实 prepared journal 绑定。仅对普通非 root、非 CI、显式 `PREPARE:domain:uuid:T15-prepared-journal:nonce` 严格 ACK、**预先空白** guest `state.db`、原有 XDG 0700 guest app/witness 文件夹的 disposable VM 测试运行；任何已有 SQLite/WAL/SHM、symlink、锁竞争或错误标记一律拒绝。
+- 真正的 Go storage 事务完成、SQLite 关闭和状态目录 fsync 后，才使用目录描述符 + O_EXCL/O_NOFOLLOW 发布 0600 精确 phase/case/nonce 文件，并对文件+父目录 fsync 与 inode/内容复查。随后 guest 进程挂起以供**独立经人工明确批准的宿主 ADR 0128** 定点关机；该测试本身绝不 kill 进程/VM/宿主、不自动修改 Core，也不能标志物理掉电通过。
+- 普通 CI/Race 独立创建一次性 0700 临时数据库，真实跑一轮应用 journal 事务，拒绝复用 DB/覆盖 marker，读取全同的 marker，重新打开 SQLite 并使用仅对该测试临时数据库的 `RecoverInterrupted` 验证：第二次 prepared 仅被中断而未激活，原 Applied/LKG 与 revision 均保持。真正 guest 断电/启动回放**本轮没有运行**。仍需收集外部 VM 事件、实际 WAL/fdatasync/资源 inode、独立 SQLite 日志审计和实测 Core 流量；ADR 0129 在 active prepared journal 尚未独立恢复前的拒绝是正确的人工保留而非失败误报。T15/T23、双回滚、正式备份恢复、物理元数据删除和 72h/7d/30d 长稳仍未达成。
+- 详见 [ADR 0130](adr/0130-t15-real-prepared-journal-guest-lab.md) 和 [guest 操作手册](runbooks/t15-real-prepared-journal-guest.md)，保持 Linux 普通用户、无 TUN、CN 28 组原始预置、Custom → GeoSite → GeoIP → ACL → FINAL 五层以及**去除订阅/ISP 分流**的原约束。
+
+- **ADR 0130 新增隔离边界**：生产 `state.db` 不存在仍不足以证明无现有用户状态，因此 guest-only fixture 进一步要求应用 state parent 初始**仅**包含 `recovery-lab` 子目录、单次 nonce witness 目录在启动前完全为空。任意旧 marker/observation 或其他配置文件均拒绝；回归断言绝不删除或覆盖异源文件。
+
+### 2026-10-18 — M4 ADR 0131 Go v18 真正数据库与 Python guest 审计器端到端契约回归
+
+- ADR 0129 的 Python 安全单测使用 synthetic v18-like 表，ADR 0130 的真实 Go `storage.Store` 测试则没有调用 Python guest 审计器；两边各自 CI 全绿仍无法证明真正的版本 v18 SQLite/WAL/Apply Journal 契约互通。因此新增独立跨语言实际 Schema 回归，在 Go `internal/storage` 的 0700 临时隔离数据目录中经真实 migrations + `PrepareApply/CommitApplied` 生成 Applied/LKG，随后使用与产品一致的 `scripts/recovery_lab/guest_reboot_audit.py` 进行 `capture`、外部 SHA 对照以及 `verify`。
+- 无活动 journal 的基准临时数据库必须严格接受为**只读 SQLite 子集一致且仍须人工复核**；Go 端比较审计前后的真实 SQLite 文件字节不变，检查全部 `guest_reboot_verified/physical_power_loss_verified/core_health_verified/archive_hmac_verified/restore_authorized/metadata_deletion_authorized=false`。随后经真正 Go `SetCurrentSelectionIntent` 产生选择漂移，Python 验证必须拒绝。
+- 第二组真正 v18 `PrepareApply` 构造**未激活 prepared journal**；允许中断前生成只读基线，但其后即使 host-stop JSON 伪夹具匹配，Python `verify` 仍须拒绝 pending active apply。仅在该临时测试库调用真实 `RecoverInterrupted` 并再次验证旧基线失效；独立伪造 VM UUID 的见证一律拒绝。host-stop JSON 是测试夹具，**未发生**真实虚拟机关停、电源中断或认证重启。
+- 本 ADR 只补齐实际 Go/Python 存储结构互通与拒绝分支；没有启用真正用户备份/恢复、规则正式发布、Core 激活、删除/自动 GC、双重回滚或 T15/T23/T25 放行，必须通过本分支最新普通 CI、4/4 Race 才能考虑合并；与 ADR 0130 以堆叠 PR 隔离验收。
+
+### 2026-10-19 — M4 ADR 0132 T15 prepared→interrupted 受限只读差分审计
+
+- 在 ADR 0130 的真实 v18 Store prepared-journal 夹具和 ADR 0131 的 Go/Python 跨语言契约之上，增加**非授权**的 `reconcile-verify` 只读核查模式，仅用于一次性非 root disposable guest 的 `T15-prepared-journal`。它不触发 `RecoverInterrupted`，而是对照操作员在此前独立保存 SHA-256 的 v2 baseline 与**单独执行**显式恢复后的 SQLite 状态。
+- 审计确认 journal 最新候选（包含 config/manifest/source-map SHA、源/目标 revision、前一代际及记录数）及 `apply_history` 已归档提交记录与 Applied/LKG 的 SHA 一致，只允许从 prepared+active+空错误变成 interrupted+inactive+固定安全原因；当前 Applied/LKG、选择状态、路由模式及 Core 停止意图等已抽取字段一律保持一致。即使篡改候选后同时更新其 SHA、改变 selection、伪造 journal 相位或增加其他行，也必须拒绝。原 `verify` 仍保持全字段相等的更严格契约，版本 1 的旧 baseline 不会静默通过。
+- CI 用 Python synthetic SQLite 和实际 Go v18 SQLite/生产 `RecoverInterrupted` **仅在一次性临时目录**演练正反用例，并检查只读审计不修改 SQLite 主文件。CI 不关停虚拟机、不开代理 Core、不会处理生产用户 DB；合成宿主见证不具有真实断电/重启证明效力。T15/T23/T25、真实电源故障、跨资源一致性、完整恢复、Core 回滚与 release gate **全部继续未通过**。
+
+### 2026-10-19 — M4 ADR 0133 进入 Core 激活后的恢复强制人工复核
+
+- 建立真实 Go v18 测试数据库的 `activating`、`verifying`、`rolling_back`、`FailRollback` 故障边界回归。前 3 种 active phase 通过生产 `RecoverInterrupted` 写入 `interrupted` 时，必须保持 Applied/LKG 与候选 config SHA 不变、`recovery_required=true`；二次重放和关闭重开不能清除这个人工复核标记。已经 failed rollback 的非活动 Journal 同样必须保留该标记。
+- ADR 0129/0132 的 Python guest 只读模式在上述边界一律拒绝 `verify` / `reconcile-verify`；只有 test-only 合成停机见证，**没有真实 Core 变更、VM 停止、重启/断电认证或正式恢复 API**。发布 T15/T23/T25 继续保持 OPEN，`main` 不更新。
+
+### 2026-10-19 — M4 ADR 0134 guest 已归档 apply_history 完整有界摘要
+
+- ADR 0132 原本只核对归档历史最新一条、计数与 Applied/LKG，无法发现较早已归档 terminal apply 条目的字段更改。新的 **只读** Python guest v3 baseline 在固定 v18 SQLite 只读事务中，完整迭代至多 **512** 条归档记录（超过即拒绝），检查 ID、版本、phase、配置 SHA、错误文本限额与时间戳格式，并对全字段计算顺序稳定的 SHA-256 ledger。只将历史条数及 ledger 摘要纳入私有 witness，不泄露原始错误字符串、配置 BLOB 或凭据。
+- 原严格 `verify` 与限缩 `reconcile-verify` 均要求原有 ledger 摘要不变。Python synthetic fixtures 验证旧记录漂移、伪造 phase、超长记录或超额记录拒绝；独立实际 Go v18 `PruneRetention` 归档测试检查两代以上旧归档记录（最新及 Applied/LKG 不变时）被篡改也必拒绝。
+- guest baseline 从 v2 升级到 v3，旧记录不能静默升级；必须新建 disposable 测试环境/nonce，不能覆盖已有凭据或 witness。结果只证明**已观察到的 SQLite 元数据前后未变**，不构成历史 HMAC、Core 健康、真实 VM 断电、凭据恢复、T15/T23/T25 达标或发布许可。
+
+### 2026-10-19 — M4 ADR 0135 T23 inert restore journal 独立只读摘要核验
+
+- 已发现原 Python guest 审计仅对 `inert_restore_preparations` 统计 `phase='prepared'` 的条数，不能发现条数不变但候选 archive/inventory SHA、受限 scope、baseline fence 或 abandoned 记录被替换的情况。新增只读审计，在**同一个 SQLite WAL-aware 读事务**中读取至多 32 个真实 v18 inert journal 行，并对完整身份、候选摘要、字节数、baseline JSON 自身 SHA、phase/active_slot、时间戳执行受限校验及 SHA-256 ledger 汇总，超限或畸形数据全部拒绝。
+- guest witness 版本从 v3 提升至 **v4**，要求全程原始外部固定 SHA；不得覆盖/重新解释旧 v3 witness。原有严格 `verify` 与限缩 `reconcile-verify` 的状态比较均纳入新 ledger 摘要。Linux Go 集成测试使用真实 `PrepareInertRestoreRecord`、`AbandonInertRestoreRecord` 和 Go v18 迁移，仅在一次性临时 DB 中验证恢复审计拒绝“同数量但库存 SHA 漂移”的伪造数据；Python synthetic 用例覆盖重算 fence SHA、状态与时间戳畸形、超 32 条等。
+- 此审计**不能**证明备份 HMAC、真实密文存在性、实际 VM/硬件断电、重启后 Core 路由健康或归档签名。不得开放恢复/清理/凭据导入；T15/T23/T25 与稳定主分支合并门槛维持 OPEN。
+
+### 2026-10-19 — M4 ADR 0136 Go canonical inert-restore fence 与 guest 审计器一致性
+
+- ADR 0135 虽然对 inert journal `baseline_json` 计算 SHA-256 并检查 JSON 非空，但 Go 生产 `scanInertRestorePreparation` 还严格要求 `InertRestoreFence` 的完整 16 个字段、合法数值/摘要/分流/Core 意图以及 `json.Marshal` 的原始规范字节。新增**只读** Python 校验，与真实 Go v18 Store 的拒绝语义一致；即使故意添加字段、调整 JSON 顺序/空白或填入 Go 不接受的数值并**同步重算 SHA**，也应在捕获基线之前直接拒绝。
+- guest 私有基线版本 v4 → **v5**，不隐式升级/覆盖旧 witness；Python synthetic fixtures 用合法的完整 Go-shaped fence 验证正反分支，Linux Go 端仅使用一次性真实 v18 SQLite 和生产 `PrepareInertRestoreRecord` 创建的合法准备记录，在测试临时库中注入三种无效 JSON+匹配 SHA，并让 Python 与 Go 原生 scanner 同时拒绝。原始已确认 Applied/LKG、路由和 Core 不改变。
+- 一致性审计不构成历史 fence 的重新认证或恢复许可：没有 Core 启停、客体虚拟机断电或真实重启、归档 HMAC、规则 inode 验证、SQLite 凭据恢复、自动 GC 与元数据删除。T15/T23/T25 和 72h/7d/30d 仍未通过。
+
+### 2026-10-20 — M4 ADR 0137 全部保留 generation 的有界只读摘要（T15/T23 实验子集）
+
+- 上一轮 ADR 0134/0136 只确认 Applied/LKG、最新候选与 `apply_history` 已归档元数据，未验证**仍保留但已经不再被当前状态引用的旧 generation JSON 内容**。真实 Go v18 的默认保留策略允许最近五个已确认代际继续存在。新增 guest 只读 `generations` ledger：在单个 WAL-aware 事务中完整扫描最多 128 条，核验代际 ID/版本、config+SHA、可选 manifest/source-map BLOB+SHA、创建时间戳及 v17+ 的 nullable `restore_origin_generation_id`，并对顺序化元数据（包括所有内容摘要与字节数）计算 SHA-256。超过上限或 JSON/摘要/版本异常直接拒绝。
+- guest 私有 witness 版本 **v5→v6**，不可对旧基线静默升级或复写。Python mock 案例覆盖旧代际的 config 被替换并**同步重算 SHA**、时间戳更改、异常可选元数据及超配额；Go/Python 跨语言用例用真正生产 Store 连续提交三代到一次性 SQLite，在最旧代际不属于 Applied/LKG/最新候选且历史 journal 未改变的情况下，要求独立只读 audit 必须识别其篡改。不能将哈希摘要误当成历史签名或真实掉电证明。
+- 本改动不迁移生产 SQLite、不开用户备份恢复接口、不开 Core/TUN、不执行 VM 掉电/重启、不清理元数据；T15/T23/T25、完整资源/凭据恢复、CN 离线规则许可证、Core 双重回滚和 72h/7d/30d 稳定运行验收全部保持未通过。
+
+### 2026-10-20 — M4 ADR 0138 所有声明修订链的有界只读审计（T15/T23 实验子集）
+
+- SQLite v18 的 `declaration_revisions` 持有路由/DNS 原始声明修订链，独立于已 Applied 的 generation / selection。之前的 guest 审计即使把代际全量纳入 SHA，仍没有覆盖**已不再是当前头版本**的旧声明：其 `document_json` 被替换并同步重算 `document_sha256` 时会漏检。新增 owner-private guest v7 只读 ledger：在原 WAL-aware SQLite 单事务中完整核验最多 128 条声明的连续 revision/parent 链、current 指针、声明 JSON+SHA、Go 合法来源标识与创建时间，并生成全修订 SHA-256 ledger；异常或超限立即拒绝。
+- Python synthetic 测试覆盖旧声明 rehash、断裂 parent、失效 current 及畸形来源/JSON、超 128 条；Linux Go v18 跨语言测试使用真实 `CommitDeclaration` 两次原子写入、独立 Python capture/verify，然后仅对一次性测试库的**旧**声明做内容+SHA 同步替换，必须拒绝。该操作不触碰实际 Core、TUI、Daemon 或真实用户配置。
+- guest witness v6→**v7** 只更新实验文档结构，不迁移生产 SQLite；不可覆盖/复用老证据。该摘要既非完整路由编译器，也非签名或恢复授权，T15/T23/T25、真实 VM/电源故障、Core 恢复、规则文件闭包、CN 离线许可证、HMAC、72h/7d/30d soak 仍未通过。
+
+### 2026-10-20 — M4 ADR 0139 Profile 当前/上一快照与节点 BLOB 的只读有界审计（T15/T23 实验子集）
+
+- ADR 0138 已覆盖完整声明修订链，但订阅 Profile 的当前/上次 `profile_snapshots` 和 `profile_snapshot_nodes` 仍是独立的 SQLite v18 持久数据。仅变更**前一个**快照节点 JSON 并同步重算行内 SHA 时，Applied/LKG、当前 Profile 和此前 guest ledger 都可能不变。新增 guest **v8** 基线，单个 WAL-aware SQLite 只读事务检查 `profile_state`、所有保留快照与节点的有界顺序摘要、snapshot 指针和所有权、每快照连续 ordinal、JSON/SHA 及可解释的字段/时间戳；只输出计数与摘要，不输出订阅地址或节点字段。
+- 实验专用上限 64 条 Profile 状态、128 条快照、8192 条节点、每个节点 JSON 最大 1 MiB、节点总量 48 MiB；超限立即拒绝，**不是**新的生产订阅配额。Python synthetic 测试覆盖上一快照的内容+SHA 同步篡改、指针/名称漂移、畸形 JSON/ordinal/哈希及上限；真实 Go v18 跨语言用例使用两次生产 `CommitProfileSnapshot`，验证原始 SHA 固定后旧节点修改必拒绝，且未修改前的 Python 读审计不改变 SQLite 主文件。
+- 此切片**未覆盖** `profile_sources` 的 URL/定时更新数据和 `profile_node_overlays` 用户覆盖，也不验证已经被实际 prune 的历史快照。guest v7→v8 不迁移生产 SQLite v18，旧 witness 不得静默复用；没有真实 VM/电气掉电、Core 流量/双回滚、规则资源闭包、原始订阅认证或 HMAC 恢复，所有 Restore/GC 权限继续关闭，T15/T23/T25、CN 离线许可证及 72h/7d/30d 仍未通过。
+
+### 2026-10-20 — M4 ADR 0140 节点用户覆盖状态（含已移除节点）的有界只读审计
+
+- 上一阶段 ADR 0139 已在 guest v8 固定当前/上一版本的 Profile 快照和节点 JSON，但 Go v18 的 `profile_node_overlays` 独立保存节点 Disabled/Favorite、别名、排序以及 CAS 修订号。即使历史快照完全不变，已移除节点保留的“休眠”覆盖记录也可能被单独修改而不被旧基线识别。新增 **guest v9** 全量有界覆盖摘要：同一个 WAL-aware SQLite 只读事务遍历所有覆盖行，核验 ID/修订号/布尔/别名/排序/时间戳，并固定完整字段顺序 SHA-256；不会要求所有覆盖记录必须指向当前节点（生产 Go 明确保留已移除节点的用户意图）。
+- 仅实验允许的上限为**全库 2048 条**覆盖记录，超限拒绝，**不更改生产每 Profile 8192 条上限**。Python synthetic 回归涵盖休眠节点篡改但 revision 不变、畸形字段、超配额，以及 prepared→interrupted 后只允许 journal 差异的严格复核；Go v18 跨语言回归用真实 `CommitProfileSnapshot` 与 `CommitProfileNodeOverlay` 建立两代及休眠覆盖，Python 独立固定外部 SHA 后更改休眠记录必须拒绝。仅计数和摘要进入私有 witness，别名/节点信息不出现在报告。
+- guest witness **v8→v9** 不迁移产品 SQLite v18，不兼容更早的证据；`profile_sources` URL、拉取/调度状态和流量数据仍待单独闭包验证，T15/T23/T25、真实 VM/电气掉电、Core 路由与双回滚、规则资源、CN 离线许可证、HMAC、恢复授权和 72h/7d/30d soak **全部仍未验收**。
+
+### 2026-10-21 — M4 ADR 0141 所有 Profile 来源、租约及订阅用量的有界只读审计（T15/T23 实验子集）
+
+- 之前 ADR 0139、0140 分别闭合 guest 快照/节点及用户覆盖状态，但 SQLite v18 的 `profile_sources` 有独立持久字段：订阅地址或绝对文件路径、拉取目标、过滤表达式、更新周期、HTTP 源版本/ETag/Last-Modified、重试错误与期限、更新租约以及订阅流量/到期元数据。**来源可以在没有节点快照时单独存在**，不能用当前快照的摘要代替。新增 **guest v10**，在同一 WAL-aware SQLite 只读事务中顺序检查并 SHA 固定全部 33 个来源字段，避免仅修改 URL、retry、lease 或用量但不推进 CAS 时审计静默漏检；私有 witness 仅保留数量和摘要、不输出敏感 URL/Token/节点或 HTTP 元数据。
+- 独立实验上限**全库 64 条来源**，超出即拒绝，绝非生产配额。根据 Go 类型约束验证来源 ID/格式、HTTP(S) 或 Linux 清洁绝对路径、Fetch/Filter/UpdateInterval、启用状态、时戳、用量非负、更新 ID/时间配对及失败计数。Python synthetic 覆盖没有快照的正常来源、URL 和用量不推进修订号的漂移、活动更新租约清理、异常字段/超配额、以及只允许 prepared→interrupted 的 journal 差分中额外来源漂移必拒绝。Go v18 跨语言用例以生产 `CommitProfileSource`、`BeginProfileUpdate`、`FinishProfileUpdateSuccess/Failure` 和 `RecoverInterruptedProfileUpdates` 生成真实 SQLite 状态，再由独立 Python 审计器验证内容一致性和拒绝语义。
+- guest witness v9→**v10**，生产 SQLite 仍为 **v18**，不复用更早 witness；即使现有 Core/应用恢复 journal 部分匹配，**更新租约的独立恢复绝不自动获得 T15 审核许可**。这一工作无 TUN、无真实 VM/电源故障、Core 激活/流量、归档 HMAC、远端订阅认证、凭据/规则资源闭包或用户备份导入。T15/T23/T25、CN 离线资源/许可证、两次回滚及 72h/7d/30d 浸泡继续保持 OPEN，正式恢复和物理删除权限全部关闭。
+
+### 2026-10-21 — M4 ADR 0142 guest 实验与宿主停机意图的原始证据链绑定（T15/T23 前置条件）
+
+- ADR 0128 宿主强制关停入口使用真正的 `ready-<nonce>.txt` 来验证到达 guest 挂起点，先持久记录 intent 后观察关机；但此前 guest v10 仅检查单份 observation 是否符合身份/字段，并未把此前的 marker 与 intent 并入 SQLite 前后证据。即使全部代际、声明、订阅数据、用量与 recovery journal 摘要正确，缺失/伪造 intent、改变 ready 标记仍可能被旧 guest 审计忽略。新增 guest **v11**，在 capture 前以 owner-only/O_NOFOLLOW/单硬链接与两次 inode 身份对照读取精确 ready marker，固定 SHA 到外部独立钉住的 baseline；随后 verify 与 prepared-only reconcile-verify 均要求 intent→observed-off 两份真实宿主协议结构、同 domain/UUID/case/nonce 与 marker SHA、严格 false 的全部权限位、UTC 时戳非逆序，并双次读取排除中途证据变化。拒绝缺失/改名/符号硬链接/权限不私有/畸形/伪造时**不更新证据、不修复、不执行 VM/Core 操作**。
+- Python mock-libvirt 调用项目现有 `vm_power_cut.run_case` 实际出件函数，验证同一原始 guest 审计器接收两张 host 收据而不更改 SQLite 主文件，且不把它们升级成真实 reboot/断电/还原授权。跨语言 Go v18 fixture 也提供相同的 synthetic marker+intent+observation，并新增即使 Applied/LKG 完全不变但丢失 intent 必拒绝的回归。上述依旧是**模拟收据、真实 SQLite**，CI 从未运行实际 virsh/虚拟机或引入 TUN；不证明宿主收据由可信硬件产生，也不代替实际挂起点、重启后的 Core 检查、规则与归档 HMAC/凭据审计。
+- 实验 witness **v10→v11**，生产 SQLite 保持 v18，旧 SHA 不可静默复用。T15/T23/T25、真实 VM/电力故障、双次回滚、CN 离线规则与许可、长期 72h/7d/30d 仍 **OPEN**，所有正式 restore/GC/元数据删除权限仍保持 false。PR #1 Draft、稳定 `main` 不改。
+
+### 2026-10-22 — M4 ADR 0143 宿主观察隔离 VM 人工重启后的 running 状态（只读证据前置）
+
+- ADR 0142 已将 guest baseline/真实 marker 与 host intent→observed-stop 绑定，但仍缺少停止后**独立观察同一 VM 已运行**的只读证据；旧 guest 即使没有真正的后启动观察也可接受原 SQLite 不变。新增单独的 `scripts/recovery_lab/vm_postboot_observe.py`：只允许普通用户 `qemu:///session`、完全一致的 disposable 名称+UUID、case+nonce、**客体外独立保存的原始 baseline SHA**。默认只预览，额外 `--record` 必须提供精确 `KTUI_LAB_VM_POSTBOOT_ACK`，调用只读 libvirt `domuuid`/`domstate`，仅在**操作员自己手动启动 guest 后**双次核对原先 0700 宿主目录、ready marker、v12 baseline 和原 host intent/observation 的原始摘要，再 O_EXCL/NOFOLLOW/0600 文件+父目录 fsync 发布唯一 `poststart` 收据；不自行 start、destroy、重试、迁移用户状态或操作 Core。
+- 客体审计 witness **v11→v12**（生产 SQLite 仍 v18）。原 `verify` 和 `reconcile-verify` 额外检查 poststart 的 domain/UUID/case/nonce、marker SHA、外部 baseline SHA、原 intent/observed-stop 原始字节摘要、严格全 false 权限/实际 reboot 标志、时戳先后与只读期间防更换；丢失/伪造/过期一律拒绝，不补录。在 Python synthetic 测试中调用项目**实际宿主 stop 与 poststart 工具**且所有 libvirt 动作均为 mock，并在真实 Go v18 SQLite/Python 跨语言测试中验证缺失新收据也不能把原 Applied/LKG 一致作为成功证据。
+- `host_running_observation_checked=true` **仅表示不可信操作者可写的宿主证据在结构和哈希上连续**，不等同 guest 内核真正 reboot、更不等于电气断电或完整服务/归档/HMAC/凭据/双回滚验收；没有真实 VM 或掉电 CI。T15/T23/T25、CN 资源许可/离线闭包、Core 实测与两次回滚、72h/7d/30d 长期浸泡仍 **OPEN**，恢复/清理所有正式授权保持 false；`main` 未改、顶层 PR #1 Draft。
+
+### 2026-10-22 — M4 ADR 0144 真实 Linux guest kernel boot-id 前后观测（仍非 VM/物理断电验收）
+
+- ADR 0143 在宿主用户态以只读 libvirt `domuuid/domstate` 获得相同测试 VM 的 `running` 记录，并与宿主 stop intent/observation 和 guest SQLite v12 baseline 的原始 SHA 绑定；但 **running 并不说明 Linux 内核确实进入过新一次 boot**。新增独立 Linux guest 侧 `guest_kernel_boot_epoch.py`：仅在原 v12 基线已由客体外独立固定 SHA、真实 marker 匹配、宿主还没有产生 stop/poststart 收据时，以 **实际 `/proc/sys/kernel/random/boot_id`** 读取内核启动 UUID，要求 canonical/非零，在 guest 同一 0700 挂载目录中 O_EXCL/O_NOFOLLOW/0600 + 文件/目录 fsync 发布独立 `boot-epoch-<nonce>.json`，把摘要输出给操作员**另存于客体外**，不可重放或重录；不会在结果里导出原始 boot ID，也不能通过 CLI 假造 ID。
+- 操作员独立执行 **原有非 root disposable VM stop → 手工重启 → 宿主 poststart running** 之后，另行运行 `guest_kernel_boot_epoch.py --mode verify`，同时提供关停前客体外保存的 baseline SHA + boot epoch SHA。必须重新读取真实 procfs 内核 UUID，要求**和关停前不同**，并双次对照 baseline/原 boot-epoch/marker/宿主 intent/stop/poststart 原始字节摘要及权限/链接/身份；未变化、缺失或重哈希伪造一律拒绝、不重试/复写。guest SQLite v12 `verify`/受限 `reconcile-verify` **另行执行**，本新工具不读取、写入或修复 SQLite、Core 和用户数据。
+- CI Python synthetic 夹具只在测试进程 mock boot ID 并调用**实际的 host stop/poststart writer（mock libvirt）**；真实 Go v18 Store + Python 子进程检查实际 CI procfs boot ID **在未重启的同一 Linux runner 内必须拒绝**，即使全部模拟 host 收据齐全。成功也只返回 `kernel_boot_identity_changed_observed=true`，并永久保持 `guest_reboot_verified=false`、`physical_power_loss_verified=false`、`core_health_verified=false`、`archive_hmac_verified=false`、`restore_authorized=false`、`metadata_deletion_authorized=false`。guest SQLite witness 仍 v12、生产 schema v18，独立 epoch 证据为 v1。不引入 TUN、不修改 CN 28 组/五层规则或订阅/ISP 分流排除。仍**没有实际触发 VM 关停/重启、电子级掉电、实际 Core 流量、HMAC/凭据/源资源闭包或双回滚**；T15/T23/T25、CN 离线许可证和 72h/7d/30d 长稳继续 OPEN，正式 Restore/GC 关闭，`main`/外层 PR #1 Draft 保持不变。
+
+### 2026-10-24 — M0/M5 ADR 0145 CN T24 离线资源审计的有界无跟随输入与许可阻塞门槛
+
+- 原 ADR 0043 确定了 28 个 CN preset 及独立地区追加形成 **68 个逻辑规则集引用、67 个固定源文件、1 个上游缺失 `geoip:bing`** 的审计计划，审计输出仍为 `distribution_ready=false` / `license_status=blocked_unresolved_upstream_data_licenses`。但旧命令使用普通 `os.Open` 跟随软链接、哈希无文件/总量硬上限，不能作为可信的发行源清单输入。
+- 新增 Linux-only 审计文件访问边界：根目录 O_DIRECTORY/O_NOFOLLOW；仅限两段 `geosite/geoip/acl/*.srs`；分别用 descriptor-relative openat(NO FOLLOW / 非阻塞) 与 fstat/fstatat **前后比对 inode、dev、size、mtime/ctime、mode、nlink**，拒绝符号/硬链接、FIFO/目录/设备、路径穿越、空文件、目录更换和哈希期间文件变化。审计专用预算 **每文件 ≤8 MiB、全部 ≤64 MiB**，不改变代理运行时配额。恶意夹具覆盖目录/文件/root 软链接、hardlink、FIFO、过大/空资产、非法路径及总量超限；审计命令只读、不复制或分发资源。
+- 专用 `cn-resource-audit` 工作流现对相关 PR 同样触发，在生成 JSON 前后验证 `KaringX/karing@9d28b22fbbcca5818d147629aae151d49d4dcb7b` 的 checkout HEAD 和资产目录无改动，再校验审计输出的 68/67/1、总字节预算、`distribution_ready=false` 及明确许可证阻塞。**这不等于**上游许可证已清理、文件内容已签名或两架构离线发行通过。T24 和 CN license/provenance 仍 OPEN；后续必须完成再分发许可归属、已缺失资源的准确兼容处理、core/规则离线打包及 amd64/arm64 无网络启动实测。稳定 `main`、正式 Restore/GC 与长稳门槛不变。
+
+### 2026-10-24 — M5 ADR 0146 双原生架构 air-gap 管理面启动前置验证（T24 仍未通过）
+
+- 之前锁定 Core 已具备 Linux amd64/arm64 的原生 runtime smoke，ADR 0145 也能对 CN 的 68/67/1 资源来源有界审计；但 **没有在完全无外网的同一执行环境里启动实际发行候选管理程序**。新增基于现有 `core-provenance` native runner 的 T24 分段实验：先在宿主正常构建并校验 Go 1.25.12 的已批准 Core，再用 Go 1.27.1 以 CGO_ENABLED=0 编译当前管理程序、提前缓存 Python 测试 OCI 镜像并输出实际镜像摘要，然后在 `docker --network none`、UID 10001、cap-drop ALL、只读根目录/只读二进制、私有 tmpfs 内运行受控 `scripts/offline_lab/t24_airgap_bootstrap.py`。测试主动检查无有效 Linux capability、原生 arch、非 loopback 出站路由不可用；**容器内不拉取任何模块、规则集或外部 URL**，外层宿主为准备环境仍可能联网。
+- air-gap 期间对锁定 Core **只执行版本与最小三 loopback Mixed 入口 native `check`**，不启动 Core/代理，不创造有版权限制的 CN 规则。真实 Daemon 在安全 XDG 用户路径上连续启动两次，每次用 Unix socket `status/capabilities` 验证 SQLite 0600/目录0700/socket0600、Core 意图 stopped、无 applied/LKG/recovery，以及离线资源、Core 发行等能力仍 false；SIGTERM 结束后再次打开同一测试库验证持久代际没有意外变化。标准 CI 新增 Python 负面门槛防止测试悄悄将代理运行、TUN、规则下载或未获许可离线发行标为通过。
+- **只算 native air-gapped management-plane bootstrap 前置证据**：Python Docker 镜像 tag 尚未 pin digest；不包含真实 CN 离线包、路由/DNS/Core 流量、不具备两种架构 tar 离线安装验证、未解决 `geoip:bing` 和许可证来源/署名，不代表完整 T24；更不证明 T15/T23 真实断电、Restore/GC、T25 72h/7d/30d。Linux 无 TUN、CN 28 组/五层规则、订阅/ISP 分流排除与稳定 `main` 不变。
+
+### 2026-10-24 — M5 ADR 0147 原生 amd64/arm64 禁网 Core 回环真实 SOCKS5 验证（T24 仍 OPEN）
+
+- ADR 0146 已在两架构真实无网络容器中启动管理 Daemon/SQLite/Unix socket，但 Core 只进行了 version/check，**没有实际代理 TCP 流量**。新增单独的网络隔离 Core data-plane 前置测试：两个原生架构分别运行已校验哈希的批准 Core，以只绑定 127.0.0.1 的三个 Mixed listener（Rule/Direct/Selected）对容器内临时 TCP echo server 发真实 SOCKS5 CONNECT 和唯一消息并检查回显；拒绝未认证 Clash API，核对临时 token 认证下的固定 Core 身份，验证干净 SIGTERM。没有 TUN/外部路由、DNS、规则文件、节点凭据或用户状态。
+- 保留已有管理 Daemon 的两次离线启动不变；两个独立容器测试必须同时通过。将前期两个原生 runner 都记录的 OCI 多架构摘要 `sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70` 固定为测试镜像来源，不声明完整宿主/供应链可复现。标准 CI 增加 API/SOCKS 错误、非本地监听、远端 URL/DNS/SRS/TUN/系统代理的拒绝测试。
+- **仅代表无外网命名空间中的 localhost SOCKS5 数据面已工作，不代表完整 CN 五层分流、实际远端代理/DNS、合法 SRS 离线分发、双架构 tar 离线安装或用户恢复。** 67 个 CN 资源许可证、geoip:bing、T15/T23/T24/T25、Core 真正恢复/两次回滚与 72h/7d/30d 稳定性验收仍未完成，正式发行/Restore/GC 仍禁止；main 不动、PR #1 Draft。
+
+### 2026-10-25 — M5 ADR 0148 禁网且配置真实 Core 路径的冷启动拒绝门槛（T24 仍 OPEN）
+
+- ADR 0146 在无网络容器内启动 Daemon/SQLite 但**未设置 Core 路径**，ADR 0147 则仅独立运行 Core 的 localhost SOCKS5 数据面，仍未验证真正 Daemon 的 artifact verifier 和带 Core 配置的冷启动。新增第三个原生 amd64/arm64 的 `docker --network none`、非 root、cap-drop ALL、只读 rootfs、0700 tmpfs 测试。宿主 CI 在联网构建阶段将预先校验 SHA 的 Core 文件 root-own（只用于允许 daemon 的安全 verifier 读取），容器仍是 UID 10001、无 root 权限；隔离前再次与 `resources/core.lock.json` 对应架构的 SHA 对照，隔离内通过 nofollow / regular / nlink / mode / owner / hash 双重拒绝无效可执行文件。
+- 测试 Daemon 真正以 `KARING_TUI_CORE_PATH` 和全新私有 XDG/SQLite 运行，必须显示 `core_configured=true` 但 **无 Applied/LKG 代际、core_state=stopped、pid=0、recovery=false、desired=stopped**，管理密钥 `core-control.secret` 必须 owner-only/0600/64 位 hex，Socket/DB 0600、目录 0700，且离线包和 Core 分发能力继续为 false；没有任何 Core 2080/2081/2082/3057 端口监听。明确发起一次测试用 `core start` 但因没有已提交代际必须失败且不得创建活动 Core；由于现有生命周期允许错误启动请求先持久化 run 意图，**实验必须再发 `core stop` 并确认 durable stopped**，第二次启动同一一次性 SQLite 时检查 secret 原始摘要和状态连续；独立无状态环境中的软链接 Core 和伪造 Core 必须被拒绝且不能留下监听 socket/控制 secret。
+- 这是一项**拒绝错误激活的管理面安全测试**，不是从真实 Applied generation 启动 Core、编译/命中 CN 五层规则或进行远程 DNS/节点流量，更未测试已批准许可证的离线 tar 安装。仍保留 68/67/1 CN 来源约束、无订阅/ISP 分流、无 TUN；T15/T23/T24/T25、HMAC/凭据/两次回滚和 72h/7d/30d 长稳 OPEN，stable main / 外层 Draft PR #1 不改变。
+
+### 2026-10-25 — M5 ADR 0149 双架构禁网 Daemon 真正提交代际后托管 Core 本地回环流量（完整 T24 仍 OPEN）
+
+- 前期 ADR 0146/0147/0148 分别验证了无 Core 路径的 SQLite/Daemon、独立 Core 本地 SOCKS5 TCP 流量，以及配置批准 Core 但没有已提交代际的安全拒绝；**尚未证明通过 Daemon 的生产 Unix API 提交/编译/应用 V1 声明后，真正从 Applied generation 启动受托管 Core 并透传数据**。新增第四个原生 amd64/arm64 的独立 `docker --network none`、UID 10001、cap-drop ALL、只读根目录和 0700 tmpfs 容器。复用已锁定 SHA 的批准 Core、与原有测试完全分离的临时状态和相同的无外网/非特权检查。
+- 使用一次性的 **纯合成 localhost** 声明：单个只指向 127.0.0.1 临时端口的 SOCKS5 Node、CurrentSelected 唯一本地节点、FINAL DIRECT、DNS fixture 仅 127.0.0.1、**不包含 CN SRS、GeoSite/GeoIP/ACL 命中、订阅数据、远端规则或可用公网节点**。从真正的 Unix Socket API `POST /v1/declaration` 提交，再 `compile` + `apply`，严格校验期望修订、声明/配置 SHA、rule_set_count=0、Applied generation>0。再通过真实 CLI `core start`，确认 Core 是当前 Daemon 同 UID 的已批准二进制子进程；对管理入口 Rule 2080、Direct 2081、Selected 2082 发真正 SOCKS5 CONNECT 与回环消息，后者必须经过同容器内严格只接收目标 127.0.0.1:echo_port 的**合成 SOCKS5 Node**。显示验证管理面、编译器、代际持久化、当前选中出口和 Core 数据面，而非借用 ADR 0147 的独立 Core。
+- 明确执行 `core stop` 后检查停止意图/PID/端口，再重启**相同隔离 SQLite** 的 Daemon 并重复启动和本地三入口流量验证；两次退出都必须干净。标准 CI 增加拒绝外部节点/DNS/TUN/SRS、非法生成代际与工作流缺项的负面用例；双架构分别要求前期三项+本次第四项均通过。**只验证无外网命名空间里合法的合成规则/选中出口和已提交代际，不代表原 CN 28 组/五层真实规则、真实 DNS/代理、法律允许分发、离线 tar 安装、VM 断电恢复、HMAC/凭据双回滚或 72h/7d/30d soak。** T15/T23/T24/T25、CN 68/67/1 与许可证、stable main/外层 Draft PR #1 原有门槛保持不变。
+
+### 2026-10-25 — M5 ADR 0150/0151 禁网真实托管 Core 三入口隔离与 Selected 故障拒绝（T24 仍 OPEN）
+
+- ADR 0150 在 ADR 0149 真实 Daemon/SQLite applied generation 的两个启动周期中，将三个入口的 SOCKS5 TCP 回显与合成 Selected SOCKS 节点计数绑定：Rule 2080 / Direct 2081 不得经 Selected，Selected 2082 必须且只能经一次该节点。独立单元用例拒绝直连旁路、交叉路由和节点报错；不涉及真实 CN 路由或外部服务。
+- ADR 0151 进一步为同一 localhost 合成 SOCKS 节点增加显式 SOCKS5 CONNECT 拒绝开关；在**故障注入期间**仍要求 Rule/Direct 各自回显成功且不接触该节点，Selected 必须在有界超时内失败而不能隐式直连，并验证拒绝实际到达节点、没有成功转发、Core 的 PID/已应用代际和健康状态保持不变。取消拒绝后 Selected 必须恢复成功；Daemon 在同一私有 SQLite 重启后再执行一次相同的成功→拒绝→恢复序列。双原生架构均保留原有四个完全独立的 `--network none` 测试命名空间和普通用户/cap-drop/read-only 限制。
+- 这只验证**受控 localhost SOCKS5 应用层拒绝**，不是公网故障、DNS/GeoSite/GeoIP/ACL 命中、合法 CN 规则/内核分发、真正离线 tar 安装、物理掉电、两次回滚或长期 soak；68/67/1 的 CN 来源/许可证阻断及 T15/T23/T24/T25 和 M5 发布门槛全部保持 OPEN，不开启 Restore/GC，不改变 `main` 或正式发行 Draft PR #1。
+
+### 2026-10-25 — M5 ADR 0152 合成托管 Core 运行期间的未应用声明/CAS 拒绝（T24 仍 OPEN）
+
+- ADR 0151 已覆盖本机合成 Selected SOCKS5 上游显式拒绝与恢复；本阶段进一步覆盖 **运行配置/声明的代际分离**。在真实 Daemon 托管、已应用 config revision 1/generation 1 且三入口健康的隔离测试中，先用实际 Unix API POST 非法顶层 TUN 字段并要求 **400、声明 head 不变**；再仅改 `log_level`（warn→error），正常提交 immutable declaration revision 2、回读其 SHA，并用同一声明编译器校验新原生配置 SHA 与旧应用配置不同、不带任何 CN SRS。此候选只暂存，不允许激活。
+- 使用 intentionally stale `expected_config_revision=0` 发起 revision 2 的正式 apply，必须返回 **HTTP 409**，且真实 Core PID、running/desired、已应用 generation、LKG、config revision 1 与实际本机 Rule/Direct/Selected 流量均不改变，无 recovery/挂起操作。执行显式 stop 后，重新启动同一个隔离 SQLite 的 Daemon，**必须同时保留声明 head=2 与已应用 generation=1**，再明确启动该旧已应用代际并重复合成 Selected 故障/恢复与三入口 TCP 测试，最后干净退出。添加 Python 负面测试防止误允许 TUN、远端 DNS/节点、错误 LKG/PID 或缺失的冲突响应。现有双架构各四个 network-none 容器不变。
+- 此验证仅证实**正常暂存与激活前的 stale CAS 拒绝**，不是有效候选的实际替换、Check 失败故障注入、运行期间真实断网、掉电/故障回滚、正式恢复、CN 68/67/1 离线许可/打包或长时浸泡；T15/T23/T24/T25、M5 release、Restore/GC 及 `core_distribution=false`、`cn_preset_offline_bundle=false` 均不改变。稳定 `main` 和外层 Draft PR #1 不变。
+
+### 2026-10-26 — M5 ADR 0153 双原生架构的运行中有效代际切换与持久恢复（T24 仍 OPEN）
+
+- ADR 0152 已证明合成声明修订号与实际应用配置版本可安全分离，并在真实 Core 正运行时拒绝过期 CAS。新增 ADR 0153：在相同 **双原生 amd64/arm64、无网络、普通 UID、cap-drop ALL、只读根/独立 tmpfs** 的第四测试容器中，保留之前的错误声明 400、过期 apply 409、未应用声明与旧应用代际跨 Daemon 重启、三入口本地转发及 Selected 拒绝/恢复证据。
+- 之后在**第二次 Daemon** 正运行旧 Applied generation 1 时，重新读取已暂存的 V1 declaration revision 2 和 SHA，用真实编译器再次编译并要求原始 native config SHA、零规则集闭包一致；再明确发起 **`POST /v1/declaration/apply`，`expected_config_revision=1`**。此操作会停止/重启 Core，**不承诺原有连接无中断**。只接受完整的 HTTP 200 回执：base=1、target=2、declaration revision/SHA、native config SHA、正值尝试 ID、新 generation ID；运行状态必须为 config=2、declaration=2、Applied=LKG=new、recovery=false、无挂起操作、`desired=running`，且新的同 UID 已批准 Core 子进程 PID 不能等于此前 PID。
+- 切换后再次对 Rule 2080 / Direct 2081 / Selected 2082 发送真实本地 SOCKS5 CONNECT/echo，并在 Selected 合成 SOCKS5 节点拒绝时确认其不能回退直连、Rule/Direct 不受影响。显式停止新 Core 后，在**相同一次性 SQLite** 进行第三次 Daemon 冷启动，要求新代际、LKG、声明 SHA/修订和 stopped 意图持久且**不自动启动**；再显式启动新版配置、测试三入口和 Selected 拒绝/恢复、验证 Core 可执行文件身份，最后干净停止。标准 Python 用例拒绝虚假成功回执、PID/代际未变、LKG/状态漂移和不受控网络字段；两个 native 任务和正常 CI/4 Race/Managed Core 均是合入门槛。
+- 此项**仅验证合成 localhost 日志等级变更的受控成功切换**，不是原 CN 28 组/五层路由真实资源、在线远端节点/DNS、零中断、双重回滚、T15/T23 真实断电、完整 T24 双架构离线 tar、CN 68/67/1 再分发许可和 T25 72h/7d/30d 长稳。所有 Restore/GC、正式发行及资源分发能力保持关闭，`main` 和外层 Draft PR #1 不变。
+
+### 2026-10-26 — M5 ADR 0154 已升级代际的单次 Core 崩溃、自动恢复与持久停止（T24 仍 OPEN）
+
+- ADR 0153 在双架构真实禁网 Daemon/批准 Core 的第四个隔离容器里完成了合成声明 revision 2 的有效 CAS、运行中 Core 代际切换、三入口本地 SOCKS5 TCP 与跨 Daemon 启动的持久配置。ADR 0154 在**第三轮 Daemon 正式显式启动已升级、且 Applied=LKG 的 generation 2 后**，再进行一次**仅限进程的 SIGKILL** 注入：Linux `pidfd_open`→检查真实 Daemon 子进程 PPID、普通 UID 和已批准 Core 可执行路径→`pidfd_send_signal`，不允许按 PID/进程组盲杀，也不回退到不安全的信号途径。
+- 必须在有界轮询中从实际管理 Unix API 看到同一个 config/declaration revision 2、Applied=LKG generation 2、`desired=running`、无 recovery/熔断，新的 Core PID 非原 PID、可执行文件及父进程身份合法、故障计数递增，然后对 Rule 2080 / Direct 2081 / Selected 2082 实际 localhost 回显再测，在 Selected 合成本地上游拒绝时仍独立/禁止隐式直连，恢复后 Core PID 不应二次变化。显式停止后等待超过首轮自动重试退避时间，再检查无端口监听、没有意外自启；**第四次重新打开同一个一次性 SQLite**，验证 stopped 意图、Applied/LKG、declaration SHA 均未变化。不加新的测试容器，不访问公网，也不声称生产环境无中断。
+- 普通 Python 单元用例增加新 PID/故障计数、旧 PID 虚假恢复、LKG/版本/熔断/恢复状态漂移、非法 PID 与失败校验不得发送 SIGKILL、pidfd 必须被关闭的失败关闭机制。**该实验不是实际宿主/VM 重启、断电、活跃用户连接持续性、网络断线、正式恢复/双回滚、可分发 CN 资源/许可、T24 正式离线安装包或 T25 72h/7d/30d 长时间浸泡**。CN 28 组五层规则不变，无 TUN/订阅-ISP 分流层；T15/T23/T24/T25、Restore/GC、正式发行、`core_distribution=false`、`cn_preset_offline_bundle=false`、`main`/外层 Draft PR #1 保持原发布阻断。
+
+### 2026-10-26 — M5 ADR 0155 原生禁网短周期 Core 启停与 Daemon FD 稳定性前置测试（T25 长期 soak 仍 OPEN）
+
+- 在 ADR 0154 的真实批准 Core 子进程一次 pidfd 信号崩溃、恢复、显式停止，并第四次打开同一隔离 SQLite 验证 stopped/LKG 后，**第五次真实 Daemon 启动时必须保持 Core stopped**；随后仅在相同的双原生架构、普通用户、只读根/无任何非本机网络权限的第四容器中，连续 **3 次明确 Core start→Rule/Direct/Selected SOCKS5 本机回显→Core stop**。每次确认真实同 UID Daemon 子进程、锁定可执行文件、相同 config/declaration revision 2、相同 Applied/LKG、无恢复/活动操作、停止时无 PID/监听端口；中间一次附加 Selected 合成 SOCKS CONNECT 拒绝与恢复验证。第六次打开**同一一次性 SQLite** 再次拒绝任何隐式 Core 自动启动，确认停止意图和声明 SHA 未漂移。
+- 每次停止后只读取 Daemon 自身 `/proc/<pid>/fd` 数量（不观察、不更改宿主其他进程），以启动基线+24 和样本跨度16作为**粗粒度 FD 漂移早期告警**，绝不把 3 次循环或 FD 上界当成资源漏损 SLA。全成功才打印 `T25_AIRGAP_SHORT_LIFECYCLE_SMOKE=ok`，始终打印 `T25_72H_7D_30D_SOAK_VERIFIED=false`；标准 Python 单元负面测试覆盖无效样本、未停状态、次数/端口故障。双原生架构各四个相互隔离的 `--network none` 测试继续强制通过。
+- **不是** T25 72h/7d/30d 长稳、真实联网吞吐、系统 DNS/CN 五层路由、完整离线发行、真实 T15/T23 电力事件、凭据/资源恢复和两次回滚的完成证明。CN 28 组、无 TUN、订阅/ISP 分流层排除不变；T15/T23/T24/T25、CN 资源许可证与分发门槛、Restore/GC、`core_distribution=false`、`cn_preset_offline_bundle=false`、`main` 和外层 Draft PR #1 不变。
+
+### 2026-10-26 — M5 ADR 0156 原生禁网三入口并行回环短压力前置验证（T25 仍 OPEN）
+
+- 在 ADR 0155 已有的双原生架构第四个无外网容器、第五次 Daemon/同一隔离 SQLite、已明确运行 Applied=LKG generation 2 的**第三个 Core 启停周期**中，增加 6 个同时进入 SOCKS5 处理流程的受限本机线程（每入口 Rule:2080、Direct:2081、Selected:2082 各 2 个），每线程完成 2 个不同 payload 的真实 TCP CONNECT 回显，共 **12 个受限本机请求**。每个 socket 使用有界超时，barrier 与任务结果等待均有上界，无任何对外网络连接、真实用户数据、订阅/ISP 分流或 CN SRS。
+- 合成 Selected 本地 SOCKS 节点新增互斥保护的接受/拒绝计数和 TCP 分片可重组的**32 字节原始入口标签审计**，要求并行负载中**只增加 4 次 Selected 节点 CONNECT，且准确收到 4 个不同的 Selected 标签**、没有新拒绝或节点故障：Rule/Direct 绝不能绕入 Selected，Selected 也不能偷偷直连。并发结束后重新要求真实 Daemon 报告同一 Core PID、config/declaration revision 2、Applied=LKG 代际和无 recovery/活动操作，之后完成原有停止、端口消失、Daemon 文件描述符有界采样、六次打开同一 SQLite 后无自动启动的检查。标准 Python 负面回归拒绝伪并行/重复 payload、错误入口计数、失败请求、未授权 IP/端口、节点故障与非法采样。
+- 此实验只验证约 12 个 localhost TCP 往返和少量并行连接的**早期功能回归**，**不是吞吐、p99 延迟、长时负载、零中断、CN 原五层分流实物资源、真正 offline tar 安装或 T25 的 72h/7d/30d soak**。完成时额外打印 `T25_AIRGAP_PARALLEL_LOOPBACK=ok`，始终打印 `T25_72H_7D_30D_SOAK_VERIFIED=false`。T15/T23/T24/T25、CN 规则资源许可证、Restore/GC、`core_distribution=false`、`cn_preset_offline_bundle=false`、稳定 `main` 和外层 Draft PR #1 全部保持原发布阻断。
+
+### 2026-10-26 — M5 ADR 0157 并行 Selected 故障拒绝下的 Rule/Direct 隔离恢复（T25 长稳仍 OPEN）
+
+- 在 ADR 0156 双原生架构第四个禁网容器的**第三次显式 Core 启动**、相同 config/declaration revision 2、Applied=LKG generation 2 与原 Core PID 下，先完成 6 客户端/12 次 **全部成功**的三入口本机并行 TCP 回显与 Selected 节点精确标签审计；然后仅打开合成 127.0.0.1 Selected SOCKS 上游的 **CONNECT 拒绝开关**，再以 6 个有界并行客户端/共 12 次操作同时验证：Rule:2080、Direct:2081 各 4 次 distinct TCP echo 必须成功，Selected:2082 的 4 次连接必须显式失败关闭、不能改走 Direct。拒绝期间合成 Selected 节点 **成功连接数与成功转发标签不变**，拒绝计数增加 4–16 次（只允许有上界重试），无节点异常、错误流量交叉；即使测试中抛异常也必须在 `finally` 关闭拒绝开关。
+- 故障注入后真实 Daemon 应保持同一 Core PID、revision 2、Applied=LKG、运行意图、未熔断与无 recovery；恢复上游后再完成完整的 6 客户端/12 次三入口并行本机回显，要求额外 4 个**确切 Selected-only 32 字节标签**，并继续 ADR 0155 的停止、无监听、FD 采样及重新打开同一临时 SQLite 后保持 stopped 意图。新增 Python 负面用例拒绝非法端口、失败连接、意外直连、Rule 串到 Selected、未增加拒绝计数、拒绝风暴、节点错误及拒绝开关未复位。
+- 这是**合成应用层节点拒绝与几十次 localhost 请求**，不是生产公网断线、DNS/CN 原五层 SRS 分流资源、吞吐/延迟 SLA、真实 VM 停电、双回滚、离线 tar 安装或 T25 的 72h/7d/30d soak。仅在双原生架构真实实验全成功时打印 `T25_AIRGAP_PARALLEL_REFUSAL_ISOLATED=ok`，永远保留 `T25_72H_7D_30D_SOAK_VERIFIED=false`。CN 28 组、无 TUN/订阅-ISP 分流层、T15/T23/T24/T25 发布阻断、资源再分发许可、Restore/GC、`core_distribution=false`、`cn_preset_offline_bundle=false`、`main`/外层 Draft PR #1 全部不变。
+
+### 2026-10-26 — M5 ADR 0158 显式停止时仍有已建立 SOCKS5 连接的可控断开（T25 长稳仍 OPEN）
+
+- 在 ADR 0157 的双原生架构第四个无外网容器、第五轮真实 Daemon 管理的第三次显式 Core 启动周期中，完成成功的 12 次并行三入口回显 → 并行 Selected 故障拒绝与健康 Rule/Direct → 恢复后的 12 次并行回显后，**不重启 Core**，分别为 Rule:2080 / Direct:2081 / Selected:2082 建立各一个实际 SOCKS5 CONNECT 到隔离容器 `127.0.0.1:<临时回显端口>`，发送各自不同 payload 并完整验证 echo，**保留这三个既有 TCP socket 不主动关闭**。每个握手/echo 均有上界，不接触外部网络。合成 Selected 上游计数仅能因 Selected 的一个 held 连接增加一次，Rule/Direct 不能串路。
+- 在三个 socket 同时保持建立状态时，通过真实管理 CLI 执行一次显式 `core stop`，要求后续管理状态显示 stopped、三条旧连接在 3 秒内各自**EOF 或连接复位/中止**，不能仍可回传数据，也不能把超时当成成功；`ExitStack` 确保即使连接/停止/状态检查失败也关闭全部本机测试 socket。保持原有 Applied=LKG、新旧修订、PID=0、无监听端口、Daemon FD 预算和第六轮重新打开同一一次性 SQLite 后停止意图不被覆盖的验证。新增普通 Python 负面测试覆盖非法请求、握手拒绝/echo 不匹配、错误路由和连接未断开、超时、异常资源清理。
+- **这项验证刻意终止测试客户端已建立连接**，不是所谓无中断热切换、真实流量/吞吐 SLA、CN 28 组和五层规则源的完整打包、宿主断电/双回滚、正式恢复、可再分发离线安装包或 T25 72h/7d/30d soak。双原生成功才输出 `T25_AIRGAP_HELD_SESSIONS_STOPPED=ok`，始终保持 `T25_72H_7D_30D_SOAK_VERIFIED=false`。Linux 无 TUN、订阅/ISP 分流层排除、T15/T23/T24/T25 和 CN 资源许可证阻断、Restore/GC、`core_distribution=false`、`cn_preset_offline_bundle=false`、稳定 `main` 和外层 Draft PR #1 不变。
+
+### 2026-10-26 — M5 ADR 0159 已建立会话显式停止后的同代际安全重启（T25 长稳仍 OPEN）
+
+- 在 ADR 0158 第五轮真实禁网 Daemon 中，三条 Rule/Direct/Selected 已建立 SOCKS5 TCP 连接被**明确 `core stop`** 后验证 EOF/reset、PID=0、无监听端口与 Applied=LKG 原代际；本阶段第**六次**在同一个一次性 SQLite 上冷启动真实 Daemon，必须先确认 stopped 意图、declaration/config revision 2、Applied=LKG generation 2、原始 declaration SHA、无 recovery/熔断/挂起事务，且**不能擅自启动 Core**。
+- 之后只接受**一次明确 CLI `core start`**，要求批准并锁定的同 UID Core 可执行文件为当前 Daemon 的直接子进程，真实 Core PID 正常、同一已应用代际和 LKG；重新通过 Rule:2080、Direct:2081、Selected:2082 三入口不同本机 echo 并核对 Selected 节点只有一次连接。再注入一次合成 Selected SOCKS5 CONNECT 拒绝，Rule/Direct 仍工作、Selected 不得静默 Direct 旁路，管理 Core PID 不能变化；解除拒绝后再成功转发三入口并仅增加一个 Selected 节点连接。
+- 即使三入口或节点负面验证失败，只要明确启动成功，该实验也通过 `finally` 再执行一次真实 `core stop`、核对 stopped/PID=0/端口关闭；随后第**七次打开同一私有 SQLite 的 Daemon**，必须继续 stopped、应用/可信代际与声明 SHA 不变且绝不自动启动。测试总 Selected 成功 CONNECT 计数从 24 增至 26；成功时额外打印 `T25_AIRGAP_HELD_STOP_RESTART=ok`，始终保留 `T25_72H_7D_30D_SOAK_VERIFIED=false`。Python 独立回归覆盖未经授权自动启动、代际/声明漂移、成功重启/中途回显失败都必须清理等分支。
+- 这仍是**刻意断开旧会话后、由操作员重新启动的纯 localhost 功能验证**，绝不承诺原 TCP 会话零丢失、实际 CN 五层/28 组规则分发、真实代理/DNS、完整 offline tar、VM 掉电/双回滚、T15/T23/T24/T25 验收或 72h/7d/30d 长稳。Linux 无 TUN、订阅/ISP 分流层排除、CN 许可证审核、Restore/GC、`core_distribution=false`、`cn_preset_offline_bundle=false`、稳定 `main`/外层 Draft PR #1 均不变。
+
+### 2026-10-26 — M5 ADR 0160 Core 异常崩溃时三个已建立 TCP 隧道断开及监督恢复（T25 长稳仍 OPEN）
+
+- 在现有第三次真实 Daemon 中只使用 **ADR 0154 已有的一次 pidfd 定向 SIGKILL**，不添加第二次杀进程或可写生产数据：先通过 2080 Rule、2081 Direct、2082 Selected 完成三条 SOCKS5 CONNECT + 精确 localhost 回显，并保留三个仍打开的客户端 socket。要求只有 Selected 的上游本地节点计数增加 1；建立前后分别读取实际 daemon 的 PID、Applied/LKG generation 2 和 config/declaration revision 2，不一致则不允许故障注入。
+- 用原有同 UID、直接子进程、`/proc` 可执行文件及 pidfd 的验证杀死**当前批准的 Core**，等待现有 supervisor 从同一 Applied/LKG 恢复新的真实 PID，再复测三入口健康、Selected fail-closed 和恢复。即便新监听端口已经健康，仍要求**三个旧 socket 分别在有限时间内 EOF/abort/reset**；失败时通过 ExitStack 无条件关闭所有测试 socket，不允许将持续转发的旧连接误算成成功。独立 Python 模拟回归覆盖错误 PID、建立过程中 PID 漂移、Rule→Selected 旁路、Core 恢复失败和旧 socket 未断开。
+- 全成功增加 `T25_AIRGAP_CRASH_HELD_SESSIONS_CLOSED=ok`，永远保留 `T25_72H_7D_30D_SOAK_VERIFIED=false`；无新镜像、网络权限、TUN、CN 规则包或外网资源。**只验证单次同机禁网 localhost Core 崩溃和客户端断开，不是用户端的无损连接恢复、真实 DNS/远端代理、离线规则许可证、VM 物理断电、两次故障回滚、72h/7d/30d soak 或正式发行验收。** T15/T23/T24/T25、`core_distribution=false`、`cn_preset_offline_bundle=false`、Restore/GC、稳定 `main` 和外层 Draft PR #1 仍 OPEN。
+
+
+### 2026-10-26 — M5 ADR 0161 原生受控三入口重连与双进程 FD 回落前置试验（T20/T25 未验收）
+
+- 在 ADR 0160 的同一第四个双架构 `docker --network none` 隔离容器中，等待第六次 Daemon 显式启动且原有 Selected 故障/恢复通过后，固定新 Core PID、config/declaration revision 2 与 Applied=LKG generation 2。以完整 SOCKS5 CONNECT+本地 echo+关闭的 Rule/Direct/Selected 三入口为一组执行 **24 组、共 72 条新 TCP 连接**，每组仅 Selected 增加一次真实合成上游 CONNECT，不能旁路；每八组重查 Daemon 真实状态/PID。
+- 在重连前和结束后读取**已核准同 UID Core 子进程**和 Daemon 自身 `/proc/<pid>/fd` 数量，允许至多 4 秒有限回落，限制 Daemon ≤ 基线+16、Core ≤ 基线+24、计数有效且均小于 1024；这是短时 FD 粗粒度漂移预警，不等同无泄漏证明、真实用户吞吐或延迟 SLA。任一回显、路由、PID、代际或 FD 校验失败，仍由现有 `finally` 显式 stop 并核查无监听/持久停止意图。Python 无网络回归覆盖计数非法值、状态漂移、Selected 旁路与回落失败。
+- 双原生通过才额外打印 `T20_AIRGAP_BOUNDED_RECONNECT_FD=ok`，永远明确 `T20_1000_RECONNECTS_VERIFIED=false` 及 `T25_72H_7D_30D_SOAK_VERIFIED=false`。未实现全量 T20 千次重连、长时 goroutine/内存曲线、真实 DNS/远端节点、CN 五层及 28 组、完整合法离线包、掉电/双回滚或 72h/7d/30d。T15/T23/T24/T25/Restore/GC/正式发行门槛保持 OPEN，不引入 TUN/订阅-ISP 分流层或改变 stable `main`。
+
+
+### 2026-10-26 — M5 ADR 0162 三入口真实 mixed HTTP CONNECT 数字本机地址验证（T22 部分，整体仍 OPEN）
+
+- 继续复用第六次真实 Daemon 和原生双架构第四个 `docker --network none` 隔离环境，在 ADR 0161 的 24×3 SOCKS5 重连完成后，对同一个已授权 Applied=LKG generation 2、固定 PID 的 Core 依次通过 Rule:2080、Direct:2081、Selected:2082 发送 **HTTP/1.1 CONNECT 127.0.0.1:<仅本机临时 echo 端口>**，使用严格有限的响应头读取、HTTP 200 校验和二进制回显精确匹配。只允许 Selected 增加一次本地 SOCKS 节点连接，Rule/Direct 不得旁路，不能意外增加拒绝或更换 Core PID/代际。
+- Python 离线负向用例覆盖非 200/截断/超大/非法 HTTP 头、不匹配 echo、无效端口或 payload、错误 PID、跨入口和 Selected 旁路。全部真实双架构前置验证通过才输出 `T22_AIRGAP_HTTP_CONNECT_IP=ok`；仍明确 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。
+- **本切片不包含 SOCKS 域名解析、HTTP absolute-form、UDP、认证、真实 DNS/远端节点、CN 五层及 28 组真实资源、许可证离线分发、物理掉电/双回滚/正式恢复或长时稳定性验收。** T22 整体、T15/T23/T24/T25、Restore/GC、发行权限继续关闭，无 TUN/订阅-ISP 分流层，不更改 stable `main`。
+
+
+
+### 2026-10-26 — M5 ADR 0163 HTTP CONNECT Selected 上游拒绝时严格失败关闭（T22 仍未全部验收）
+
+- 在 ADR 0162 已批准 Core 的同一第六次真实 Daemon 与双架构第四个 network-none 容器中，暂时拒绝合成 Selected SOCKS 节点的上游连接。要求 Rule:2080、Direct:2081 的 HTTP CONNECT 数字 localhost 回显仍成功，且合成 Selected 上游的接受与拒绝计数均不能因这两条流量变化。
+- 通过 Selected:2082 的 HTTP CONNECT 接受空 EOF/reset 或完整受限 HTTP/1.x 4xx/5xx；若 mixed HTTP 入口在上游拨号结果前已返回 CONNECT 200，必须再发送固定的本机应用层探针，并在原有四秒上限内验证零数据与 EOF/reset，否则立即失败。其他 2xx、转发任何应用数据、200 隧道卡住、重定向、超时、畸形/截断头和隐式直连旁路仍严格拒绝；还必须独立观察到 Selected 上游拒绝且成功接入计数不增长。任何失败均在 finally 中清除故障开关，然后再次核对 Core PID/代际并复验全部三个 HTTP CONNECT，Selected 恢复后仅增加一次合成上游连接。
+- 双原生完全通过才输出 T22_AIRGAP_HTTP_SELECTED_FAIL_CLOSED=ok。保留 T22_HOSTNAME_AND_UDP_VERIFIED=false、T20_1000_RECONNECTS_VERIFIED=false、T25_72H_7D_30D_SOAK_VERIFIED=false，且 T15/T23/T24/T25、CN 五层/28 组资源、许可证离线分发、Restore/GC、正式发行门槛仍未满足。无 TUN、订阅/ISP 分流层，稳定 main 不修改。
+
+### 2026-10-27 — M5 ADR 0164 六客户端并发 HTTP CONNECT 路由隔离（T22 部分，未验收）
+
+- 复用 ADR 0163 故障恢复后的第六次真实 Daemon、已批准 Core PID、Applied=LKG generation 2 与同一个双架构隔离 `docker --network none` 容器，使用 barrier 同步释放六个 HTTP CONNECT 客户端，Rule:2080 / Direct:2081 / Selected:2082 各两个；每个客户端顺序新建两条 HTTP/1.1 数字本机连接并完成精确回显，总计 **12 条真实 HTTP CONNECT**，不涉及网络 DNS。
+- 复用已有 32 字节唯一 `parallel_probe_payload` 标签。合成 Selected 上游必须只看到 **四条成功新连接与四个正确、不重复的 Selected 负载标签**；Rule/Direct 严禁通过 Selected，拒绝计数不能增加。测试前后核对 Core 原 PID、declaration/config revision 2 与 Applied=LKG，错误仍触发现有显式停止及冷启动不复活检查。Python 无网络负向用例覆盖错误 PID、失效节点、并发工作器错误、错误路由与恰好抵消的跨路由、标签重复及拒绝计数漂移。
+- 原生全绿后方能输出 `T22_AIRGAP_PARALLEL_HTTP_CONNECT=ok`；明确保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。完整 T22、CN 五层/28 组真实资源、真实 DNS/远端、长时测试、恢复/发行安全门槛保持未完成；不引入 TUN 或订阅/ISP 分流层，稳定 `main` 不变。
+
+
+### 2026-10-27 — M5 ADR 0165 并发 HTTP Selected 上游拒绝与原 Core 恢复（T22 部分）
+
+- 复用 ADR 0164 双原生架构第四个 `network none` 容器和已批准的第六次真实 Daemon。完成六客户端/12 次全部成功 HTTP CONNECT 后，仅令合成 Selected SOCKS 节点拒绝上游：再同步释放 6 个 HTTP 客户端，两条线程分别由 Rule 2080、Direct 2081、Selected 2082 发起，每客户端两次全新 CONNECT，共 8 次 Rule/Direct 本地 HTTP 回显成功及 4 次 Selected 严格拒绝；任何早发 HTTP 200 均须继续证明应用数据零转发及有界 EOF/reset，不能静默直连。
+- 失败期间 Selected 的成功计数及此前 32 字节标签必须不变，拒绝计数有界增加 **4–16**，Rule/Direct 不得使用 Selected，真实 Core PID/Applied=LKG 与声明修订不变。无论成功或失败均在 finally 关闭合成拒绝开关；恢复后原 Core 再跑 6 客户端/12 次 HTTP CONNECT 成功测试，Selected 只多 4 条真实上游及四个正确的唯一标签。异常、错误路由、补偿性绕行、拒绝风暴、PID 漂移均失败关闭；原有 stop、监听关闭及冷启动停止意图验证保持。
+- 原生双架构新提交全绿方可输出 `T22_AIRGAP_PARALLEL_HTTP_SELECTED_REFUSAL=ok`；完整 T22 域名、DNS、UDP、HTTP absolute-form、真实 CN 五层/28 组、长期浸泡、真实断电恢复、正式离线发行、T20 千次 UI 重连仍未验收。继续保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`，不启用 TUN/订阅-ISP 分流，不改稳定 `main`。
+
+
+### 2026-10-27 — M5 ADR 0166 已建立 HTTP CONNECT 隧道显式停止后必须断开（T22/T25 部分）
+
+- 在原双原生架构第四个 `docker --network none` 测试容器和第六次真实 Daemon 中，沿用 ADR 0165 并发 Selected 故障恢复后已批准同代际 Core，在原有最终 `core stop` 前分别为 Rule:2080、Direct:2081、Selected:2082 建立一条真实 **HTTP/1.1 CONNECT 数值 localhost** 隧道，严格读取受限完整 HTTP 200、完成精确回显，并刻意保持三条 socket 建立。仅 Selected 增加一个本机 SOCKS 上游连接且无新增拒绝，建连后还须读取真实 Daemon PID/Applied=LKG 以避免意外替换。
+- 复用既有一次显式 Core stop，不新增杀进程、启动或网络权限；停止后必须持久 stopped/PID=0、无代理端口监听、三条旧 HTTP CONNECT 在各三秒内 EOF/reset/abort，不能仍转发应用数据，超时亦不通过。内部 finally 无条件关闭所有测试 socket，错误仍失败关闭。无网络单元回归增加 HTTP 头错误/截断/超长、错误回显、非法参数、旧会话仍活跃、断开超时及安全错误码。
+- 双原生真实 Core 全通过才输出 `T22_AIRGAP_HELD_HTTP_STOP_CLOSED=ok`。合成 Selected 生涯接受计数从 61 增为 62；但 T22 完整域名/DNS/UDP、T20 1,000 次重连、T25 72h/7d/30d、CN 五层/28 组真实资源许可与离线打包、断电/恢复/正式发行仍未验收，继续 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。无 TUN/订阅-ISP 分流层，不修改稳定 `main`。
+
+
+### 2026-10-27 — M5 ADR 0167 同一次 Core 受控崩溃下 SOCKS5 + HTTP CONNECT 六条旧会话必须关闭（T22/T25 部分）
+
+- 在原生双架构第四个 `network none` 隔离容器、第六次真实 Daemon 及同一个批准 PID 的 Core 中，扩展 ADR 0160 已有的**唯一一次 pidfd 绑定 SIGKILL** 受控崩溃；在原先三条 SOCKS5 已建立回显会话之外，再保持 Rule:2080、Direct:2081、Selected:2082 各一条通过完整 HTTP CONNECT 200 与精确回显的真实本机 HTTP 隧道。故障前仅 Selected 共增加两条本机上游成功连接，Rule/Direct 不能跨路，拒绝计数不变，进程 PID/Applied=LKG 与配置声明修订必须重新核验后才允许原有崩溃注入。
+- 原有 Core 恢复后，三条旧 SOCKS5 与三条旧 HTTP CONNECT 均须在三秒内 EOF/reset/abort；绝不可接受任何旧应用字节或停滞超时。统一 `ExitStack` 负责所有旧 socket 清理；受控崩溃仍仅执行一次，原始两次恢复流量和上游拒绝审计不变。Python 无网络回归涵盖 HTTP 拨号部分失败、错误跨入口、错误 PID、任意旧连接幸存、安全白名单故障码；合成 Selected 生涯接受计数从 62 增加到 63。
+- 只有真实双架构 Core 测试全部通过才标记 `T22_AIRGAP_HELD_HTTP_CRASH_CLOSED=ok`。完整 T22 域名/DNS/UDP/HTTP absolute-form、T20 一千次重连、T25 72h/7d/30d、CN 五层/28 组真实许可资源、断电/回滚/Restore/GC/正式发行依然未验证；保留全部相应 false 标志，不引入 TUN 或订阅/ISP 分流层，不更改稳定 `main`。
+
+
+### 2026-10-27 — M5 ADR 0168 分次写入 HTTP CONNECT 请求头的真实三入口验证（T22 部分）
+
+- 复用原双原生架构第四个 `docker --network none` 容器、第六次真实 Daemon 和批准的 Applied=LKG generation 2 Core，先通过已有短周期故障/恢复测试，再分别对 Rule:2080、Direct:2081、Selected:2082 发送一次合法 **HTTP/1.1 CONNECT 数值型 localhost** 请求。单个请求被明确拆成 **六次连续客户端 `sendall` 写入**，切开 CONNECT 方法、CRLF 和 Host 头；Linux TCP 可能合并写入，**不得宣称**验证了真实网络分包。仍严格要求完整受限 HTTP 200 响应和精准二进制回显。
+- 前后必须核对真实 Core PID、配置/声明修订与 Applied=LKG；只允许 Selected 增加一次合成本机 SOCKS 上游成功计数，Rule/Direct 不得跨路，拒绝与节点失败计数不变。无网络测试增加六段请求字节精确一致、回显、非 200/畸形/截断/过长响应、非法参数、错误路由、PID 替换等失败关闭路径。合成 Selected 生涯计数最终由 **63 → 64**。
+- 真实双架构新提交完全通过才输出 `T22_AIRGAP_HTTP_SPLIT_WRITE_HEADERS=ok`，仍显式保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`。本切片不证明 HTTP absolute-form、真实 TCP 分包、域名/DNS/UDP、CN 五层/28 组真实资源许可、长时浸泡、恢复及发行，亦不包含 TUN/订阅-ISP 分流层或稳定 main 改动。
+
+### 2026-10-27 — M5 ADR 0169 HTTP absolute-form 数字本机 GET 三入口真实转发（T22 部分）
+
+- 复用已有原生 amd64/arm64 第四个 `docker --network none` 容器、第六次 Daemon 和批准的 Applied=LKG generation 2 Core，在原三入口 HTTP CONNECT/分次写入验证后、同一次显式停止前，增加 **唯一一个测试用 127.0.0.1:<随机端口> HTTP Origin**。三个入口 Rule:2080、Direct:2081、Selected:2082 各发送一次标准 `GET http://127.0.0.1:<端口>/t24-http-absolute-<入口> HTTP/1.1`，Origin 只接受已知三条 origin-form 请求路径及正确 Host；响应固定短报文与 Content-Length，收据仅记录允许的固定路径，不打印动态头或凭据。
+- 客户端要求完整且至多 1024 字节响应头、HTTP 200、精确 Content-Length 和独立 Origin 证实的响应正文。Origin 必须按入口顺序各观察一次实际 origin-form GET；只有 Selected 新增 1 次合成 SOCKS 上游成功计数，无新增拒绝/失败，不得串入 Rule/Direct 或静默直连；真实 Core PID、声明和运行修订、Applied=LKG 不变。增加无 Core 负向回归：非法端口、非 200/截断/异常头/错误长度与正文、伪造 Origin 收据、重复请求、跨路/绕过、PID 漂移及脱敏固定诊断码；合成 Selected 生涯总数由 64 调整至 65。
+- 新提交真实双架构完全通过才允许输出 `T22_AIRGAP_HTTP_ABSOLUTE_FORM_IP=ok`；这仅是本机 **HTTP absolute-form** 早期验证，不证明 HTTPS 站点、远程 DNS、SOCKS DOMAIN/UDP、完整 CN 五层/28 组许可规则、T20 一千次重连、T25 72h/7d/30d、真实断电/双回滚/Restore/GC/正式发行。保持 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`，无 TUN/订阅-ISP 路由层，不修改稳定 main。
+
+### 2026-10-27 — M5 ADR 0170 HTTP absolute-form Selected 拒绝时严格失败关闭及原 Core 恢复（T22 部分）
+
+- 基于已经双架构真实通过的 ADR 0169，复用相同无外网容器、同一第六次 Daemon/批准 Core PID、Applied=LKG generation 2 与既有 `127.0.0.1` 随机端口 Origin。增加只在合成 Selected SOCKS 上游开启的 CONNECT 拒绝：拒绝期间 Rule:2080、Direct:2081 各执行一次合法数字本机 absolute-form GET，须有完整精确 HTTP 200/短正文与 Origin 的正确 origin-form 收据，Selected 接受/拒绝计数均不能被这两个入口改变。
+- Selected:2082 发一次相同格式 GET，只允许零字节 EOF/reset/abort 或完整且不超过 1024 字节的 HTTP 4xx/5xx；任何 2xx/重定向/畸形或截断响应/无限等待一律失败。必须同时证明 Origin **没有**收到本次 Selected 请求，合成 Selected 成功接受数未增、拒绝数明确增长 **1–4 次**，不能静默 DIRECT 或串到 Rule/Direct。任何异常均在 `finally` 关闭拒绝开关；之后必须在**原 Core PID** 和相同代际/修订上让三入口 HTTP absolute-form 再全部成功，仅 Selected 新增一次成功上游连接，Origin 仅多三条准确收据，拒绝数不再增加。
+- Python 无网络负向回归覆盖错误 HTTP 状态/头、部分断开/超时、伪 Origin 收据、跨路与绕过、拒绝次数异常、PID 替换、恢复失败以及拒绝开关异常重置；只输出固定安全故障码。原生合成 Selected 生涯接受总计 **65→66**，最低拒绝数 **15→16**。只有新提交 CI/Go Race 与原生 amd64/arm64 全部通过才可标记 `T22_AIRGAP_HTTP_ABSOLUTE_SELECTED_FAIL_CLOSED=ok`。继续保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`；本测试不是远端 HTTP/TLS、域名/DNS/UDP、CN 五层 28 组真实资源许可、断电/恢复、T20/T25 长稳或发行验收，无 TUN/订阅-ISP 分流层，不改 `main`。
+
+### 2026-10-27 — M5 ADR 0171 Selected SOCKS5 DOMAIN 原始域名透传及独立上游收据（T22 部分）
+
+- 在已合并 ADR 0170 的受控真实 Core 上，复用第六个 Daemon、批准的同一 Core PID/Applied=LKG、原生双架构第四个 `docker --network none` 非 root 无权限容器、原 TCP echo 端口以及合成 Selected SOCKS 节点。Selected:2082 发送一次真正 SOCKS5 `ATYP=3` CONNECT，目标为固定保留测试域名 `t24-selected.invalid` 和当前 echo 端口。客户端验证握手、完整 0x00 CONNECT 成功响应与精确 echo，合成上游必须接收到**完全相同**的原始域名字节/端口并记录锁保护收据；只能该测试上游将域名映射到本机 `127.0.0.1`，禁止 DNS/WAN 解析，也不得接受其他域名/端口。原 ATYP=1 纯数字路径不放宽。
+- 严格比较原 Core PID、修订及 Applied=LKG、节点前后成功接受/拒绝数；只允许 Selected 新增一次成功上游 CONNECT 和一条固定域名收据，不能旁路、伪造收据、重启或改变声明。Python 无网络测试覆盖异常/截断/非成功 SOCKS 回复、非法参数、错误或重复收据、上游绕过、PID 替换、错误域名/目标端口**拨号前拒绝**和固定脱敏诊断。合成节点生涯成功数 **66→67**，拒绝下限继续为 16；双原生架构实测全绿才能输出 `T22_AIRGAP_SELECTED_SOCKS_DOMAIN_PASSTHROUGH=ok`。
+- 该切片**仅证明 Selected 的 SOCKS5 DOMAIN 原文透传**，不等于 Rule/Direct 域名解析、DNS 真实请求与 detour、远端域名/TLS/UDP、完整 T22、CN 五层/28 组离线许可、T20 千次重连、T25 72h/7d/30d、掉电恢复/Restore/GC/发行验收。保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`；不引入 TUN 或订阅/ISP 分流层，不改 `main`。
+
+### 2026-10-27 — M5 ADR 0172 Selected SOCKS5 DOMAIN 上游拒绝严格失败关闭及同 Core 恢复（T22 部分）
+
+- 复用已合并 ADR 0171 的第六次批准 Daemon、同 PID Core、Applied=LKG generation 2、真实原生 amd64/arm64 第四个 `network none` 非 root 无特权容器、原本机 echo 与合成 Selected SOCKS。成功 ATYP=3 域名透传后，在 `try/finally` 内开启**仅上游合成节点**的拒绝开关；Rule:2080、Direct:2081 继续各执行一次正常数字本机 SOCKS5 回显，不能改变 Selected 接受/拒绝数或域名收据。Selected:2082 发送一次固定 `t24-selected.invalid` 的真正 ATYP=3 CONNECT；客户端只允许完整非 0 SOCKS5 失败码、空 EOF 或 reset/abort，任何成功、截断/畸形回复及超时失败。
+- 合成 SOCKS 上游在拒绝时必须记录**原始域名字节与精确端口**，且不拨号不增加成功数；要求拒绝总数新增 1–4、拒绝域名收据与该次数逐条完全一致、成功域名收据不变。失败后 `finally` 必须恢复开关；原 PID 和 Applied=LKG 不变，同一 Core 再执行真实 ATYP=3 成功回显，只允许新增一次成功上游连接与一条正确的域名收据，拒绝数与收据不再变化。原生合成 Selected 全生命周期成功数 **67→68**，拒绝最低 **16→17**。
+- Python 无网络回归覆盖错误/缺失/重复拒绝收据、跨路/静默直连、成功/异常/截断/超时 SOCKS 返回、过多重试、PID 替换、恢复失败及异常开关清理；独立本机真实合成节点测试保证拒绝 ATYP=3 前置记录并**零目标拨号**。仅双架构新提交普通 CI+Go Race、Managed Core 与原生测试全通过才输出 `T22_AIRGAP_SELECTED_SOCKS_DOMAIN_FAIL_CLOSED=ok`；该切片不证明 Rule/Direct 域名 DNS、真实远端 resolver/UDP、CN 五层 28 组许可离线规则、T20 千次重连、T25 72h/7d/30d、T15/T23 掉电恢复、Restore/GC 或正式发行，保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`，不加入 TUN/订阅-ISP 分流层，不修改 `main`。
+
+### 2026-10-27 — M5 ADR 0173 HTTP CONNECT 固定域名经 Selected 原文上游透传（T22 部分）
+
+- 在已合并 ADR 0172 的第六次原生批准 Daemon/同 PID Core、Applied=LKG generation 2/修订 2、网络完全隔离的 amd64/arm64 非 root 容器中，复用原有本机 TCP echo 与 Selected 合成 SOCKS 上游。向 Selected:2082 发送一次真实 HTTP/1.1 `CONNECT t24-selected.invalid:<本机 echo 随机端口>`，Host 与 authority 精确一致。客户端**只连接数值型 127.0.0.1:2082**，不解析固定 `.invalid` 域名；响应必须为完整 ≤1024 字节 HTTP 200，后续 application echo 字节精确一致。
+- 必须同时证实合成 SOCKS 上游收到了同一原始固定 hostname+端口（`ATYP=3`），恰好增加 **一次** Selected 成功连接与一条精确上游域名收据；没有拒绝/失败/已拒绝域名收据变化，既有 Core PID、配置/声明修订和 Applied=LKG 不变，不能静默走 Direct。错误 Host/请求、畸形或截断/非 200/过大回复、错误回显、缺失/重复/伪造域名收据、绕过、拒绝计数漂移、Core PID 替换需在无网络单元回归中失败关闭，诊断只输出固定码。
+- 原生 Selected 生涯成功计数 **68→69**，拒绝下限保留 **17**；新提交的普通 CI/四个 Go Race、Managed Core 及 amd64/arm64 原生实验全绿才能输出 `T22_AIRGAP_SELECTED_HTTP_CONNECT_DOMAIN=ok`。这仅证明 **Selected HTTP CONNECT 的域名字符串透传**，不是 Rule/Direct 实际域名 DNS、解析 detour、远端 HTTPS/TLS/UDP、CN 五层/28 组许可闭环、T20 千次重连、T25 72h/7d/30d、灾难恢复/Restore/GC 或发行验收。继续保留全部 false 门槛，不引入 TUN/订阅-ISP 分流层，也不修改稳定 `main`。
+
+### 2026-10-27 — M5 ADR 0174 Selected HTTP CONNECT 域名上游拒绝严格失败关闭与原 Core 恢复（T22 部分）
+
+- 在已合并 ADR 0173 的同一次第六个 Daemon、同 PID 原生批准 Core / Applied=LKG generation 2、第四个无外网非 root amd64/arm64 容器中，继续复用现有本机 TCP echo 和允许**仅** `t24-selected.invalid` 的合成 Selected SOCKS 上游。先审计成功/拒绝原始域名收据与计数，再在 `try/finally` 中临时启用上游拒绝。拒绝期间 Rule:2080、Direct:2081 各执行一次数字 localhost HTTP CONNECT 与精确回显；不能触碰 Selected 的任何计数或域名收据。
+- 向 Selected:2082 真正发送 `CONNECT t24-selected.invalid:<现有 echo 端口>`，Host 和 authority 一致。客户端只拨号 `127.0.0.1`。只允许空 EOF/reset/abort、完整有界 4xx/5xx，或者 HTTP CONNECT **提前返回 200 后**发送固定测试字节、连接在 4 秒超时内无任何应用数据地关闭。伪成功回显、畸形/截断/超大响应、1xx/3xx 或挂起必须失败。**必须同时**由合成 Selected SOCKS 上游独立记录 1–4 次完全相同的原始 DOMAIN/端口拒绝收据，不新增成功接受/成功域名收据，不允许静默 DIRECT 或改路，也不允许上游目标拨号。
+- `finally` 无条件恢复拒绝开关，随后仍在原批准 Core PID / 配置及声明修订 / Applied=LKG 上，重试真实 Selected HTTP CONNECT 域名转发与回显。恰好只增加一次成功 Selected 上游连接及精确域名成功收据，拒绝数和收据不得再变。离线 Python 负向回归覆盖提前 200 但转发/挂起、异常 HTTP 响应、遗漏/重复/错目标拒绝收据、跨入口、绕过、Core 漂移、失败恢复、错误开关清理与固定脱敏诊断。合成上游全生命周期成功数 **69→70**，拒绝下限 **17→18**，只有新提交普通 CI/四个 Race/Managed Core/双原生全绿，才能输出 `T22_AIRGAP_SELECTED_HTTP_CONNECT_DOMAIN_FAIL_CLOSED=ok`。
+- 本切片**不代表**真实 DNS 查询和 detour、Rule/Direct 域名路由、远端 TLS/SNI、UDP、CN 五层 28 组离线规则许可、T20 一千次重连、T25 72h/7d/30d、真实断电/双回滚/Restore/GC/稳定发行。继续保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false` 和发行闭锁，不加入 TUN 或订阅/ISP 分流层，不改稳定 `main`。
+
+### 2026-10-28 — M5 ADR 0175 真实 Outbound/Node DNS UDP 解析代理节点服务器（T22 部分）
+
+- 新增**第五个独立隔离容器**（Linux amd64/arm64 原生分别执行），与已有第四个复杂生命周期容器完全分开，保留固定散列批准 Core、非 root 10001、`--network none --cap-drop ALL --read-only`、无 TUN。新的临时私有 SQLite/Unix 管理 API 中，仍为唯一 Selected SOCKS 节点、Rule/Direct/Selected 三入口、DIRECT FINAL 和一个 UDP Outbound DNS profile；唯独节点 **server** 改为测试专用 `t24-node.invalid`，DNS 改连本机 `127.0.0.1` 的高位随机 UDP 端口（不监听特权 53）。这不是给域名目标做代理解析。
+- 本机 UDP DNS 服务只接受固定 .invalid QNAME、单 IN question、最长 512 字节，返回 `127.0.0.1` 的 A 记录；AAAA/HTTPS 允许 NODATA，不做递归或外网拨号。DNS 问题、EDNS 格式、大小、压缩、域名等非法值一律拒绝或标记失败；记录锁保护的原始 QNAME/QTYPE 收据且限制条数。真实 Daemon 通过声明/编译/应用事务启动 Core，先证明 Rule/Direct 数字本机请求无需 Selected 或此节点 DNS，再用 Selected 数字本机目标请求触发**节点服务器域名的真实 UDP 查询/响应**；必须观察至少一个真实 A 查询、一次合成 SOCKS 上游成功连接及精确 TCP 回显、无拒绝/故障、同 Core PID/Applied/LKG/修订，最后显式停止 Core 并验证监听关闭及散列不变。
+- 增加无 Core Python 负向单元回归和真实本机 UDP 服务拒绝测试，更新 workflow 由四个改成五个相互隔离的 `network none` 容器，并更新已有数量断言。**仅**双原生架构实测收到 A 查询且 CI/四个 Go Race/Managed Core 全绿，才能输出 `T22_AIRGAP_OUTBOUND_NODE_DNS_UDP=ok`。本阶段不等于 Rule/Direct 目的域名 DNS、Proxy/Group DNS detour、SOCKS UDP ASSOCIATE、远端 DNS、CN 28 组规则/许可、T20 千次重连、T25 72h/7d/30d、真实断电恢复或发行验收，仍保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`；不修改稳定 `main`、不引入 TUN 或订阅/ISP 分流。
+
+### 2026-10-28 — M5 ADR 0176 Rule/Direct 目的域名经 Direct DNS 实际 UDP 解析（T22 部分）
+
+- 以已双原生架构通过的 ADR 0175 节点服务器 DNS 实验为基线，增加**第六个独立 `--network none` 原生容器**（amd64 + arm64，各自新建隔离的私有 Daemon/SQLite、同 SHA 批准 Core、非 root UID 10001、无能力、只读文件系统）；前五个容器及第四个容器的 70 次 Selected 成功/≥18 拒绝收据完全不变。
+- 使用一份**精确白名单**的 V1 声明，保持三个 mixed 入口、单个 IP 字面量 Selected SOCKS 节点、五层路由结构空列表及 Direct FINAL，仅将 DNS 扩展为两个角色：既有 Outbound/Node UDP profile 与新的 Direct UDP profile，各自绑定不同的 `127.0.0.1:<随机非特权端口>`。不设置 fallback、不引入 CN/ISP/订阅路由、不加入代理 DNS/Group DNS/TUN 或远端域名。受控 DNS 只响应固定保留名称，Outbound/Node 只允许 `t24-node.invalid`，Direct 只允许 `t24-direct.invalid`；回答 A=127.0.0.1，AAAA/HTTPS 给 NODATA，严禁递归/其他名字/公网上游。
+- 在真正提交、编译、应用并显式启动的批准 Core 上，让 **Rule:2080 与 Direct:2081** 使用 SOCKS5 **ATYP=3** 向 `t24-direct.invalid:<本机 echo 随机端口>` 发起请求；客户端只连接本机数值地址，不调用系统 DNS，且都必须精确回显。Direct DNS 的独立 UDP 服务至少看到一次真实 A 查询和仅允许名称的有界收据；Core 内缓存可能让第二次连接不重复 DNS 查询，因此不伪造“两个 DNS 查询”要求。**Outbound/Node DNS 收据必须保持空**，合成 Selected 上游成功/拒绝计数仍保持零。随后 Selected:2082 数字本机请求必须经过合成 SOCKS 上游恰好一次成功，两个 DNS 服务都不能收到新增请求，不能发生旁路。
+- 前后核验 Core PID/声明与配置 revision/Applied generation/LKG 一致，`finally` 显式停止 Core 并验证监听全部关闭、批准二进制哈希不变。无 Core 负向测试覆盖精确声明、不允许的外网 DNS/路由/回退、SOCKS5 请求原始域名、错/缺 DNS A 收据、跨 DNS 角色、Selected 误用 DNS、静默绕过与 PID/LKG 漂移。所有原生与普通 CI、四个 Go Race、Managed Core Integration **同一提交全绿**才允许输出 `T22_AIRGAP_DIRECT_DESTINATION_DNS_UDP=ok`。
+- 这仅验证受控 Direct **目标**域名的本机 UDP DNS，不代表真实公网解析、Proxy DNS detour/Group DNS、GeoIP 规则需要的预解析、UDP ASSOCIATE、CN 28 组资源许可/五层真实场景、T20 千次重连、T25 72h/7d/30d、真实掉电/恢复/发行。保持 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`、`core_distribution=false` 和 `cn_preset_offline_bundle=false`。稳定 `main` 与 release Draft PR #1 均不修改。
+
+### 2026-10-28 — M5 ADR 0177 Proxy 目的域名 DNS TCP 必须经 Selected 出站真实 detour（T22 部分）
+
+- 基于已合并且普通 CI/Go Race 4/4、Managed Core、原生 amd64+arm64 全绿的 ADR 0176，额外增加**第七个独立无外网原生容器**（非 root UID 10001、无能力、只读根、临时私有 /work、批准 Core SHA 锁定）。前六个隔离容器、第四个容器的 70 次 Selected 上游成功/≥18 拒绝收据均**不更改**。继续无 TUN、无订阅/ISP 分流层、无公网或许可证规则资源。
+- 仅在受控新 V1 声明中，保留唯一 IP 字面量合成 SOCKS5 节点、Rule:2080/Direct:2081/Selected:2082 入口和原有空五层分流/Direct FINAL，使用不同的 127.0.0.1 临时端口配置 Outbound/Node UDP 与 Direct UDP，并新增 `role=proxy`、`transport=tcp`、`proxy_profile_id` 的 Proxy DNS（本机 TCP DNS 高位随机端口）。**Proxy DNS 的 detour 必须由编译器绑定至 CurrentSelected**，不能错误加入声明的 `detour_target`，不能通过 Direct 或 Outbound/Node DNS 递归查询。
+- 本机 DNS 服务只允许对 `t24-selected.invalid` 的有界原始 TCP DNS 问题（长度前缀、A=127.0.0.1 / TTL=1 秒，AAAA/HTTPS NODATA），并独立记录 QNAME/QTYPE。合成 SOCKS 代理在解析目标端口时记录单独的 Selected 上游 `(原始 DOMAIN/IP, 127.0.0.1, port)` 收据；仅允许 DNS TCP 服务端口或本机 echo 端口。**在 Selected 客户端请求以前**，Rule/Direct 两次真实 SOCKS5 DOMAIN 请求必须由 Direct DNS 的 UDP A 收据支持，并精确回显，不能触碰 Selected SOCKS 或 Proxy DNS；Outbound/Node DNS 零收据。
+- 通过数值型本机 Selected:2082 发送真正的 SOCKS5 `ATYP=3 t24-selected.invalid:<echo端口>`。既需要实际 TCP DNS 回答和 A 查询收据，也需要合成 Selected SOCKS **连接至 DNS TCP 端口**的独立上游收据，以及至 echo 端口恰好一次上游连接与精确应用回显；所有端口必须为白名单内 127.0.0.1，DNS TCP 可复用连接/缓存，因此只限制总量上界，不臆造精确 DNS 重试数。Direct/Outbound DNS 在此阶段不得出现新查询、上游不能拒绝/异常/绕过，Core PID、配置/声明修订、Applied/LKG 始终不变，`finally` 显式停止 Core、验证端口全部关闭与批准二进制 SHA 不变。
+- 无 Core Python 负向回归覆盖严格声明、TCP DNS 长度和帧、错误域名/错误回答、缺失/伪造/过多 DNS 收据、DNS 直连绕过 Selected、错误 SOCKS 目的端口、Direct/Outbound 角色跨线、失败上游与 PID/LKG 漂移；安全诊断只输出预定义错误码。新 `T22_AIRGAP_PROXY_DNS_TCP_SELECTED_DETOUR=ok` 仅在本次**完全相同提交**的普通 CI、Race 4/4、Managed Core、Linux 双原生实验全部通过后计入分项证据。
+- 本切片只证明固定测试域名的 **Proxy DNS 经 Selected TCP detour**，不代表 Group DNS、真实公共/远端 DNS、GeoIP 前置解析、SOCKS UDP ASSOCIATE、CN 五层/28 组许可数据、T20 千次重连、T25 72h/7d/30d、掉电双回滚/Restore/GC 或可发行状态。保留 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`、`core_distribution=false`、`cn_preset_offline_bundle=false`；稳定 `main` 和发布 Draft PR #1 不动。
+
+### 2026-10-28 — M5 ADR 0178 Custom 分流组独立 Group DNS TCP 查询与显式 Selected detour（T22 部分）
+
+- 以已合并 ADR 0177 双原生架构真实 Proxy DNS TCP 经 Selected SOCKS 查询证据为基线，新增**第八个独立 Linux amd64/arm64 `network none` 容器**。仍使用固定 SHA 审批 Core、真实 Daemon/Unix 管理 API、非 root 10001、无能力、只读根、临时 /work；前七个容器及第四个容器的 70 次成功/≥18 次拒绝计数保持原样。无 TUN、订阅/ISP 层、公网 DNS、特权端口、CN 许可资源。
+- 唯一可启用的 Custom 组为 `group-only-domain`，只匹配 `domain:t24-group.invalid`，Target=Direct，`dns_profile_id=group-selected-tcp`；Group DNS profile 必须是 `role=group`、`transport=tcp`、固定回环 IP、随机高位端口、**显式 `detour_target=CurrentSelected`**。全局 Proxy DNS 另占不同的本机 TCP 端口；Node/Outbound 与 Direct 仍各占一个本机 UDP 端口。无其他活跃 Custom/GeoSite/GeoIP/ACL 组、无额外 profile/fallback，FINAL 保持 Direct。
+- 在同一个批准 Core PID / Applied=LKG 中，先由 Direct:2081 与非匹配 Group 的 Rule:2080 各使用 SOCKS5 ATYP=3 请求 `t24-direct.invalid` 并精确回显；仅 Direct UDP DNS 收到 A 收据，两个 TCP DNS 与合成 Selected SOCKS 均不能被触碰。然后由 Rule:2080 真实请求 `t24-group.invalid`：必须由 **Group TCP DNS 实际收到固定域名 A 问题**且合成 Selected SOCKS 独立记录到 **Group DNS TCP 端口**的 CONNECT；最终应用 echo 由 Direct 目标路由完成精确回显，**不得**产生 Selected 应用上游连接；必须同时有真实 Group DNS A 问题与 Selected SOCKS 到 Group DNS TCP 端口的收据。两个选择独立：分流组应用 Target=Direct，组 DNS 传输 detour=CurrentSelected。Proxy TCP DNS 的收据保持空，Node/Direct DNS 不增加查询。
+- 再由 Selected:2082 真实请求 `t24-selected.invalid`，必须由全局 Proxy TCP DNS 收到 A 问题且合成 Selected SOCKS 独立记录到 **Proxy DNS TCP 端口** 的 CONNECT，再有一次精确应用回显；Selected 应用 SOCKS 目标可为原固定域名，或由已独立证实的 Proxy DNS A=127.0.0.1 产生的数字地址，但必须真实到达 Selected 上游 echo 端口。Group TCP DNS 收据不变，Node/Direct DNS 不增加查询。只允许固定这两个 DNS 端口与 Selected 控制请求的本机 echo 端口的 SOCKS 目标，DNS TCP QNAME/QTYPE 有界且两个服务各自只回答对应 `.invalid` 名称（A=127.0.0.1、TTL 1s；AAAA/HTTPS NODATA），无公网/递归或别名。缓存复用与 TCP 重试可改变查询次数，因此仅限制 1–12 次、禁止无查询通过或角色交叉。
+- 前后核验 Core PID、config/declaration revision、Applied generation、LKG 一致，必须 `finally` 停止 Core、核验所有代理入口关闭与批准二进制哈希不变。无 Core 负向测试覆盖 V1 精确组匹配/Target/DNS role/detour、错误端口和 DNS 名称、错误应用 SOCKS 原始域名字节、虚假或缺失 DNS/Selected 收据、跨角色查询、DNS 直连绕过及 Core 状态漂移。仅在该提交的普通 CI、Go Race 4/4、Managed Core、原生 amd64+arm64 **全部通过**后才接受分项 `T22_AIRGAP_GROUP_DNS_TCP_SELECTED_DETOUR=ok`。
+- 此前两架构对 Group Target=CurrentSelected 且解析到私有回环 IP 的应用 Selected 收据均未成立，该场景保持待查，不纳入本次成功证据。本切片不是全组/跨层优先级、Group DNS 跨版本缓存隔离、真实公共/远程 DNS、UDP ASSOCIATE、完整 GeoIP 预解析、CN 28 组/五层规则及许可、T20 千次重连、T25 72h/7d/30d、物理掉电或 Restore/GC、稳定发行的完成证明。继续保持 `T22_HOSTNAME_AND_UDP_VERIFIED=false`、`T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false`、`T20_1000_RECONNECTS_VERIFIED=false`、`T25_72H_7D_30D_SOAK_VERIFIED=false`、`core_distribution=false`、`cn_preset_offline_bundle=false`；不修改稳定 `main` 或发行 Draft PR #1。
+
+
+### 2026-10-28 — M5 ADR 0180 T26 原生路由 source-map 五层证明边界
+
+- 继 ADR 0178/0179 的 Group/Proxy DNS 配对防伪后，新增原生配置发射前的五层 `source_map` 完整性检查：Custom → GeoSite → GeoIP → ACL → FINAL 的来源必须有序，每条用户作用域规则必须存在实际 native rule 与 source-map 双向对应；不能插入订阅/ISP 来源层、删除用户分流来源、伪造 BLOCK/FINAL 或替换已声明目标。
+- 对 GROUP/Proxy DNS `resolve → route` 的同组、同目标、同谓词和相邻关系再次执行通用闭包校验。FINAL 必须是作用于 Rule 入口的唯一无条件终止目标，BLOCK 必须是真正 `reject`，目标标签需与 TargetCatalog 解析一致；不一致时 `ErrNativeConfigClosure` 拒绝编译。
+- 新增无需联网/真实 Core 的五层正反例测试；须通过同一提交的普通 CI、Race 4/4、Managed Core 与 amd64/arm64 原生 Core 后才能合并。本项仅强化 T26 *编译期* 来源证明，不代表真实观察 `observed`、Group DNS 解析私有 IP 经 Selected 应用出口、CN 28 组带许可资源闭包、完整 T10/T22/T24、T20 千次重连、T25 长时运行或正式发布。保持全部未验收发布标志 `false`，不引入 TUN、订阅/ISP 分流层，不改稳定 `main`。
+
+
+### 2026-10-29 — M5 ADR 0181 T26 已应用代际路由解释的跨文件可信闭包
+
+- ADR 0180 已在编译发射前约束五层 `route.rules` 与 `source_map` 的双向关系。本切片进一步在 `route explain` 从 SQLite 读取已应用代际、完成配置/manifest/source-map 独立 SHA-256 校验之后，重新核对层次顺序、FINAL 无条件 Rule 入口、BLOCK/出口目标/原生谓词、全部用户作用域来源与 Group/Proxy DNS 相邻解析配对，不信任仅重算哈希的错误来源标签。异常只返回 `ErrRouteExplainIntegrity`，不伪造已观测的连接证据。
+- 使用确定性目标标签约定重建最小 `TargetCatalog`，只验证已持久化字节间能独立交叉核对的关系；不声称能认证原始声明、检测完全协调改写后的语义有效字节或还原 DNS detour/实时 Core 连接。负向用例主动重算三份元数据哈希，证明本次额外拒绝条件；正向用例必须允许真实 Group DNS 与 Proxy DNS 的编译配对。
+- 本项只属于 T26 *已应用代际模拟诊断的读取侧一致性*。需在同一 commit 普通 CI、四片 Race、Managed Core、双原生 amd64/arm64 全绿后才合并；不将 T26 标记完成。既有 Group Target=CurrentSelected 解析私有回环 IP 的实际应用出口问题、CN 许可规则资产、T20 千次重连、T25 长时运行及真实 Restore/GC、T22/T24 整体验收仍是独立阻塞项，未验收发布标志保持 false。无 TUN、订阅/ISP 分流层，稳定 main 和发行 Draft PR #1 不动。
+
+
+### 2026-10-29 — M5 ADR 0182 / Issue #59 加密恢复候选阶段诊断
+
+- 上一轮出现 `StageInertRestoreCandidate` 偶发拒绝，同一提交重试可成功；独立只读预检、SQLite 验证与磁盘空间检查正常，但尚未定位真正拒绝点。为 T15/T23 可靠性排障提供**仅测试代码可见**的固定阶段标签，覆盖源归档预检、配额、父目录锁和扫描、候选锁、密文复制、fsync 与复制品二次认证。不打印密码、密文、私有路径、域名或归档 digest；正式 Stage API 及安全拒绝行为不变。
+- 新增每个关键阶段的确定性拒绝注入和原有作用域的精确清理回归，验证失败不保留新候选、不删除原始归档；正常路径仍需独立 Verify。此变更只为下一次 CI 重现定位提供证据，**不宣称已找到或修复偶发故障**；Issue #59 和 T15/T23 未验收门槛保持，原有发布标志 false。须在同一提交普通 CI、Race 4/4、Managed Core、原生 amd64/arm64 全绿后合并。无 TUN、订阅/ISP 分流层，不改 stable main。
+
+
+### 2026-10-29 — M5 ADR 0182 Race 分片 2 复现与更细分证据（Issue #59）
+
+- PR #62 首次完整同头 CI 中，Go Race 2/4 再次复现加密恢复候选暂存拒绝，`stage=create_scope`；独立归档鉴权/SQLite 和磁盘配额检查仍成功。此前阶段标记尚不能区分目录创建、子目录 O_NOFOLLOW 打开、flock 与 inode/权限检查。增加 `scope_created` 及独立子目录打开、描述符、排它锁和身份核对的**仅测试**安全阶段标记，并注入各阶段安全拒绝，原已批准代码流程与不递归清理约束保持不变。
+- 同批 Managed Core 在 `sing-shadowtls` 依赖拉取遇到 HTTP/2 INTERNAL_ERROR，属网络下载失败证据，不能当作 Go 业务逻辑错误，也不能将失败忽略。下一次合并须同一 head 的普通 CI、Race 全四片、Managed Core、原生两架构全部通过；Issue #59 根因仍未解决，不改变 T15/T23/T20/T25、T22/T24 等发布阻塞标志，不改 stable main 或运行发行。
+
+
+### 2026-10-29 — M5 ADR 0183 / Issue #59 候选暂存系统调用拒绝分类
+
+- ADR 0182 的最新同头 CI（Race 4/4、Managed Core、双原生架构）已通过并合入集成分支；但单次通过不代表原先 `create_scope` 偶发拒绝根因已解决。追加仅测试可见的固定系统调用错误类别：在 mkdir、子目录 O_NOFOLLOW open、flock 失败后分别记录 storage_capacity、descriptor_pressure、lock_contention、permission、interrupted、missing_path、symlink、io_error 或 other，不打印系统错误原文、私有路径、凭证与密文内容。
+- 生产候选暂存公开 API、原有拒绝哨兵、目录属主与权限校验、原子清理和无自动重试策略全部保持不变。新增 errno 分类及私密错误文本不外泄的确定性回归。Issue #59 继续开放；这只是 T15/T23 恢复可靠性的诊断闭包，不代表真正修复、运行恢复或长期发布门槛完成。须等该 PR 同一提交普通 CI、Race 4/4、Managed Core、Linux 原生 amd64/arm64 均绿后才合并；不改 stable main、TUN、订阅/ISP 分流与所有 false 发布门槛。
+
+
+### 2026-10-29 — M5 ADR 0184 / Issue #59 私有候选作用域锁与 inode 回归
+
+- ADR 0183 的 errno 类别诊断已在最新同头普通 CI、四片 Race、Managed Core 与两种 Linux Core 架构全绿后合并；Issue #59 的 `create_scope` 间歇性拒绝仍缺乏确定性根因。本阶段新增 **128 轮**隔离私有目录创建、目录独占 flock、防止第二租约获取、关闭后再获取、精确删除空目录及最终零残留测试，专门覆盖曾出现拒绝的候选目录建立与 fd 生命周期边界。
+- 同时在测试专用 `scope_child_lock_held` 窗口模拟原路径被不同 0700 inode 替代、变成符号链接或权限降低，确保持有旧 inode flock 不会把新路径认作可信候选；拒绝仍为 `ErrUnsafeInertRestoreCandidate`，无凭据、密文或真实恢复动作。此项仅是 T15/T23 的锁与 inode 确定性回归，不意味着找到/修复偶发 errno、恢复功能完成或发布门槛满足。保持 Issue #59 开放，须经同一 head 全部 CI 与原生双架构成功后合并。不引入 TUN、订阅/ISP 来源层，不改 `main` 与发布标志。
+
+
+### 2026-10-30 — M5 ADR 0185 / T15/T23 新建候选目录 inode 归属守卫
+
+- 审阅最新 ADR 0184 锁和路径替换测试后发现：候选 `MkdirTemp` 后的两条预采纳失败清理路径此前按文件名直接 `os.Remove`，若同 UID 实体在获锁但尚未核对原创建 inode 期间换名，可能误删并非本次创建的空目录；打开替换目录后也须与刚创建 inode 交叉核对。现在记录创建后的 `Lstat` 身份；仅同 inode、私有 0700 的空目录允许失败清理；子目录租约身份与创建 inode 不一致时只释放租约并拒绝采纳，不删替代对象。
+- 增加在 `scope_created`、`scope_child_open`、`scope_child_lock_held` 的测试专用路径替换、symlink、失败回滚等确定性攻击回归，并明确承认 `Lstat` 到 `Remove` 之间仍存在更窄的非原子 TOCTOU，**不得声称已抵御主动 same-UID 纳秒级竞态**。这不是 Issue #59 的间歇性 `create_scope` 拒绝根因；问题继续打开。不提升 T15/T23、T20/T25 或发行门槛，PR 同头普通 CI、Race 4/4、Managed Core、双原生验证全绿后才能合并；稳定 main 不动，无 TUN、订阅/ISP 分流。
+
+
+### 2026-10-30 — M5 ADR 0186 / T15/T23 候选密文写入目录 fd 锚定
+
+- ADR 0185 已对新建目录的 inode 创建/采纳和早期清理加校验；本轮继续消除复制密文时经绝对路径创建目标文件的中间目录重命名窗口。现在 `copyInertCandidateCipher` 在确认持锁目录身份后，使用 Linux `openat(candidate.dir.Fd(), "candidate.ktbackup", O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600)` 在原持锁 inode 内创建，保留完整源归档 SHA/长度、目标文件权限/身份与 fsync/二次认证闭包，并在复制结束及最终预检后重新确认目录身份。
+- 新增测试在复制入口、openat 前、目标 fd 打开后替换候选目录为同 UID 私有空目录或指向另一个私有目录的符号链接，必须失败关闭、不得写入替代目录或删除外部路径；注入 openat 前拒绝时不得自动重试或留下新候选。**本项仅修复独立的密文写入重定向风险，不声称 Issue #59 的偶发 create_scope 失败根因得到解决，也无法授权真实 Restore 或推翻 T15/T23 的未验收条件。** 其余 T20/T25、CN 离线资产和所有发布门槛保持 false；禁止 TUN、订阅/ISP 来源层，stable main 不动。同一提交须通过普通 CI、Race 4/4、Managed Core、原生 amd64/arm64 后才能合并。

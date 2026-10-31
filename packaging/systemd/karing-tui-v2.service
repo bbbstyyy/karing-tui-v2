@@ -1,0 +1,18 @@
+[Unit]
+Description=Karing TUI v2 management daemon
+Documentation=https://github.com/bbbstyyy/karing-tui-v2/blob/main/docs/plan.md
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/karing-tui daemon run
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
