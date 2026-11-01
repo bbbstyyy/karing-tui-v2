@@ -310,7 +310,7 @@ func inspectInertCandidateFileProbed(
 	if beforeArchiveOpen != nil && !beforeArchiveOpen() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	fd, err = syscall.Openat(int(candidate.dir.Fd()), inertRestoreCipherName,
+	fd, err := syscall.Openat(int(candidate.dir.Fd()), inertRestoreCipherName,
 		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
