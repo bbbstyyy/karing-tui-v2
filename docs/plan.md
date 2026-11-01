@@ -1947,3 +1947,11 @@ docs/
 - 新实现使用 `openat(parent_flock_fd, ".", O_DIRECTORY|O_NOFOLLOW)` 获取每次独立清单流，验证流与原持锁 inode 一致且为当前 UID 所有的 0700 目录。逐项要求合法候选名称和目录类型，通过 `openat(parent_flock_fd, name, O_DIRECTORY|O_NOFOLLOW)` 获取子目录 fd，验证 UID/0700、fd/path inode 一致及原有安全祖先路径。扫描前后复核父目录持锁 inode 与路径，包含空清单；保留最多 8 项、不认识即拒绝、无隐式删除、取消与错误哨兵。
 - Linux 回归以同一父 flock 连续读取两项清单三次，拒绝符号链接和 nil/关闭租约；在单候选和空候选场景均于清单读取后换名父目录，并以同名私有子目录或 symlink 替换，必须失败关闭；独立 reader 仍枚举原 inode，子目录 fd 指向旧父目录，外部哨兵文件不被触碰。
 - **限制**：这仍是有边界的安全收紧，不能保证不合作同 UID 对手下所有跨 syscall 操作原子性，完整多轮 HMAC/SQLite preflight 尚未 fd 绑定；Issue #59 仍开放，不能据此开放真实恢复/自动 GC、T15/T23、T20/T25、CN 许可资产或正式发行。保持 Linux 无 TUN、无订阅/ISP 分流层、Core 锁定和 stable main 不变。PR 必须等到精确 head 的普通 CI、Go Race 4/4、Managed Core 和 Linux native amd64/arm64 全通过后才合并。
+
+
+### 2026-11-01 — M5 ADR 0193 / T15/T23 候选密文复制后的父目录持久化绑定原 inode
+
+- ADR 0190 将候选私有目录创建和首次父目录 fsync 绑定已加锁父目录 fd，但 Stage 释放短期父 flock、复制密文后仍使用 `syncSealedArchiveDir(candidateParent)` 按绝对路径再次打开父目录。非协作的同 UID 进程可在复制期间换名该父目录，并将原路径换成另一个 0700 目录，使第二次 fsync 面向错误的 inode。
+- 本轮在父 flock 仍有效时经 `openat(parent_flock_fd, ".")` 取得一个独立且经过 UID/0700/inode 校验的**不持锁**父目录 fd；后续密文复制仍在短期父 flock 已释放的条件下进行，不延长跨 Stage 的写入排他窗口。复制完成后，只通过该 fd 执行 fsync，并在 fsync 前后验证标准父目录路径仍指向已固定的 inode；最后候选接管时再次核对该父 inode/路径，禁止路径回退或隐式重试；Stage 退出时关闭独立 fd。
+- Linux 回归：关闭短期父 flock 后，固定 fd 仍可以同步原 inode；如果将父目录路径换成另一私有目录或 symlink，必须失败关闭。完整加密候选 Stage 在 `parent_sync` 注入目录替换时拒绝接管，不破坏源加密归档、已写入原 inode 的密文或外部目录哨兵；原有正常 Stage/Verify/Discard 测试继续承担成功路径验证。
+- **边界**：保留独立 fd 不代表复制全程持有父 flock，也不解决完整 HMAC/SQLite 多轮路径 TOCTOU；Discard 等清理持久化仍需单独审查，Issue #59 的间歇性 `create_scope` 拒绝根因未确认。不得据此开放真实恢复/候选自动 GC、T15/T23/T20/T25、CN 离线许可规则闭包或正式发行。Linux 无 TUN、无订阅/ISP 路由来源层、Core pin 和稳定 main 不变。PR 须在精确 head 普通 CI、Go Race 四片、Managed Core、Linux 原生 amd64/arm64 验证通过后才合并。
