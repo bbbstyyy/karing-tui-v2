@@ -1909,3 +1909,10 @@ docs/
 - 在 ADR 0186 将密文创建改为持锁目录 fd 相对 `openat` 后，本切片将 `inspectInertCandidateFile` 的密文叶子读取也改为 `openat(candidate.dir.Fd(), "candidate.ktbackup", O_RDONLY|O_NOFOLLOW)`；保留单叶子、0600、单链接与 UID、fd/path 相同 inode 的交叉证据，尾部再次核对目录锁身份。候选目录 fsync 使用同一持锁 fd，避免对替换路径执行 fsync。
 - `ReopenInertRestoreCandidate` 完成独立认证的多轮 preflight 后，重新读取并比较候选密文 inode/大小/mtime 与原始锁目录身份；测试用仅内部可见回调在认证后替换目录路径，必须失败关闭并保留原加密归档和替换目录。另一测试在已锁目录 ReadDir 后/叶子打开前替换为其他 0700+0600 密文目录或符号链接，禁止接受外部对象。保留公开 API 和错误哨兵、不自动重试、不发放真实恢复许可。
 - **限制**：多轮 HMAC/SQLite 预检仍通过路径定位，回调仅覆盖确定性竞态，尚未证明完全消除同 UID 对手的中间路径 TOCTOU；需未来独立审查 fd 绑定的完整认证过程。此项不证明 Issue #59 偶发 `create_scope` 失败已修复，Issue 继续开放；T15/T23、T20/T25、CN 许可资产和正式发行门槛不提升。普通 CI、Race 四片、Managed Core、原生 amd64/arm64 必须在该 PR 同一提交全部通过后才能合并；保持 Linux 无 TUN、无订阅/ISP 来源层，stable main 不动。
+
+
+### 2026-11-01 — M5 ADR 0188 / T15/T23 已锁候选目录清单 fd 绑定
+
+- ADR 0186/0187 已将候选密文的写入和单叶读取锚定到独占目录 fd，但 `inspectInertCandidateFile` 的临时目录清单 reader 仍使用绝对路径 `open`。本轮用 `openat(locked_dir_fd, ".", O_DIRECTORY|O_NOFOLLOW)` 取得独立目录描述符；核对 reader 与原持锁 inode 相同、仍为私有 0700，避免任何中间目录替换使清单读取错误 inode，同时保留独立目录游标以免重复 Verify/Discard 漏报条目。
+- Linux 回归重复读取原私有候选文件后，把目录换名并将原路径替换为其他 0700 目录或 symlink；新 reader 必须依然枚举原 inode，完整候选检查则因路径身份变化失败关闭，不读取或修改外部目录。nil/关闭租约不得获得清单读取权限。
+- 此项只收紧 T15/T23 的文件系统身份边界，不表示完整多轮鉴权的路径 TOCTOU 消除、Issue #59 根因修复或真实恢复已授权。Issue 继续开放，T20/T25、CN 许可规则和正式发行门槛保持 false。必须经同一提交普通 CI、Race 4/4、Managed Core、Linux 原生 amd64/arm64 全绿后才合并；稳定 main 不动，禁止 TUN 和订阅/ISP 分流层。
