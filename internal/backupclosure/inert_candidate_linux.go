@@ -297,19 +297,25 @@ func inspectInertCandidateFileProbed(
 	if (err != nil && !errors.Is(err, io.EOF)) || closeErr != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// The inventory can be empty during failed-stage cleanup. Even in that
+	// case, its path must still identify the leased directory: a same-UID
+	// actor can rename the scope after the first lock identity check.
+	// The private hook makes the inventory/return boundary testable.
+	if beforeArchiveOpen != nil && !beforeArchiveOpen() {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	if len(entries) == 0 && allowAbsent {
+		locked, lockErr := verifyCandidateDirLock(candidate.directory, candidate.dir)
+		if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) {
+			return nil, ErrUnsafeInertRestoreCandidate
+		}
 		return nil, nil
 	}
 	if len(entries) != 1 || entries[0].Name() != inertRestoreCipherName ||
 		!entries[0].Type().IsRegular() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	// Replacing the candidate pathname after ReadDir must not redirect the
-	// archive open to an unrelated private child. The long-lived flock fd
-	// pins the source directory inode throughout this inspection.
-	if beforeArchiveOpen != nil && !beforeArchiveOpen() {
-		return nil, ErrUnsafeInertRestoreCandidate
-	}
+	// The long-lived flock fd pins the ciphertext source directory inode.
 	fd, err := syscall.Openat(int(candidate.dir.Fd()), inertRestoreCipherName,
 		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
