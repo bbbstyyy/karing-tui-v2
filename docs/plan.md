@@ -1955,3 +1955,10 @@ docs/
 - 本轮在父 flock 仍有效时经 `openat(parent_flock_fd, ".")` 取得一个独立且经过 UID/0700/inode 校验的**不持锁**父目录 fd；后续密文复制仍在短期父 flock 已释放的条件下进行，不延长跨 Stage 的写入排他窗口。复制完成后，只通过该 fd 执行 fsync，并在 fsync 前后验证标准父目录路径仍指向已固定的 inode；最后候选接管时再次核对该父 inode/路径，禁止路径回退或隐式重试；Stage 退出时关闭独立 fd。
 - Linux 回归：关闭短期父 flock 后，固定 fd 仍可以同步原 inode；如果将父目录路径换成另一私有目录或 symlink，必须失败关闭。完整加密候选 Stage 在 `parent_sync` 注入目录替换时拒绝接管，不破坏源加密归档、已写入原 inode 的密文或外部目录哨兵；原有正常 Stage/Verify/Discard 测试继续承担成功路径验证。
 - **边界**：保留独立 fd 不代表复制全程持有父 flock，也不解决完整 HMAC/SQLite 多轮路径 TOCTOU；Discard 等清理持久化仍需单独审查，Issue #59 的间歇性 `create_scope` 拒绝根因未确认。不得据此开放真实恢复/候选自动 GC、T15/T23/T20/T25、CN 离线许可规则闭包或正式发行。Linux 无 TUN、无订阅/ISP 路由来源层、Core pin 和稳定 main 不变。PR 须在精确 head 普通 CI、Go Race 四片、Managed Core、Linux 原生 amd64/arm64 验证通过后才合并。
+
+### 2026-11-01 — M5 ADR 0194 / T15/T23 候选子目录存活租约绑定原始父目录 inode
+
+- ADR 0191/0192 已将 Stage/Reopen 的父目录清单和候选子目录打开绑定父 flock fd，ADR 0193 针对 Stage 的第二次 fsync 保留独立父 fd；但子目录独占 flock 存活期间，`InertRestoreCandidate` 仍只保存子目录原始 inode，`Verify` 和 `Discard` 调用的 `verifyCandidateDirLock` 仅核对当前父路径符合 UID/0700 约束。同 UID 不合作进程可以换名整个父目录，在原绝对路径创建另一个当前 UID 的 0700 私有父目录，并把**原始已锁子目录 inode**搬进去，使子 fd/path 匹配但父目录身份已经改变。
+- 本轮在获取候选子目录租约时另外保存 `parentIdentity`：Stage/Reopen 使用已持锁父 fd 的 `Stat`，独立内部测试 helper 使用已验证父路径的 `Lstat`。每次候选清单检查开头、允许空目录提前返回之前以及密文检查末尾均要求原父目录 inode 与现存路径相同；该检查覆盖 Verify、Reopen、Discard 的通用安全边界，保留原子目录权限、子 fd 身份与完整密文认证要求。接口和持久化格式不变。
+- Linux 端到端回归先验证健康候选，然后替换父目录并移动同一候选子目录 inode 到新父目录：Verify/Discard 必须失败关闭并保留原密文和源归档。另一回归在 Reopen 完整认证后替换父目录并移动原候选子目录，必须拒绝接管，外部哨兵不变。
+- **限制**：这仅在当前进程的存活租约内记住父目录身份；跨重启的 Reopen 必须重新建立父目录信任，尚无持久父目录身份凭据。检查不是抵御不合作同 UID 对手的原子路径保护，多轮 HMAC/SQLite preflight 仍路径定位，Discard 的最终 unlink/fsync 仍待独立审查。Issue #59、T15/T23/T20/T25、CN 离线许可规则包和正式发行门槛仍开放；保持 Linux 无 TUN、五层分流剥除订阅/ISP 来源、Core pin 和 stable main 不变。精确提交的普通 CI、Go Race 四片、Managed Core、原生 Linux amd64/arm64 全部通过后方可合并。
