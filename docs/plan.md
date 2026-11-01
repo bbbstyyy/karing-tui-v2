@@ -1923,3 +1923,11 @@ docs/
 - 空目录是候选创建失败后内部清理路径允许的唯一特殊状态。此前 `inspectInertCandidateFile(candidate, true)` 在读取零个目录项后直接返回，绕过末尾目录 fd/path 身份核对；相同 UID 的不合作进程可能在清单扫描后换名候选目录。本次在空清单返回前重做锁目录与原路径的 inode 一致性校验，路径漂移必须失败关闭。
 - Linux 回归在独立清单读取后的测试边界将原私有目录换名，用另一个 0700 目录或符号链接替代路径：正常空目录准入、替换路径拒绝，保留原 leased inode 和替换目录的哨兵文件。无 API、持久化格式、密码学、内核、网络、TUN 或订阅/ISP 分流语义变更。
 - 本项不证明对抗恶意同 UID 进程的原子 unlink 安全、Issue #59 根因修复或 T15/T23 可用于生产恢复；完整预检仍有路径 TOCTOU 待验证。保持恢复、T20/T25、CN 规则许可和发行门槛关闭。新提交必须先完成普通 CI、Race 4/4、Managed Core、双架构 native Core Provenance，未经验证不得合并。
+
+
+### 2026-11-01 — M5 ADR 0190 / T15/T23 候选目录创建绑定父目录 flock fd
+
+- 发现恢复候选范围创建仍通过 `os.MkdirTemp(candidateParent, ...)` 重新解析父目录绝对路径。Linux flock 是协作性锁；同 UID 不合作进程可以在父目录清单检查后换名或将其路径替换为别的 0700 目录/符号链接。仅对子目录密文采用 `openat` 并不能消除创建阶段的错误写入目标。
+- 本轮生成 96-bit 密码学随机目录名、最多 8 次碰撞尝试，采用 `mkdirat(parent_flock_fd, name, 0700)` 创建；新子目录的初始 inode 从同一父 fd 的 `openat` 获取，而不是从路径猜测。正式接管前同时核对父目录持锁 inode 和路径、子目录初始 inode 和路径，再通过已有候选子目录租约校验。父目录首次 fsync 直接使用持锁 fd，替代路径 fsync。
+- Linux 故障注入在父目录 inventory 后、mkdirat 前换名父目录，将原路径替换成另一私有目录或 symlink。必须只在被持锁的原目录生成空候选，拒绝接管新旧路径，并保留外部替换对象、源加密归档。测试还要求从 parent fd 返回子目录真实 inode 身份；增加 `scope_before_mkdirat` 固定相位覆盖。
+- **未关闭的限制**：父目录被恶意换名后，原 inode 可能遗留一个新建的空 0700 子目录；生产不得盲目删除不能认证的路径。此改动不构成原子 compare-and-unlink、不证明 Issue #59 偶发 `create_scope` 拒绝根因修复，也未实现完整 fd 绑定预检或生产恢复；T15/T23/T20/T25、CN 许可与发行门槛仍为 false。遵守 Linux 无 TUN、无订阅/ISP 路由层；仅经本提交普通 CI、Race 4/4、Managed Core、原生 amd64/arm64 全部验证后合并，不更改稳定 main。

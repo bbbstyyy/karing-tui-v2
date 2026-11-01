@@ -4,6 +4,7 @@ package backupclosure
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -185,8 +186,81 @@ func openLockedInertRestoreCandidateProbed(
 	}, nil
 }
 
+// createInertScopeAtLeasedParent uses the already-flocked parent DIRECTORY
+// inode instead of resolving its mutable pathname during creation. The
+// returned identity comes from a child fd opened relative to that same
+// parent. The caller must separately check the parent and child's canonical
+// path identities before adoption. After a hostile rename, refusing to
+// remove an unreachable empty scope is safer than unlinking a foreign path.
+func createInertScopeAtLeasedParent(
+	parent *os.File, parentPath string,
+) (string, os.FileInfo, error) {
+	if parent == nil || !filepath.IsAbs(parentPath) ||
+		filepath.Clean(parentPath) != parentPath {
+		return "", nil, ErrUnsafeInertRestoreCandidate
+	}
+	opened, err := parent.Stat()
+	if err != nil || !opened.IsDir() || opened.Mode().Perm() != 0o700 {
+		return "", nil, ErrUnsafeInertRestoreCandidate
+	}
+	owner, ok := opened.Sys().(*syscall.Stat_t)
+	if !ok || int(owner.Uid) != os.Getuid() {
+		return "", nil, ErrUnsafeInertRestoreCandidate
+	}
+	// 96 bits of cryptographic randomness; 24 lowercase hex characters
+	// satisfy the existing candidate scope name validator. Collisions are
+	// retried only a bounded number of times, never by falling back to a
+	// path-based MkdirTemp.
+	for attempt := 0; attempt < 8; attempt++ {
+		var randomName [12]byte
+		if _, err := rand.Read(randomName[:]); err != nil {
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		name := inertRestoreCandidatePrefix + hex.EncodeToString(randomName[:])
+		if err := syscall.Mkdirat(int(parent.Fd()), name, 0o700); err != nil {
+			if errors.Is(err, syscall.EEXIST) {
+				continue
+			}
+			return "", nil, err
+		}
+		fd, err := syscall.Openat(int(parent.Fd()), name,
+			syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+		if err != nil {
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		directory := filepath.Join(parentPath, name)
+		child := os.NewFile(uintptr(fd), directory)
+		if child == nil {
+			_ = syscall.Close(fd)
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		created, statErr := child.Stat()
+		closeErr := child.Close()
+		if statErr != nil || closeErr != nil || !created.IsDir() ||
+			created.Mode().Perm() != 0o700 {
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		return directory, created, nil
+	}
+	return "", nil, ErrUnsafeInertRestoreCandidate
+}
+
+// sameInertCandidateParentLease checks that the pathname still refers
+// to the same private directory inode holding the parent flock.
+func sameInertCandidateParentLease(path string, parent *os.File) bool {
+	if parent == nil || verifySealedArchiveParent(path) != nil {
+		return false
+	}
+	opened, err := parent.Stat()
+	if err != nil || !opened.IsDir() || opened.Mode().Perm() != 0o700 {
+		return false
+	}
+	onPath, err := os.Lstat(path)
+	return err == nil && os.SameFile(opened, onPath)
+}
+
 // sameNewInertScopeIdentity checks whether the path still names the exact
-// private inode captured immediately after MkdirTemp. A path-only cleanup is
+// private inode captured immediately after creation. A path-only cleanup is
 // unsafe after a test hook or another same-UID actor replaces that pathname.
 // This is a best-effort identity guard, not an atomic compare-and-unlink.
 func sameNewInertScopeIdentity(path string, created os.FileInfo) bool {
@@ -420,18 +494,26 @@ func stageInertRestoreCandidate(
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
+		if !checkpoint("scope_before_mkdirat") {
+			err = ErrUnsafeInertRestoreCandidate
+			return
+		}
+		// Create only inside the leased parent inode, not the mutable
+		// candidateParent path. The new child's identity must likewise be
+		// collected through that fd, before any pathname-based adoption.
 		var directory string
-		directory, err = os.MkdirTemp(candidateParent, inertRestoreCandidatePrefix)
+		var created os.FileInfo
+		directory, created, err = createInertScopeAtLeasedParent(parentLock, candidateParent)
 		if err != nil {
 			recordInertCandidateSyscallFailure(probe, "scope_mkdir", err)
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		// Bind cleanup and adoption to the inode actually created here,
-		// before any test checkpoint can replace the pathname.
-		created, statErr := os.Lstat(directory)
-		if statErr != nil || !sameNewInertScopeIdentity(directory, created) {
-			// Ownership is uncertain. Do not guess which path to remove.
+		if !sameInertCandidateParentLease(candidateParent, parentLock) ||
+			!sameNewInertScopeIdentity(directory, created) {
+			// A path swap is ambiguous; do not attempt pathname deletion
+			// of an unrelated directory, even if an empty scope remains
+			// in the original parent inode after it was moved.
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
@@ -461,7 +543,9 @@ func stageInertRestoreCandidate(
 			return
 		}
 		if !checkpoint("scope_locked") ||
-			syncSealedArchiveDir(candidateParent) != nil {
+			!sameInertCandidateParentLease(candidateParent, parentLock) ||
+			parentLock.Sync() != nil {
+			// Fsync the leased parent inode, not a replacement path.
 			err = ErrUnsafeInertRestoreCandidate
 		}
 	}()
