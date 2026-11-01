@@ -211,6 +211,37 @@ func removeNewEmptyInertScopeIfIdentical(path string, created os.FileInfo) error
 	return nil
 }
 
+// openLockedInertCandidateInventoryReader obtains an independent directory
+// stream from the already leased inode. Reopening candidate.directory by name
+// would let a same-UID actor redirect the inventory scan between the initial
+// identity check and ReadDir. A fresh openat(".", ...) avoids sharing the
+// long-lived flock fd's directory offset across Verify and Discard.
+func openLockedInertCandidateInventoryReader(
+	candidate *InertRestoreCandidate,
+) (*os.File, error) {
+	if candidate == nil || candidate.dir == nil ||
+		candidate.directoryIdentity == nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	fd, err := syscall.Openat(int(candidate.dir.Fd()), ".",
+		syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	reader := os.NewFile(uintptr(fd), candidate.directory)
+	if reader == nil {
+		_ = syscall.Close(fd)
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	onFD, err := reader.Stat()
+	if err != nil || !onFD.IsDir() || onFD.Mode().Perm() != 0o700 ||
+		!os.SameFile(candidate.directoryIdentity, onFD) {
+		_ = reader.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	return reader, nil
+}
+
 // inspectCandidateParent uses the locked parent fd to refuse unknown entries,
 // symlinks and quota overruns. It never removes a completed/incomplete scope.
 func inspectCandidateParent(ctx context.Context, lock *os.File) (int, error) {
@@ -255,19 +286,11 @@ func inspectInertCandidateFileProbed(
 	if err != nil || !os.SameFile(candidate.directoryIdentity, opened) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	// Use a fresh directory fd on every inspection. ReadDir on the
-	// long-lived lock descriptor would advance its offset and silently hide
-	// entries on the second Verify/Discard.
-	fd, err := syscall.Open(candidate.directory, syscall.O_RDONLY|
-		syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	// The inventory reader and the subsequent ciphertext openat are
+	// anchored to the same leased inode. Only the reader has its own offset.
+	reader, err := openLockedInertCandidateInventoryReader(candidate)
 	if err != nil {
-		return nil, ErrUnsafeInertRestoreCandidate
-	}
-	reader := os.NewFile(uintptr(fd), candidate.directory)
-	onFD, err := reader.Stat()
-	if err != nil || !os.SameFile(candidate.directoryIdentity, onFD) {
-		_ = reader.Close()
-		return nil, ErrUnsafeInertRestoreCandidate
+		return nil, err
 	}
 	entries, err := reader.ReadDir(2)
 	closeErr := reader.Close()
@@ -287,7 +310,7 @@ func inspectInertCandidateFileProbed(
 	if beforeArchiveOpen != nil && !beforeArchiveOpen() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	fd, err = syscall.Openat(int(candidate.dir.Fd()), inertRestoreCipherName,
+	fd, err := syscall.Openat(int(candidate.dir.Fd()), inertRestoreCipherName,
 		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
