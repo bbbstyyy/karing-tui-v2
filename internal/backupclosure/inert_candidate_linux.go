@@ -726,6 +726,16 @@ func ReopenInertRestoreCandidate(
 func reopenInertRestoreCandidateProbed(
 	ctx context.Context, directory string, key [32]byte, afterPreflight func(),
 ) (_ *InertRestoreCandidate, err error) {
+	return reopenInertRestoreCandidateAtParentProbed(ctx, directory, key, nil, afterPreflight)
+}
+
+// The additional private beforeChildOpen checkpoint tests a parent pathname
+// substitution after the parent inventory but before the child lease open.
+// Production passes nil; no public API admits an external callback.
+func reopenInertRestoreCandidateAtParentProbed(
+	ctx context.Context, directory string, key [32]byte,
+	beforeChildOpen, afterPreflight func(),
+) (_ *InertRestoreCandidate, err error) {
 	if ctx == nil || key == ([32]byte{}) ||
 		!validInertRestoreCandidateDir(directory) {
 		return nil, ErrUnsafeInertRestoreCandidate
@@ -741,6 +751,9 @@ func reopenInertRestoreCandidateProbed(
 	func() {
 		defer parent.Close()
 		if _, err = inspectCandidateParent(ctx, parent); err == nil {
+			if beforeChildOpen != nil {
+				beforeChildOpen()
+			}
 			candidate, err = openLockedInertRestoreCandidateAtParentProbed(
 				directory, parent, nil)
 		}
