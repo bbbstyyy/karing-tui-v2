@@ -1916,3 +1916,10 @@ docs/
 - ADR 0186/0187 已将候选密文的写入和单叶读取锚定到独占目录 fd，但 `inspectInertCandidateFile` 的临时目录清单 reader 仍使用绝对路径 `open`。本轮用 `openat(locked_dir_fd, ".", O_DIRECTORY|O_NOFOLLOW)` 取得独立目录描述符；核对 reader 与原持锁 inode 相同、仍为私有 0700，避免任何中间目录替换使清单读取错误 inode，同时保留独立目录游标以免重复 Verify/Discard 漏报条目。
 - Linux 回归重复读取原私有候选文件后，把目录换名并将原路径替换为其他 0700 目录或 symlink；新 reader 必须依然枚举原 inode，完整候选检查则因路径身份变化失败关闭，不读取或修改外部目录。nil/关闭租约不得获得清单读取权限。
 - 此项只收紧 T15/T23 的文件系统身份边界，不表示完整多轮鉴权的路径 TOCTOU 消除、Issue #59 根因修复或真实恢复已授权。Issue 继续开放，T20/T25、CN 许可规则和正式发行门槛保持 false。必须经同一提交普通 CI、Race 4/4、Managed Core、Linux 原生 amd64/arm64 全绿后才合并；稳定 main 不动，禁止 TUN 和订阅/ISP 分流层。
+
+
+### 2026-11-01 — M5 ADR 0189 / T15/T23 空候选清单的目录身份复核
+
+- 空目录是候选创建失败后内部清理路径允许的唯一特殊状态。此前 `inspectInertCandidateFile(candidate, true)` 在读取零个目录项后直接返回，绕过末尾目录 fd/path 身份核对；相同 UID 的不合作进程可能在清单扫描后换名候选目录。本次在空清单返回前重做锁目录与原路径的 inode 一致性校验，路径漂移必须失败关闭。
+- Linux 回归在独立清单读取后的测试边界将原私有目录换名，用另一个 0700 目录或符号链接替代路径：正常空目录准入、替换路径拒绝，保留原 leased inode 和替换目录的哨兵文件。无 API、持久化格式、密码学、内核、网络、TUN 或订阅/ISP 分流语义变更。
+- 本项不证明对抗恶意同 UID 进程的原子 unlink 安全、Issue #59 根因修复或 T15/T23 可用于生产恢复；完整预检仍有路径 TOCTOU 待验证。保持恢复、T20/T25、CN 规则许可和发行门槛关闭。新提交必须先完成普通 CI、Race 4/4、Managed Core、双架构 native Core Provenance，未经验证不得合并。
