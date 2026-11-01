@@ -1939,3 +1939,11 @@ docs/
 - 本轮让 Stage 和 Reopen 均通过 `openat(parent_flock_fd, filepath.Base(directory), O_DIRECTORY|O_NOFOLLOW)` 打开待加锁子目录；打开前后核对父 fd/path 原 inode，保留子目录 fd/path 的 inode/0700 校验与独占子目录 flock。用于独立测试的旧路径打开 helper 保持原语义，生产准入不再调用它。加入仅内部测试使用的 Reopen 父 inventory 后/子打开前故障边界。
 - Linux 回归：Stage 在子目录打开前换名父目录，用具有同名、持冲突 flock 的 0700 外部子目录替换父路径，必须先锁定旧父 fd 中的原始子目录然后失败关闭；Reopen 在 inventory 后用另一私有目录替换父路径，该目录含同名且具有完整有效密文的 0600 子项，必须拒绝将未被扫描的外部目录收为可信候选。拒绝后源归档和两份密文均不修改；原有正常路径测试继续覆盖关闭/重新打开和显式 Discard。
 - **边界声明**：新 fd 绑定并非对非协作同 UID 对手提供原子路径解绑，完整多轮认证预检仍路径定位；不表示 Issue #59 偶发 create_scope 失败已定位，也不授权实时恢复、候选自动 GC、T15/T23/T20/T25 或发行。保留 Linux 无 TUN、无订阅/ISP 路由层、CN 许可资源阻塞及稳定 main 不动；本提交的普通 CI、Race 4/4、Managed Core、原生 Linux amd64/arm64 全部通过后方可合并。
+
+
+### 2026-11-01 — M5 ADR 0192 / T15/T23 已锁父目录的独立清单与 fd 相对子目录校验
+
+- 在 ADR 0190/0191 后，候选目录创建及 Stage/Reopen 获取子目录 flock 已绑定父目录 fd，但 `inspectCandidateParent` 仍直接对持锁父 fd 调用 `ReadDir`、逐项再通过拼接的绝对路径验证。前者共享长生命周期目录游标，重复检查可误判为空；后者遇到同 UID 不合作进程替换父目录路径时可能检查到扫描之外的同名 0700 子目录。
+- 新实现使用 `openat(parent_flock_fd, ".", O_DIRECTORY|O_NOFOLLOW)` 获取每次独立清单流，验证流与原持锁 inode 一致且为当前 UID 所有的 0700 目录。逐项要求合法候选名称和目录类型，通过 `openat(parent_flock_fd, name, O_DIRECTORY|O_NOFOLLOW)` 获取子目录 fd，验证 UID/0700、fd/path inode 一致及原有安全祖先路径。扫描前后复核父目录持锁 inode 与路径，包含空清单；保留最多 8 项、不认识即拒绝、无隐式删除、取消与错误哨兵。
+- Linux 回归以同一父 flock 连续读取两项清单三次，拒绝符号链接和 nil/关闭租约；在单候选和空候选场景均于清单读取后换名父目录，并以同名私有子目录或 symlink 替换，必须失败关闭；独立 reader 仍枚举原 inode，子目录 fd 指向旧父目录，外部哨兵文件不被触碰。
+- **限制**：这仍是有边界的安全收紧，不能保证不合作同 UID 对手下所有跨 syscall 操作原子性，完整多轮 HMAC/SQLite preflight 尚未 fd 绑定；Issue #59 仍开放，不能据此开放真实恢复/自动 GC、T15/T23、T20/T25、CN 许可资产或正式发行。保持 Linux 无 TUN、无订阅/ISP 分流层、Core 锁定和 stable main 不变。PR 必须等到精确 head 的普通 CI、Go Race 4/4、Managed Core 和 Linux native amd64/arm64 全通过后才合并。
