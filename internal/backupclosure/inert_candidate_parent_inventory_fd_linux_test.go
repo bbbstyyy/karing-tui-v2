@@ -61,19 +61,16 @@ func TestInertParentInventoryUsesIndependentLeasedDirectoryStreams(t *testing.T)
 		filepath.Join(parent, inertRestoreCandidatePrefix+"AAAAAA03")); err != nil {
 		t.Fatal(err)
 	}
-	if count, err := inspectCandidateParent(context.Background(), lock);
-		count != 0 || !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if count, err := inspectCandidateParent(context.Background(), lock); count != 0 || !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("private-looking symlink accepted: count=%d err=%v", count, err)
 	}
-	if _, err := openLockedInertCandidateParentInventoryReader(nil);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if _, err := openLockedInertCandidateParentInventoryReader(nil); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("nil parent yielded inventory stream: %v", err)
 	}
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openLockedInertCandidateParentInventoryReader(lock);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if _, err := openLockedInertCandidateParentInventoryReader(lock); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("closed parent yielded inventory stream: %v", err)
 	}
 }
