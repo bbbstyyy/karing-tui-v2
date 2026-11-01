@@ -238,6 +238,15 @@ func inspectCandidateParent(ctx context.Context, lock *os.File) (int, error) {
 }
 
 func inspectInertCandidateFile(candidate *InertRestoreCandidate, allowAbsent bool) (os.FileInfo, error) {
+	return inspectInertCandidateFileProbed(candidate, allowAbsent, nil)
+}
+
+// inspectInertCandidateFileProbed provides a test-only boundary between
+// scanning the locked child and opening its single ciphertext leaf.
+// Production always uses a nil hook.
+func inspectInertCandidateFileProbed(
+	candidate *InertRestoreCandidate, allowAbsent bool, beforeArchiveOpen func() bool,
+) (os.FileInfo, error) {
 	if candidate == nil || candidate.dir == nil ||
 		candidate.directoryIdentity == nil {
 		return nil, ErrUnsafeInertRestoreCandidate
@@ -272,8 +281,20 @@ func inspectInertCandidateFile(candidate *InertRestoreCandidate, allowAbsent boo
 		!entries[0].Type().IsRegular() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	source, err := openSealedArchiveNoFollow(candidate.archive)
+	// Replacing the candidate pathname after ReadDir must not redirect the
+	// archive open to an unrelated private child. The long-lived flock fd
+	// pins the source directory inode throughout this inspection.
+	if beforeArchiveOpen != nil && !beforeArchiveOpen() {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	fd, err = syscall.Openat(int(candidate.dir.Fd()), inertRestoreCipherName,
+		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	source := os.NewFile(uintptr(fd), candidate.archive)
+	if source == nil {
+		_ = syscall.Close(fd)
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	defer source.Close()
@@ -286,6 +307,10 @@ func inspectInertCandidateFile(candidate *InertRestoreCandidate, allowAbsent boo
 	}
 	atPath, err := os.Lstat(candidate.archive)
 	if err != nil || !os.SameFile(identity, atPath) {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	locked, err := verifyCandidateDirLock(candidate.directory, candidate.dir)
+	if err != nil || !os.SameFile(candidate.directoryIdentity, locked) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	return identity, nil
@@ -431,7 +456,9 @@ func stageInertRestoreCandidate(
 	if !checkpoint("scope_sync") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if err = syncSealedArchiveDir(candidate.directory); err != nil {
+	// Fsync the same directory inode used for the ciphertext openat, not
+	// a pathname that may have been replaced by an uncooperative actor.
+	if err = candidate.dir.Sync(); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !checkpoint("parent_sync") {
@@ -557,6 +584,14 @@ func copyInertCandidateCipher(
 func ReopenInertRestoreCandidate(
 	ctx context.Context, directory string, key [32]byte,
 ) (_ *InertRestoreCandidate, err error) {
+	return reopenInertRestoreCandidateProbed(ctx, directory, key, nil)
+}
+
+// The private afterPreflight hook permits deterministic Linux path-swap
+// regressions. No caller outside this package can supply it to production.
+func reopenInertRestoreCandidateProbed(
+	ctx context.Context, directory string, key [32]byte, afterPreflight func(),
+) (_ *InertRestoreCandidate, err error) {
 	if ctx == nil || key == ([32]byte{}) ||
 		!validInertRestoreCandidateDir(directory) {
 		return nil, ErrUnsafeInertRestoreCandidate
@@ -583,7 +618,8 @@ func ReopenInertRestoreCandidate(
 			_ = candidate.Close()
 		}
 	}()
-	if _, err = inspectInertCandidateFile(candidate, false); err != nil {
+	before, err := inspectInertCandidateFile(candidate, false)
+	if err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	var report InertArchivePreflight
@@ -591,6 +627,14 @@ func ReopenInertRestoreCandidate(
 	if err != nil || !report.SchemaCatalogVerified ||
 		!report.SQLiteLogicalVerified || report.RestoreReady ||
 		report.RestoreSupported {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if afterPreflight != nil {
+		afterPreflight()
+	}
+	after, inspectErr := inspectInertCandidateFile(candidate, false)
+	if inspectErr != nil || !os.SameFile(before, after) ||
+		before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	candidate.receipt = report
@@ -691,7 +735,9 @@ func (c *InertRestoreCandidate) discardLocked(requireFile bool) error {
 			return ErrUnsafeInertRestoreCandidate
 		}
 	}
-	if syncSealedArchiveDir(c.directory) != nil {
+	// Sync the locked original inode after unlinkat. A path-based Sync
+	// could fsync a substituted directory instead of the one modified.
+	if c.dir.Sync() != nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
 	atDir, err := os.Lstat(c.directory)
