@@ -305,6 +305,21 @@ func sameInertCandidateParentLease(path string, parent *os.File) bool {
 	return err == nil && os.SameFile(opened, onPath)
 }
 
+// syncPinnedInertCandidateParent persists the original leased parent inode
+// without reopening a mutable pathname after a potentially lengthy ciphertext
+// copy. A freshly substituted owner-private parent cannot be fsynced or
+// mistaken for the parent that reserved the candidate slot.
+func syncPinnedInertCandidateParent(path string, pinned *os.File) error {
+	if !sameInertCandidateParentLease(path, pinned) {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	if err := pinned.Sync(); err != nil ||
+		!sameInertCandidateParentLease(path, pinned) {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	return nil
+}
+
 // sameNewInertScopeIdentity checks whether the path still names the exact
 // private inode captured immediately after creation. A path-only cleanup is
 // unsafe after a test hook or another same-UID actor replaces that pathname.
@@ -608,6 +623,15 @@ func stageInertRestoreCandidate(
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	var candidate *InertRestoreCandidate
+	// An independent, non-flocked fd keeps the admitted parent inode
+	// available for durability sync after its short exclusive flock ends.
+	// It never prolongs the parent reservation lock across ciphertext IO.
+	var parentSync *os.File
+	defer func() {
+		if parentSync != nil {
+			_ = parentSync.Close()
+		}
+	}()
 	func() {
 		defer parentLock.Close()
 		if !checkpoint("parent_inventory") {
@@ -678,6 +702,14 @@ func stageInertRestoreCandidate(
 			parentLock.Sync() != nil {
 			// Fsync the leased parent inode, not a replacement path.
 			err = ErrUnsafeInertRestoreCandidate
+			return
+		}
+		// The independent stream fd is opened relative to the same leased
+		// inode and validated before the short parent flock is released.
+		parentSync, err = openLockedInertCandidateParentInventoryReader(parentLock)
+		if err != nil || !sameInertCandidateParentLease(candidateParent, parentSync) {
+			err = ErrUnsafeInertRestoreCandidate
+			return
 		}
 	}()
 	if err != nil || candidate == nil {
@@ -708,7 +740,9 @@ func stageInertRestoreCandidate(
 	if !checkpoint("parent_sync") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if err = syncSealedArchiveDir(candidateParent); err != nil {
+	// Do not reopen candidateParent by name: its inode may have been
+	// exchanged after the short parent flock was released.
+	if err = syncPinnedInertCandidateParent(candidateParent, parentSync); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !checkpoint("candidate_revalidation") {
@@ -722,7 +756,8 @@ func stageInertRestoreCandidate(
 	// The final authenticated path still has to refer to the original
 	// locked inode, not merely contain matching ciphertext.
 	locked, lockErr := verifyCandidateDirLock(candidate.directory, candidate.dir)
-	if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) {
+	if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) ||
+		!sameInertCandidateParentLease(candidateParent, parentSync) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	candidate.receipt = checked
