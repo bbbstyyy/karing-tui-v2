@@ -78,6 +78,7 @@ type InertRestoreCandidate struct {
 	archive           string
 	dir               *os.File
 	directoryIdentity os.FileInfo
+	parentIdentity    os.FileInfo
 	receipt           InertArchivePreflight
 }
 
@@ -118,6 +119,19 @@ func verifyCandidateDirLock(path string, lock *os.File) (os.FileInfo, error) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	return opened, nil
+}
+
+// sameInertCandidateParentIdentity rejects a candidate whose parent directory
+// has been replaced even if the identical leased child inode and ciphertext
+// have been moved back to the original absolute path. The parent is a trust
+// boundary distinct from the child directory flock.
+func sameInertCandidateParentIdentity(path string, original os.FileInfo) bool {
+	if original == nil || !original.IsDir() || original.Mode().Perm() != 0o700 ||
+		verifySealedArchiveParent(path) != nil {
+		return false
+	}
+	onPath, err := os.Lstat(path)
+	return err == nil && os.SameFile(original, onPath)
 }
 
 func openLockedInertRestoreCandidate(path string) (*InertRestoreCandidate, error) {
@@ -197,12 +211,24 @@ func openLockedInertRestoreCandidateAtParentProbed(
 		_ = lock.Close()
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	parentPath := filepath.Dir(path)
+	var parentIdentity os.FileInfo
+	if parent != nil {
+		parentIdentity, err = parent.Stat()
+	} else {
+		parentIdentity, err = os.Lstat(parentPath)
+	}
+	if err != nil || !sameInertCandidateParentIdentity(parentPath, parentIdentity) {
+		_ = lock.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	return &InertRestoreCandidate{
 		directory:         path,
-		parent:            filepath.Dir(path),
+		parent:            parentPath,
 		archive:           filepath.Join(path, inertRestoreCipherName),
 		dir:               lock,
 		directoryIdentity: identity,
+		parentIdentity:    parentIdentity,
 	}, nil
 }
 
@@ -454,7 +480,8 @@ func inspectInertCandidateFileProbed(
 	candidate *InertRestoreCandidate, allowAbsent bool, beforeArchiveOpen func() bool,
 ) (os.FileInfo, error) {
 	if candidate == nil || candidate.dir == nil ||
-		candidate.directoryIdentity == nil {
+		candidate.directoryIdentity == nil ||
+		!sameInertCandidateParentIdentity(candidate.parent, candidate.parentIdentity) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	opened, err := verifyCandidateDirLock(candidate.directory, candidate.dir)
@@ -481,7 +508,8 @@ func inspectInertCandidateFileProbed(
 	}
 	if len(entries) == 0 && allowAbsent {
 		locked, lockErr := verifyCandidateDirLock(candidate.directory, candidate.dir)
-		if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) {
+		if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) ||
+			!sameInertCandidateParentIdentity(candidate.parent, candidate.parentIdentity) {
 			return nil, ErrUnsafeInertRestoreCandidate
 		}
 		return nil, nil
@@ -514,7 +542,8 @@ func inspectInertCandidateFileProbed(
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	locked, err := verifyCandidateDirLock(candidate.directory, candidate.dir)
-	if err != nil || !os.SameFile(candidate.directoryIdentity, locked) {
+	if err != nil || !os.SameFile(candidate.directoryIdentity, locked) ||
+		!sameInertCandidateParentIdentity(candidate.parent, candidate.parentIdentity) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	return identity, nil
