@@ -70,7 +70,7 @@ func TestPinnedInertParentSyncRequiresOriginalDirectoryInode(t *testing.T) {
 			if err != nil || !os.SameFile(atFD, leased) {
 				t.Fatalf("pinned fd followed replacement path: %v", err)
 			}
-			if _, err := syncPinnedInertCandidateParent(parent, nil); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+			if err := syncPinnedInertCandidateParent(parent, nil); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 				t.Fatalf("nil parent fd authorized sync: %v", err)
 			}
 		})
