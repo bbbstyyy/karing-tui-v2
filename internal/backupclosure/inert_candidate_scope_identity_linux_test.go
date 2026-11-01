@@ -118,6 +118,11 @@ func TestInertNewScopeCleanupRequiresOriginalInode(t *testing.T) {
 	if err := os.Chmod(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	parentLock, err := lockSealedArchiveParent(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parentLock.Close()
 	path, err := os.MkdirTemp(parent, inertRestoreCandidatePrefix)
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +141,7 @@ func TestInertNewScopeCleanupRequiresOriginalInode(t *testing.T) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeNewEmptyInertScopeIfIdentical(path, original); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if err := removeNewEmptyInertScopeIfIdentical(parentLock, path, original); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("foreign inode was eligible for deletion: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -148,7 +153,7 @@ func TestInertNewScopeCleanupRequiresOriginalInode(t *testing.T) {
 	if err := os.Rename(moved, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeNewEmptyInertScopeIfIdentical(path, original); err != nil {
+	if err := removeNewEmptyInertScopeIfIdentical(parentLock, path, original); err != nil {
 		t.Fatalf("owned empty inode was not removed: %v", err)
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
