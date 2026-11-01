@@ -1970,3 +1970,11 @@ docs/
 - 本轮在任何不可逆清理前以 `O_DIRECTORY|O_NOFOLLOW` 打开父目录，必须匹配 ADR 0194 当前租约保存的原始 0700 当前 UID 父 inode。保留单密文叶子检验及基于子 fd 的 `unlinkat`、子 fd 的 fsync；删除目录项前再次校验父/子目录 fd/path 身份，使用 `unix.Unlinkat(parent_fd, child_name, AT_REMOVEDIR)` 仅在原父目录 inode 中删除空子目录，最后同步已固定的父目录 fd 而非重新按路径打开。无递归删除、无自动 GC、无公开接口或持久化格式变化。
 - Linux 回归包含正常显式 Discard 仅删除候选且保留源加密归档，以及已知密文删除后、目录项删除前换名原父目录并用另一 0700 父目录/符号链接替换；替换目录中预置同名空子目录，检验新实现拒绝删除外来空目录并保留外部哨兵、源密文、旧父目录下的空候选。独立 fd 身份检查必须拒绝新路径 inode。
 - **限制**：对不合作同 UID 对手，fd/path 身份检查与 `unlinkat` 仍非原子 compare-and-unlink；在原父目录内对目录项的竞态依旧不能全部证明消除。若在已删除密文后发生拒绝，允许原候选空目录残留，禁止自动猜路径清理。完整 HMAC/SQLite 多轮认证仍有路径定位段落；Issue #59、真实恢复/自动 GC、T15/T23/T20/T25、CN 离线许可资源与正式发行门槛均保持开放。遵守 Linux 无 TUN、五层分流无订阅/ISP 来源、Core pin 与稳定 main 不动；在 ADR 0194 合并后仍须对 PR 的精确 head 完成普通 CI、Race 四片、Managed Core、原生 amd64/arm64 验证。
+
+
+### 2026-11-01 — M5 ADR 0196 / T15/T23 失败 Stage 的空候选目录清理绑定原父目录 fd
+
+- ADR 0190 已通过持锁父目录 fd 创建候选 scope，但候选子目录租约建立前的两处失败清理仍以 `sameNewInertScopeIdentity(path, created)` 核对子目录 inode 后调用 `os.Remove(path)`。不合作的同 UID 进程可以换名原父目录，在原位置新建另一个 0700 私有父目录，将**原空候选子目录 inode**移动到该替换父目录，使子路径/inode 校验依旧通过，旧清理却可能删除当前 Stage 父目录租约未覆盖的目标。
+- 本轮内部 `removeNewEmptyInertScopeIfIdentical` 必须接收仍持有 flock 的父目录 fd；在任何删除前校验父 fd/path inode、原创建的子目录 inode 与权限，并通过 `openat(parent_fd, child_name, O_DIRECTORY|O_NOFOLLOW)` 再次核对原子目录 fd 身份。只以 `unix.Unlinkat(parent_fd, child_name, AT_REMOVEDIR)` 删除已验证的**空目录**，禁止递归删除、符号链接跟随或绝对路径回退；删除后以同一父 fd 同步并重新核对父路径身份。仍只用于 Stage 收养前两个失败位置，已获取候选租约后的 Discard 由 ADR 0195 单独保护。
+- Linux 回归：直接 helper 在父路径已替换、原子目录 inode 被搬回该路径时必须拒绝删除并保留外部哨兵；含未知文件的非空 scope 不能清除；完整 Stage 在 `scope_created` 注入同样换名与原子目录搬移并拒绝接管，原空目录及源密文必须保留；现有全阶段故障测试持续验证正常失败不会泄露空候选配额。
+- **限制**：fd 相对的 inode 检查及删除仍不是原子 compare-and-unlink，对在同一父目录 inode 中重排目录项的同 UID 不合作进程不能提供彻底证明；归属不确定时允许保留空 scope，不得猜测路径自动清理。Issue #59、真实恢复/自动 GC、T15/T23/T20/T25、CN 离线资源许可闭包及正式发布门槛保持开放。严格保留 Linux 无 TUN、Karing 多层分流排除订阅/ISP 来源、Core pin 与稳定 main 不变；必须等待依赖 PR #75 合并，并对新基线精确提交完成普通 CI、Race 4/4、Managed Core、Linux 原生 amd64/arm64 全部验证后才合并。
