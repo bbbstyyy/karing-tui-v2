@@ -336,28 +336,109 @@ func openLockedInertCandidateInventoryReader(
 	return reader, nil
 }
 
-// inspectCandidateParent uses the locked parent fd to refuse unknown entries,
-// symlinks and quota overruns. It never removes a completed/incomplete scope.
+// openLockedInertCandidateParentInventoryReader obtains a fresh directory
+// stream from the flocked parent inode. ReadDir on the lock fd would consume
+// its persistent directory offset; reopening the parent by pathname would
+// select a substituted directory if a same-UID actor ignores the flock.
+func openLockedInertCandidateParentInventoryReader(lock *os.File) (*os.File, error) {
+	if lock == nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	identity, err := lock.Stat()
+	if err != nil || !identity.IsDir() || identity.Mode().Perm() != 0o700 {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	owner, ok := identity.Sys().(*syscall.Stat_t)
+	if !ok || int(owner.Uid) != os.Getuid() {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	fd, err := syscall.Openat(int(lock.Fd()), ".",
+		syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	reader := os.NewFile(uintptr(fd), lock.Name())
+	if reader == nil {
+		_ = syscall.Close(fd)
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	opened, err := reader.Stat()
+	if err != nil || !opened.IsDir() || opened.Mode().Perm() != 0o700 ||
+		!os.SameFile(identity, opened) {
+		_ = reader.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	return reader, nil
+}
+
+// inspectCandidateParent rejects unknown entries, symlinks, non-private
+// directories and quota overruns. The inventory stream and each child open
+// are anchored to the same leased parent inode. No files are removed.
 func inspectCandidateParent(ctx context.Context, lock *os.File) (int, error) {
-	if ctx == nil || lock == nil {
+	return inspectCandidateParentProbed(ctx, lock, nil)
+}
+
+// The private afterInventory hook permits deterministic post-ReadDir
+// substitution regressions; production always passes nil.
+func inspectCandidateParentProbed(
+	ctx context.Context, lock *os.File, afterInventory func(),
+) (int, error) {
+	if ctx == nil || lock == nil ||
+		!sameInertCandidateParentLease(lock.Name(), lock) {
 		return 0, ErrUnsafeInertRestoreCandidate
 	}
-	entries, err := lock.ReadDir(MaxInertRestoreCandidates + 1)
-	if err != nil && !errors.Is(err, io.EOF) {
+	reader, err := openLockedInertCandidateParentInventoryReader(lock)
+	if err != nil {
+		return 0, err
+	}
+	entries, readErr := reader.ReadDir(MaxInertRestoreCandidates + 1)
+	closeErr := reader.Close()
+	if (readErr != nil && !errors.Is(readErr, io.EOF)) ||
+		closeErr != nil || len(entries) > MaxInertRestoreCandidates {
 		return 0, ErrUnsafeInertRestoreCandidate
 	}
-	if len(entries) > MaxInertRestoreCandidates {
-		return 0, ErrUnsafeInertRestoreCandidate
+	if afterInventory != nil {
+		afterInventory()
 	}
 	for _, entry := range entries {
-		if ctx.Err() != nil {
-			return 0, ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return 0, err
 		}
 		path := filepath.Join(lock.Name(), entry.Name())
-		if !validInertRestoreCandidateDir(path) || !entry.IsDir() ||
+		if !validInertRestoreCandidateDir(path) || !entry.IsDir() {
+			return 0, ErrUnsafeInertRestoreCandidate
+		}
+		fd, err := syscall.Openat(int(lock.Fd()), entry.Name(),
+			syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+		if err != nil {
+			return 0, ErrUnsafeInertRestoreCandidate
+		}
+		child := os.NewFile(uintptr(fd), path)
+		if child == nil {
+			_ = syscall.Close(fd)
+			return 0, ErrUnsafeInertRestoreCandidate
+		}
+		onFD, statErr := child.Stat()
+		closeErr := child.Close()
+		if statErr != nil || closeErr != nil || !onFD.IsDir() ||
+			onFD.Mode().Perm() != 0o700 {
+			return 0, ErrUnsafeInertRestoreCandidate
+		}
+		owner, ok := onFD.Sys().(*syscall.Stat_t)
+		if !ok || int(owner.Uid) != os.Getuid() {
+			return 0, ErrUnsafeInertRestoreCandidate
+		}
+		onPath, pathErr := os.Lstat(path)
+		if pathErr != nil || !os.SameFile(onFD, onPath) ||
 			verifySealedArchiveParent(path) != nil {
 			return 0, ErrUnsafeInertRestoreCandidate
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if !sameInertCandidateParentLease(lock.Name(), lock) {
+		return 0, ErrUnsafeInertRestoreCandidate
 	}
 	return len(entries), nil
 }
