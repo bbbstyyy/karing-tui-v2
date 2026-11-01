@@ -39,8 +39,7 @@ func TestInertDiscardPinsOriginalParentFD(t *testing.T) {
 	if err := os.Mkdir(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openInertCandidateParentForDiscard(parent, identity);
-		!errors.Is(err, ErrUnsafeInertRestoreCandidate) {
+	if _, err := openInertCandidateParentForDiscard(parent, identity); !errors.Is(err, ErrUnsafeInertRestoreCandidate) {
 		t.Fatalf("opened foreign parent for unlink: %v", err)
 	}
 	opened, err := pinned.Stat()
@@ -114,18 +113,16 @@ func TestInertDiscardRejectsParentSwapBeforeDirectoryUnlink(t *testing.T) {
 				if mutationErr != nil {
 					return
 				}
-				mutationErr = os.Mkdir(filepath.Join(foreign, name), 0o700)
+				replacementParent := foreign
 				if replacement == "directory" {
-					mutationErr = os.Mkdir(filepath.Join(parent, name), 0o700)
+					replacementParent = parent
 				}
+				mutationErr = os.Mkdir(filepath.Join(replacementParent, name), 0o700)
 				if mutationErr != nil {
 					return
 				}
-				sentinelPath := filepath.Join(foreign, "sentinel")
-				if replacement == "directory" {
-					sentinelPath = filepath.Join(parent, "sentinel")
-				}
-				mutationErr = os.WriteFile(sentinelPath, []byte("intact"), 0o600)
+				mutationErr = os.WriteFile(filepath.Join(replacementParent, "sentinel"),
+					[]byte("intact"), 0o600)
 			})
 			candidate.mu.Unlock()
 			if !mutated || mutationErr != nil ||
@@ -151,12 +148,10 @@ func TestInertDiscardRejectsParentSwapBeforeDirectoryUnlink(t *testing.T) {
 			if info, err := os.Lstat(foreignScope); err != nil || !info.IsDir() {
 				t.Fatalf("deleted replacement same-name empty scope: %v", err)
 			}
-			if sentinel, err := os.ReadFile(foreignSentinel); err != nil ||
-				string(sentinel) != "intact" {
+			if sentinel, err := os.ReadFile(foreignSentinel); err != nil || string(sentinel) != "intact" {
 				t.Fatalf("changed foreign parent sentinel: %v", err)
 			}
-			if actual, err := os.ReadFile(source); err != nil ||
-				!bytes.Equal(actual, sourceBytes) {
+			if actual, err := os.ReadFile(source); err != nil || !bytes.Equal(actual, sourceBytes) {
 				t.Fatalf("source encrypted archive modified: %v", err)
 			}
 		})
