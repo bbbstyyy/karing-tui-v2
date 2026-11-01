@@ -130,10 +130,22 @@ func openLockedInertRestoreCandidate(path string) (*InertRestoreCandidate, error
 func openLockedInertRestoreCandidateProbed(
 	path string, probe func(string) bool,
 ) (*InertRestoreCandidate, error) {
+	return openLockedInertRestoreCandidateAtParentProbed(path, nil, probe)
+}
+
+// openLockedInertRestoreCandidateAtParentProbed anchors the child directory
+// open to an already flocked parent inode when one is available. A pathname
+// open could acquire a flock on an unrelated child if the parent is renamed
+// after inventory. Direct test helpers without a parent retain their original
+// pathname behavior and all call paths still check the canonical identity.
+func openLockedInertRestoreCandidateAtParentProbed(
+	path string, parent *os.File, probe func(string) bool,
+) (*InertRestoreCandidate, error) {
 	checkpoint := func(stage string) bool {
 		return probe == nil || probe(stage)
 	}
-	if !validInertRestoreCandidateDir(path) || verifySealedArchiveParent(path) != nil {
+	if !validInertRestoreCandidateDir(path) || verifySealedArchiveParent(path) != nil ||
+		(parent != nil && !sameInertCandidateParentLease(filepath.Dir(path), parent)) {
 		if probe != nil {
 			_ = probe("scope_child_precheck_refused")
 		}
@@ -142,8 +154,15 @@ func openLockedInertRestoreCandidateProbed(
 	if !checkpoint("scope_child_open") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|
-		syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	flags := syscall.O_RDONLY | syscall.O_DIRECTORY |
+		syscall.O_NOFOLLOW | syscall.O_CLOEXEC
+	var fd int
+	var err error
+	if parent != nil {
+		fd, err = syscall.Openat(int(parent.Fd()), filepath.Base(path), flags, 0)
+	} else {
+		fd, err = syscall.Open(path, flags, 0)
+	}
 	if err != nil {
 		recordInertCandidateSyscallFailure(probe, "scope_child_open", err)
 		return nil, ErrUnsafeInertRestoreCandidate
@@ -166,12 +185,13 @@ func openLockedInertRestoreCandidateProbed(
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	identity, err := verifyCandidateDirLock(path, lock)
-	if err != nil {
+	if err != nil ||
+		(parent != nil && !sameInertCandidateParentLease(filepath.Dir(path), parent)) {
 		if probe != nil {
 			_ = probe("scope_child_identity_refused")
 		}
 		_ = lock.Close()
-		return nil, err
+		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !checkpoint("scope_child_identity_verified") {
 		_ = lock.Close()
@@ -522,7 +542,8 @@ func stageInertRestoreCandidate(
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		candidate, err = openLockedInertRestoreCandidateProbed(directory, probe)
+		candidate, err = openLockedInertRestoreCandidateAtParentProbed(
+			directory, parentLock, probe)
 		if err != nil {
 			// An untrusted actor could have replaced the empty scope while
 			// this process held the parent advisory flock. Never unlink
@@ -705,6 +726,16 @@ func ReopenInertRestoreCandidate(
 func reopenInertRestoreCandidateProbed(
 	ctx context.Context, directory string, key [32]byte, afterPreflight func(),
 ) (_ *InertRestoreCandidate, err error) {
+	return reopenInertRestoreCandidateAtParentProbed(ctx, directory, key, nil, afterPreflight)
+}
+
+// The additional private beforeChildOpen checkpoint tests a parent pathname
+// substitution after the parent inventory but before the child lease open.
+// Production passes nil; no public API admits an external callback.
+func reopenInertRestoreCandidateAtParentProbed(
+	ctx context.Context, directory string, key [32]byte,
+	beforeChildOpen, afterPreflight func(),
+) (_ *InertRestoreCandidate, err error) {
 	if ctx == nil || key == ([32]byte{}) ||
 		!validInertRestoreCandidateDir(directory) {
 		return nil, ErrUnsafeInertRestoreCandidate
@@ -720,7 +751,11 @@ func reopenInertRestoreCandidateProbed(
 	func() {
 		defer parent.Close()
 		if _, err = inspectCandidateParent(ctx, parent); err == nil {
-			candidate, err = openLockedInertRestoreCandidate(directory)
+			if beforeChildOpen != nil {
+				beforeChildOpen()
+			}
+			candidate, err = openLockedInertRestoreCandidateAtParentProbed(
+				directory, parent, nil)
 		}
 	}()
 	if err != nil {

@@ -1931,3 +1931,11 @@ docs/
 - 本轮生成 96-bit 密码学随机目录名、最多 8 次碰撞尝试，采用 `mkdirat(parent_flock_fd, name, 0700)` 创建；新子目录的初始 inode 从同一父 fd 的 `openat` 获取，而不是从路径猜测。正式接管前同时核对父目录持锁 inode 和路径、子目录初始 inode 和路径，再通过已有候选子目录租约校验。父目录首次 fsync 直接使用持锁 fd，替代路径 fsync。
 - Linux 故障注入在父目录 inventory 后、mkdirat 前换名父目录，将原路径替换成另一私有目录或 symlink。必须只在被持锁的原目录生成空候选，拒绝接管新旧路径，并保留外部替换对象、源加密归档。测试还要求从 parent fd 返回子目录真实 inode 身份；增加 `scope_before_mkdirat` 固定相位覆盖。
 - **未关闭的限制**：父目录被恶意换名后，原 inode 可能遗留一个新建的空 0700 子目录；生产不得盲目删除不能认证的路径。此改动不构成原子 compare-and-unlink、不证明 Issue #59 偶发 `create_scope` 拒绝根因修复，也未实现完整 fd 绑定预检或生产恢复；T15/T23/T20/T25、CN 许可与发行门槛仍为 false。遵守 Linux 无 TUN、无订阅/ISP 路由层；仅经本提交普通 CI、Race 4/4、Managed Core、原生 amd64/arm64 全部验证后合并，不更改稳定 main。
+
+
+### 2026-11-01 — M5 ADR 0191 / T15/T23 候选子目录租约的父 fd 锚定
+
+- ADR 0190 已令候选私有目录通过持锁父目录 fd 的 `mkdirat` 创建，但 Stage 随后获取候选子目录 flock、Reopen 在父目录 inventory 后获取子目录 flock 仍使用绝对路径 `syscall.Open`。同 UID 不合作进程可在扫描/打开间更换父目录路径，使锁作用于新目录中同名子项，导致已扫描对象与获取租约对象的身份不一致。
+- 本轮让 Stage 和 Reopen 均通过 `openat(parent_flock_fd, filepath.Base(directory), O_DIRECTORY|O_NOFOLLOW)` 打开待加锁子目录；打开前后核对父 fd/path 原 inode，保留子目录 fd/path 的 inode/0700 校验与独占子目录 flock。用于独立测试的旧路径打开 helper 保持原语义，生产准入不再调用它。加入仅内部测试使用的 Reopen 父 inventory 后/子打开前故障边界。
+- Linux 回归：Stage 在子目录打开前换名父目录，用具有同名、持冲突 flock 的 0700 外部子目录替换父路径，必须先锁定旧父 fd 中的原始子目录然后失败关闭；Reopen 在 inventory 后用另一私有目录替换父路径，该目录含同名且具有完整有效密文的 0600 子项，必须拒绝将未被扫描的外部目录收为可信候选。拒绝后源归档和两份密文均不修改；原有正常路径测试继续覆盖关闭/重新打开和显式 Discard。
+- **边界声明**：新 fd 绑定并非对非协作同 UID 对手提供原子路径解绑，完整多轮认证预检仍路径定位；不表示 Issue #59 偶发 create_scope 失败已定位，也不授权实时恢复、候选自动 GC、T15/T23/T20/T25 或发行。保留 Linux 无 TUN、无订阅/ISP 路由层、CN 许可资源阻塞及稳定 main 不动；本提交的普通 CI、Race 4/4、Managed Core、原生 Linux amd64/arm64 全部通过后方可合并。
