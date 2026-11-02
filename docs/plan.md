@@ -1962,3 +1962,11 @@ docs/
 - 本轮在获取候选子目录租约时另外保存 `parentIdentity`：Stage/Reopen 使用已持锁父 fd 的 `Stat`，独立内部测试 helper 使用已验证父路径的 `Lstat`。每次候选清单检查开头、允许空目录提前返回之前以及密文检查末尾均要求原父目录 inode 与现存路径相同；该检查覆盖 Verify、Reopen、Discard 的通用安全边界，保留原子目录权限、子 fd 身份与完整密文认证要求。接口和持久化格式不变。
 - Linux 端到端回归先验证健康候选，然后替换父目录并移动同一候选子目录 inode 到新父目录：Verify/Discard 必须失败关闭并保留原密文和源归档。另一回归在 Reopen 完整认证后替换父目录并移动原候选子目录，必须拒绝接管，外部哨兵不变。
 - **限制**：这仅在当前进程的存活租约内记住父目录身份；跨重启的 Reopen 必须重新建立父目录信任，尚无持久父目录身份凭据。检查不是抵御不合作同 UID 对手的原子路径保护，多轮 HMAC/SQLite preflight 仍路径定位，Discard 的最终 unlink/fsync 仍待独立审查。Issue #59、T15/T23/T20/T25、CN 离线许可规则包和正式发行门槛仍开放；保持 Linux 无 TUN、五层分流剥除订阅/ISP 来源、Core pin 和 stable main 不变。精确提交的普通 CI、Go Race 四片、Managed Core、原生 Linux amd64/arm64 全部通过后方可合并。
+
+
+### 2026-11-01 — M5 ADR 0195 / T15/T23 显式候选 Discard 的父目录 fd 相对删除
+
+- 已发现显式 `Discard` 虽使用持锁子目录 fd 删除已知密文，但后续仍按绝对路径 `os.Remove(candidate.directory)` 删除候选目录，并使用 `syncSealedArchiveDir(candidate.parent)` 重新解析父目录执行 fsync。同 UID 不合作进程若在子目录身份核对后将父目录路径换成另一私有目录或指向私有目录的符号链接，可能使最后的目录删除/持久化指向未授权对象。
+- 本轮在任何不可逆清理前以 `O_DIRECTORY|O_NOFOLLOW` 打开父目录，必须匹配 ADR 0194 当前租约保存的原始 0700 当前 UID 父 inode。保留单密文叶子检验及基于子 fd 的 `unlinkat`、子 fd 的 fsync；删除目录项前再次校验父/子目录 fd/path 身份，使用 `unix.Unlinkat(parent_fd, child_name, AT_REMOVEDIR)` 仅在原父目录 inode 中删除空子目录，最后同步已固定的父目录 fd 而非重新按路径打开。无递归删除、无自动 GC、无公开接口或持久化格式变化。
+- Linux 回归包含正常显式 Discard 仅删除候选且保留源加密归档，以及已知密文删除后、目录项删除前换名原父目录并用另一 0700 父目录/符号链接替换；替换目录中预置同名空子目录，检验新实现拒绝删除外来空目录并保留外部哨兵、源密文、旧父目录下的空候选。独立 fd 身份检查必须拒绝新路径 inode。
+- **限制**：对不合作同 UID 对手，fd/path 身份检查与 `unlinkat` 仍非原子 compare-and-unlink；在原父目录内对目录项的竞态依旧不能全部证明消除。若在已删除密文后发生拒绝，允许原候选空目录残留，禁止自动猜路径清理。完整 HMAC/SQLite 多轮认证仍有路径定位段落；Issue #59、真实恢复/自动 GC、T15/T23/T20/T25、CN 离线许可资源与正式发行门槛均保持开放。遵守 Linux 无 TUN、五层分流无订阅/ISP 来源、Core pin 与稳定 main 不动；在 ADR 0194 合并后仍须对 PR 的精确 head 完成普通 CI、Race 四片、Managed Core、原生 amd64/arm64 验证。

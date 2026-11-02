@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -1010,7 +1012,42 @@ func (c *InertRestoreCandidate) Discard(ctx context.Context) error {
 	return c.discardLocked(true)
 }
 
+// openInertCandidateParentForDiscard pins the ORIGINAL parent inode
+// independently of the candidate child lease before any irreversible unlink.
+// It must never resolve to a same-UID replacement parent at the old path.
+func openInertCandidateParentForDiscard(path string, original os.FileInfo) (*os.File, error) {
+	if !sameInertCandidateParentIdentity(path, original) {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|
+		syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	parent := os.NewFile(uintptr(fd), path)
+	if parent == nil {
+		_ = syscall.Close(fd)
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	info, err := parent.Stat()
+	if err != nil || !os.SameFile(original, info) ||
+		!sameInertCandidateParentLease(path, parent) {
+		_ = parent.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	return parent, nil
+}
+
 func (c *InertRestoreCandidate) discardLocked(requireFile bool) error {
+	return c.discardLockedProbed(requireFile, nil)
+}
+
+// The internal pre-directory-unlink hook tests an uncooperative same-UID
+// namespace replacement after the ciphertext leaf is removed. Production
+// always passes nil; external code cannot obtain this callback.
+func (c *InertRestoreCandidate) discardLockedProbed(
+	requireFile bool, beforeDirectoryUnlink func(),
+) error {
 	if c == nil || c.dir == nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
@@ -1022,25 +1059,45 @@ func (c *InertRestoreCandidate) discardLocked(requireFile bool) error {
 	if err != nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
+	// Pin the admitted parent before deleting even the ciphertext. Opening
+	// by pathname is read-only; its inode must match the parent captured
+	// at child-lease admission before any irreversible operation.
+	parent, err := openInertCandidateParentForDiscard(c.parent, c.parentIdentity)
+	if err != nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	defer parent.Close()
 	if file != nil {
-		// unlinkat under the locked candidate directory, never RemoveAll.
+		// Never remove unknown sibling files or follow a ciphertext symlink.
 		if err := syscall.Unlinkat(int(c.dir.Fd()), inertRestoreCipherName); err != nil {
 			return ErrUnsafeInertRestoreCandidate
 		}
 	}
-	// Sync the locked original inode after unlinkat. A path-based Sync
-	// could fsync a substituted directory instead of the one modified.
+	// Durability is tied to the original child directory inode.
 	if c.dir.Sync() != nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
-	atDir, err := os.Lstat(c.directory)
+	if beforeDirectoryUnlink != nil {
+		beforeDirectoryUnlink()
+	}
+	if !sameInertCandidateParentLease(c.parent, parent) ||
+		!sameInertCandidateParentIdentity(c.parent, c.parentIdentity) {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	// Re-check the LOCKED child inode after the irreversible ciphertext
+	// unlink. The directory entry can only be unlinked relative to the
+	// independently pinned, original parent inode.
+	atDir, err := verifyCandidateDirLock(c.directory, c.dir)
 	if err != nil || !os.SameFile(c.directoryIdentity, atDir) {
 		return ErrUnsafeInertRestoreCandidate
 	}
-	if err := os.Remove(c.directory); err != nil {
+	if err := unix.Unlinkat(int(parent.Fd()), filepath.Base(c.directory),
+		unix.AT_REMOVEDIR); err != nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
-	if syncSealedArchiveDir(c.parent) != nil {
+	// Fsync the parent inode in which unlinkat actually removed the leaf;
+	// never fsync an unrelated replacement at the same absolute pathname.
+	if parent.Sync() != nil || !sameInertCandidateParentLease(c.parent, parent) {
 		return ErrUnsafeInertRestoreCandidate
 	}
 	return nil
