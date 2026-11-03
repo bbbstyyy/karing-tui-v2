@@ -169,3 +169,73 @@ func TestInertCandidateLockBusyClassification(t *testing.T) {
 		t.Fatalf("unexpected lock contention class: %q", got)
 	}
 }
+
+
+// A parent swapped after the child inode check but before the parent
+// identity receipt must produce a bounded test-only refusal label. The
+// replacement contains the SAME original child inode, so a child-only
+// identity check would miss the change. Neither target is ever cleaned
+// by this read-only diagnostic helper.
+func TestInertCandidateParentIdentityRefusalHasFixedProbeLabel(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(root, "parent")
+	moved := filepath.Join(root, "moved-parent")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parentLock, err := lockSealedArchiveParent(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parentLock.Close()
+	path, created, err := createInertScopeAtLeasedParent(parentLock, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(path)
+	var mutationErr error
+	injected := false
+	var phases []string
+	candidate, openErr := openLockedInertRestoreCandidateAtParentProbed(
+		path, parentLock, func(phase string) bool {
+			phases = append(phases, phase)
+			if phase == "scope_child_identity_verified" {
+				injected = true
+				mutationErr = os.Rename(parent, moved)
+				if mutationErr != nil {
+					return true
+				}
+				mutationErr = os.Mkdir(parent, 0o700)
+				if mutationErr != nil {
+					return true
+				}
+				mutationErr = os.Rename(filepath.Join(moved, name), path)
+			}
+			return true
+		},
+	)
+	if candidate != nil {
+		_ = candidate.Close()
+	}
+	if !injected || mutationErr != nil || candidate != nil ||
+		!errors.Is(openErr, ErrUnsafeInertRestoreCandidate) {
+		t.Fatalf("parent changed but child lease accepted: injected=%t err=%v mutation=%v",
+			injected, openErr, mutationErr)
+	}
+	found := false
+	for _, phase := range phases {
+		if phase == "scope_child_parent_identity_refused" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("parent inode refusal did not emit fixed diagnostic phase: %v", phases)
+	}
+	atPath, err := os.Lstat(path)
+	if err != nil || !os.SameFile(created, atPath) {
+		t.Fatalf("failed scope admission modified original child inode: %v", err)
+	}
+}
