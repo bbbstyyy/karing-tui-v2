@@ -1994,3 +1994,11 @@ docs/
 - 本轮通过 `openat(flocked_parent_fd, ".", O_DIRECTORY|O_NOFOLLOW)` 获取独立目录扫描流，确保 inode 与持锁父目录一致且不消耗 flock fd 的目录偏移；逐项识别 8 个已发布归档/32 个 v2 临时密文预算以及合法名称、文件类型，通过 `openat(flocked_parent_fd, name, O_NOFOLLOW|O_NONBLOCK)` 验证原 inode 文件，要求 0600、当前 UID、受限大小、硬链接语义与标准路径的 `Lstat` 一致。已发布文件仅校验计数后关闭 fd，临时文件仍保留独立非阻塞 flock 与双硬链接失败关闭要求；每项及最终返回前复核父目录 fd/path 身份，包含空清单。
 - Linux 回归在同一个父 flock 下连续检查已发布归档+临时密文三次，不得因目录偏移误计配额；注入清单完成后的父目录换名，以同名但不同字节的私有目录或符号链接替换，必须拒绝被替换父目录中的已发布或暂存密文，不改变原密文或外部哨兵。独立扫描流仍必须对应原 inode；nil 父租约失败关闭。
 - **安全限制**：检查不是针对同 UID 不合作进程在**原父 inode 内**更换目录项的原子 compare-and-unlink；加密归档 `createLeasedSealedArchiveTemp` 及发布/失败清理仍有 pathname-based 环节，需后续继续检查。Issue #59、真实恢复/自动 GC、T15/T23/T20/T25、CN 离线许可资源和正式发行门槛仍开放。继续保持 Linux 无 TUN、Karing 五层分流去除订阅/ISP 路由来源、批准 Core pin 与稳定 main 不变。待 ADR 0197 合并后对新基线的精确 head 执行普通 CI、Go Race 四片、Managed Core 和原生 Linux amd64/arm64 Provenance 全部验证，通过之前不合并。
+
+
+### 2026-11-03 — M5 ADR 0199 / v2 加密归档临时密文的创建与失败清理绑定父目录 fd
+
+- ADR 0197/0198 已把加密归档回收的父目录 fsync、清单与子文件打开绑定父 flock fd；但写入端 `createLeasedSealedArchiveTemp` 在同一父 flock 下完成清单/配额检查后仍调用 `os.CreateTemp(parent, ...)` 按绝对路径创建临时文件。非协作同 UID 进程可以在 inventory 与 CreateTemp 之间将父路径换成另一 0700 私有目录，导致创建/加锁的文件不在检查的原父目录 inode 下；文件 flock 失败或父目录锁 Close 失败后的 `os.Remove(path)` 也有误删替换目标风险。
+- 本轮生成 96-bit 密码学随机小写十六进制后缀、最多 8 次 EEXIST 碰撞尝试，以 `openat(parent_flock_fd, name, O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600)` 创建 v2 临时密文；验证父目录仍为持锁原 inode、文件 fd/path 同 inode 且 0600/当前 UID/单硬链接，再在短期父 flock 释放前持有原有非阻塞文件 flock。失败后不按路径猜测删除；文件 flock 获取失败时仅在父目录及原新建文件仍匹配时用父 fd 的 `unlinkat` 清理、对父 fd 同步；父锁 Close 异常后只关闭文件并失败关闭，允许后续安全回收识别的孤儿临时文件。
+- Linux 回归在底层 inode 核对后/openat 前交换父目录路径为另一 0700 目录或 symlink，须只可能在**已锁原父 inode**中留一个 0600 空暂存文件，不能向外部路径创建；高层 inventory 后交换父目录路径必须拒绝写入且两边无新暂存文件。还验证相同名称被其他 inode 替换时拒绝清理并保留外部内容，普通创建、清理、显式废弃密文回收继续通过。
+- **限制**：这不是在同 UID 非协作对手能在原父目录 inode 内更换条目时的原子 compare-and-unlink；已发布归档的 `SealInertArchive` hard-link 发布、失败清理及发布后父目录 fsync 仍需独立检查。Issue #59 偶发 `create_scope` 拒绝根因尚未确认，真实恢复/候选自动 GC、T15/T23/T20/T25、CN 离线资源许可与发行门槛仍不开放；保持 Linux 无 TUN、Karing 原多层分流排除订阅/ISP 路由来源、已批准 Core pin 与稳定 main 不动。依赖 PR #78 合并后必须对新基线精确 head 的普通 CI、Go Race 四片、Managed Core、原生 Linux amd64/arm64 验证全部通过，才允许合并本项。
