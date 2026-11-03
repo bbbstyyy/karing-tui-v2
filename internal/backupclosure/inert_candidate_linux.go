@@ -336,13 +336,49 @@ func sameNewInertScopeIdentity(path string, created os.FileInfo) bool {
 		os.SameFile(created, current)
 }
 
-func removeNewEmptyInertScopeIfIdentical(path string, created os.FileInfo) error {
-	if !sameNewInertScopeIdentity(path, created) {
+// removeNewEmptyInertScopeIfIdentical is ONLY for failed Stage cleanup
+// before candidate adoption. The parent must still be the exact flocked
+// inode under which mkdirat created the child. Never fall back to os.Remove
+// on a mutable absolute path, including when the same child inode has been
+// moved under a substituted private parent.
+func removeNewEmptyInertScopeIfIdentical(
+	parent *os.File, path string, created os.FileInfo,
+) error {
+	if parent == nil ||
+		!sameInertCandidateParentLease(filepath.Dir(path), parent) ||
+		!sameNewInertScopeIdentity(path, created) {
 		return ErrUnsafeInertRestoreCandidate
 	}
-	// os.Remove refuses nonempty directories: never recursively remove
-	// ciphertext or unknown files, even if the name and identity still match.
-	if err := os.Remove(path); err != nil {
+	name := filepath.Base(path)
+	fd, err := syscall.Openat(int(parent.Fd()), name,
+		syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	child := os.NewFile(uintptr(fd), path)
+	if child == nil {
+		_ = syscall.Close(fd)
+		return ErrUnsafeInertRestoreCandidate
+	}
+	defer child.Close()
+	onFD, err := child.Stat()
+	if err != nil || !onFD.IsDir() || onFD.Mode().Perm() != 0o700 ||
+		!os.SameFile(created, onFD) {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	// AT_REMOVEDIR itself refuses nonempty directories; never recursively
+	// delete ciphertext, symlinks, or unknown files during failed staging.
+	if !sameInertCandidateParentLease(filepath.Dir(path), parent) ||
+		!sameNewInertScopeIdentity(path, created) {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	if err := unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR); err != nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	// Durability must persist against the same leased parent inode, never
+	// a path reopened after removal.
+	if parent.Sync() != nil ||
+		!sameInertCandidateParentLease(filepath.Dir(path), parent) {
 		return ErrUnsafeInertRestoreCandidate
 	}
 	return nil
@@ -674,7 +710,7 @@ func stageInertRestoreCandidate(
 			return
 		}
 		if !checkpoint("scope_created") {
-			_ = removeNewEmptyInertScopeIfIdentical(directory, created)
+			_ = removeNewEmptyInertScopeIfIdentical(parentLock, directory, created)
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
@@ -684,7 +720,7 @@ func stageInertRestoreCandidate(
 			// An untrusted actor could have replaced the empty scope while
 			// this process held the parent advisory flock. Never unlink
 			// the replacement merely because it occupies our old name.
-			_ = removeNewEmptyInertScopeIfIdentical(directory, created)
+			_ = removeNewEmptyInertScopeIfIdentical(parentLock, directory, created)
 			return
 		}
 		if candidate == nil || candidate.directoryIdentity == nil ||
