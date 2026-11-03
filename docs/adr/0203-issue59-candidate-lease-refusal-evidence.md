@@ -60,6 +60,8 @@ without TUN, Karing's five-layer routing excluding
 subscription/ISP source rules, offline CN license holds,
 approved native Core and unchanged stable `main`.
 
-Do not merge before the dependencies ADR 0201/0202 and the
-final exact-head ordinary CI, Go Race 4/4, Managed Core,
+This diagnostic branch depends only on ADR 0201; ADR 0202 is a
+separate Draft security change whose previously failed stress test
+motivated this triage. Do not merge before the ADR 0201 baseline
+and the exact-head ordinary CI, Go Race 4/4, Managed Core,
 linux-amd64 and linux-arm64 Core Provenance are all green.
