@@ -21,6 +21,7 @@ import (
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/coreartifact"
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -105,20 +106,28 @@ func (c *Closure) SealInertArchive(
 	}
 	path := file.Name()
 	identity, statErr := file.Stat()
+	// Keep an independent descriptor for the parent inode containing this
+	// exact temp file. The short quota-reservation flock has already ended;
+	// this descriptor does not hold it across the expensive ciphertext IO.
+	publishParent, pinErr := openSealedArchivePublicationParent(file)
+	if pinErr != nil {
+		_ = file.Close()
+		return receipt, ErrUnsafeSealedArchive
+	}
 	published := false
 	defer func() {
-		// Keep the file flock held through Link, Remove and parent fsync:
-		// recovery must never reclaim a live publishing writer.
+		// The file flock remains held until the final link/unlink/fsync
+		// result. On a failed, pre-link write, remove only the original
+		// known inode via parent fd; never os.Remove a mutable pathname.
 		if !published {
-			atPath, statErr := os.Lstat(path)
-			if statErr == nil && identity != nil && os.SameFile(identity, atPath) &&
-				singleOwnedSealedFile(atPath) {
-				if removeErr := os.Remove(path); removeErr != nil {
-					err = errors.Join(err, ErrUnsafeSealedArchive)
-				}
+			if cleanupErr := unlinkJustCreatedSealedTemp(publishParent, file); cleanupErr != nil {
+				err = errors.Join(err, ErrUnsafeSealedArchive)
 			}
 		}
 		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, ErrUnsafeSealedArchive)
+		}
+		if closeErr := publishParent.Close(); closeErr != nil {
 			err = errors.Join(err, ErrUnsafeSealedArchive)
 		}
 	}()
@@ -190,23 +199,15 @@ func (c *Closure) SealInertArchive(
 	if err := verifySealedFile(file, path, identity, totalBytes, true); err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
-	if err := verifySealedArchiveParent(parent); err != nil {
-		return receipt, ErrUnsafeSealedArchive
+	// Link, remove the v2 temp name and fsync through the original
+	// pinned parent inode. Once the hard link exists, even a later
+	// refusal is an uncertain publication; NEVER blindly unlink it.
+	linked, publishErr := publishSealedArchiveAtPinnedParentProbed(
+		publishParent, file, destination, nil, nil)
+	if linked {
+		published = true
 	}
-	current, err := os.Lstat(path)
-	if err != nil || !os.SameFile(current, identity) {
-		return receipt, ErrUnsafeSealedArchive
-	}
-	if err := os.Link(path, destination); err != nil {
-		return receipt, ErrUnsafeSealedArchive
-	}
-	// Publication is complete. If a subsequent fsync fails, the caller
-	// receives an uncertain outcome and MUST NOT automatically retry.
-	published = true
-	if err := os.Remove(path); err != nil {
-		return receipt, ErrUnsafeSealedArchive
-	}
-	if err := syncSealedArchiveDir(parent); err != nil {
+	if publishErr != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
 	return SealedArchiveReceipt{
@@ -492,6 +493,141 @@ func verifySealedFile(
 		return ErrUnsafeSealedArchive
 	}
 	return nil
+}
+
+// openSealedArchivePublicationParent pins the private directory inode
+// which currently owns the exact live writer's temp file. Do NOT acquire
+// an exclusive parent flock across the expensive archive copy: active
+// writers need concurrent reservations; the new fd is only an identity
+// and durability anchor. Unknown or moved paths are refused.
+func openSealedArchivePublicationParent(file *os.File) (*os.File, error) {
+	if file == nil || !recognizedSealedArchiveTemporary(filepath.Base(file.Name())) {
+		return nil, ErrUnsafeSealedArchive
+	}
+	parentPath := filepath.Dir(file.Name())
+	if verifySealedArchiveParent(parentPath) != nil {
+		return nil, ErrUnsafeSealedArchive
+	}
+	fd, err := syscall.Open(parentPath,
+		syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrUnsafeSealedArchive
+	}
+	parent := os.NewFile(uintptr(fd), parentPath)
+	if parent == nil {
+		_ = syscall.Close(fd)
+		return nil, ErrUnsafeSealedArchive
+	}
+	if !sameLeasedSealedArchiveParent(parentPath, parent) ||
+		!sameSealedArchiveWriterEntry(parent, file, true) {
+		_ = parent.Close()
+		return nil, ErrUnsafeSealedArchive
+	}
+	return parent, nil
+}
+
+// sameSealedArchiveWriterEntry verifies that a temp directory entry
+// opened via the pinned parent fd is still the current writer inode.
+// After a hard-link publication the source has two links until cleanup;
+// pre-publication checks require exactly one.
+func sameSealedArchiveWriterEntry(parent, file *os.File, requireSingleLink bool) bool {
+	if parent == nil || file == nil || filepath.Dir(file.Name()) != parent.Name() ||
+		!recognizedSealedArchiveTemporary(filepath.Base(file.Name())) ||
+		!sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		return false
+	}
+	fd, err := syscall.Openat(int(parent.Fd()), filepath.Base(file.Name()),
+		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return false
+	}
+	child := os.NewFile(uintptr(fd), file.Name())
+	if child == nil {
+		_ = syscall.Close(fd)
+		return false
+	}
+	onEntry, statErr := child.Stat()
+	closeErr := child.Close()
+	onFile, fileErr := file.Stat()
+	onPath, pathErr := os.Lstat(file.Name())
+	if statErr != nil || closeErr != nil || fileErr != nil || pathErr != nil ||
+		!onEntry.Mode().IsRegular() || onEntry.Mode().Perm() != 0o600 ||
+		!os.SameFile(onEntry, onFile) || !os.SameFile(onFile, onPath) {
+		return false
+	}
+	info, ok := onEntry.Sys().(*syscall.Stat_t)
+	if !ok || int(info.Uid) != os.Getuid() ||
+		(requireSingleLink && info.Nlink != 1) ||
+		(!requireSingleLink && info.Nlink != 2) {
+		return false
+	}
+	return sameLeasedSealedArchiveParent(parent.Name(), parent)
+}
+
+// publishSealedArchiveAtPinnedParentProbed hard-links an authenticated,
+// fsynced sealed temp into a previously absent archive filename. Only the
+// package-private hooks inject filesystem path drift at deterministic
+// boundaries; production always calls them nil.
+func publishSealedArchiveAtPinnedParentProbed(
+	parent, file *os.File, destination string, beforeLink, afterLink func(),
+) (linked bool, err error) {
+	if parent == nil || file == nil || !validSealedArchivePath(destination) ||
+		filepath.Dir(destination) != parent.Name() ||
+		!sameSealedArchiveWriterEntry(parent, file, true) {
+		return false, ErrUnsafeSealedArchive
+	}
+	// Linkat(O_EXCL semantics) is authoritative: even if a competing
+	// publisher creates this name after the precheck, it is never replaced.
+	if _, err := os.Lstat(destination); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return false, ErrUnsafeSealedArchive
+	}
+	if beforeLink != nil {
+		beforeLink()
+	}
+	tempName := filepath.Base(file.Name())
+	destName := filepath.Base(destination)
+	if err := unix.Linkat(int(parent.Fd()), tempName, int(parent.Fd()), destName, 0); err != nil {
+		return false, ErrUnsafeSealedArchive
+	}
+	// The destination hard link now exists. Do not clean it up, even if
+	// subsequent identity/durability checks fail or the parent was moved.
+	linked = true
+	if afterLink != nil {
+		afterLink()
+	}
+	if !sameLeasedSealedArchiveParent(parent.Name(), parent) ||
+		!sameSealedArchiveWriterEntry(parent, file, false) {
+		return true, ErrUnsafeSealedArchive
+	}
+	fd, err := syscall.Openat(int(parent.Fd()), destName,
+		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return true, ErrUnsafeSealedArchive
+	}
+	dest := os.NewFile(uintptr(fd), destination)
+	if dest == nil {
+		_ = syscall.Close(fd)
+		return true, ErrUnsafeSealedArchive
+	}
+	atDest, statErr := dest.Stat()
+	closeErr := dest.Close()
+	atFile, fileErr := file.Stat()
+	onPath, pathErr := os.Lstat(destination)
+	if statErr != nil || closeErr != nil || fileErr != nil || pathErr != nil ||
+		!os.SameFile(atDest, atFile) || !os.SameFile(atDest, onPath) ||
+		!sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		return true, ErrUnsafeSealedArchive
+	}
+	// Retain the writer's flock through this fd-relative temp unlink and
+	// durability barrier, preventing the guarded reclaimer from racing it.
+	if err := unix.Unlinkat(int(parent.Fd()), tempName, 0); err != nil {
+		return true, ErrUnsafeSealedArchive
+	}
+	if err := parent.Sync(); err != nil ||
+		!sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		return true, ErrUnsafeSealedArchive
+	}
+	return true, nil
 }
 
 func requireSealedArchiveSpace(parent string, bytes int64) error {

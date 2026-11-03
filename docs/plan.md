@@ -2002,3 +2002,11 @@ docs/
 - 本轮生成 96-bit 密码学随机小写十六进制后缀、最多 8 次 EEXIST 碰撞尝试，以 `openat(parent_flock_fd, name, O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600)` 创建 v2 临时密文；验证父目录仍为持锁原 inode、文件 fd/path 同 inode 且 0600/当前 UID/单硬链接，再在短期父 flock 释放前持有原有非阻塞文件 flock。失败后不按路径猜测删除；文件 flock 获取失败时仅在父目录及原新建文件仍匹配时用父 fd 的 `unlinkat` 清理、对父 fd 同步；父锁 Close 异常后只关闭文件并失败关闭，允许后续安全回收识别的孤儿临时文件。
 - Linux 回归在底层 inode 核对后/openat 前交换父目录路径为另一 0700 目录或 symlink，须只可能在**已锁原父 inode**中留一个 0600 空暂存文件，不能向外部路径创建；高层 inventory 后交换父目录路径必须拒绝写入且两边无新暂存文件。还验证相同名称被其他 inode 替换时拒绝清理并保留外部内容，普通创建、清理、显式废弃密文回收继续通过。
 - **限制**：这不是在同 UID 非协作对手能在原父目录 inode 内更换条目时的原子 compare-and-unlink；已发布归档的 `SealInertArchive` hard-link 发布、失败清理及发布后父目录 fsync 仍需独立检查。Issue #59 偶发 `create_scope` 拒绝根因尚未确认，真实恢复/候选自动 GC、T15/T23/T20/T25、CN 离线资源许可与发行门槛仍不开放；保持 Linux 无 TUN、Karing 原多层分流排除订阅/ISP 路由来源、已批准 Core pin 与稳定 main 不动。依赖 PR #78 合并后必须对新基线精确 head 的普通 CI、Go Race 四片、Managed Core、原生 Linux amd64/arm64 验证全部通过，才允许合并本项。
+
+
+### 2026-11-03 — M5 ADR 0200 / 已认证加密归档的 fd 相对发布与失败清理
+
+- ADR 0197–0199 已加固 v2 临时密文的回收、清单及创建，但 `SealInertArchive` 在加密写入/认证后仍通过绝对路径 `os.Link(temp, destination)` 发布、`os.Remove(temp)` 删除临时名以及 `syncSealedArchiveDir(parent)` 同步目录，失败时的 defer 也按绝对路径删除。短期父 flock 已释放后，同 UID 不合作进程可替换父目录路径，使这些不可逆操作重定向到另一私有目录。
+- 本轮在获得临时密文文件租约后、长时间加密复制前单独打开一个**不持父 flock**的 `O_DIRECTORY|O_NOFOLLOW` 私有父目录 fd，要求它通过 `openat(parent_fd, temp_name)` 指向相同临时密文 inode；写入、哈希、Core 复制时不延长此前短期配额预留锁。正式发布前校验该父 fd/path、已锁临时文件 fd/path 及 0600/当前 UID/单硬链接身份，再以 `unix.Linkat(parent_fd, temp_name, parent_fd, destination_name, 0)` 实现不可覆盖式发布。硬链接一旦存在即视为可能已发布，之后校验目标 fd/path 与写入 fd 同 inode，只有在原父 fd 身份仍可信时才以 `unix.Unlinkat(parent_fd, temp_name)` 删除临时名并同步该父 fd，拒绝绝对路径回退。
+- 加密写入中途失败仅在原父目录和原单硬链接临时文件身份都仍一致时使用既有 fd 相对 `unlinkJustCreatedSealedTemp` 清理；身份不确定则保留临时文件等待严格识别的回收，绝不猜测路径删除。Linux 回归覆盖正常发布、重复目标不可覆盖、同名临时文件 inode 替换拒绝，以及在 `linkat` 前/后将原父目录换名并以另一私有目录或 symlink 替代：最多只可在已固定原父 inode 发布硬链接，原密文及外部哨兵均保留，必须向调用方返回不安全/不确定结果。
+- **限制**：父 inode 固定并非原父目录**内部**的目录项 check/link 原子性，对能不合作地在相同 inode 内更换 source name 的同 UID 对手不能保证绝对不发布错误 inode。若链接已产生但验证失败，严禁自动删除不确定目标或重试。离线 Verify/Preflight 仍包含路径环节；Issue #59、真实恢复/自动候选 GC、T15/T23/T20/T25、CN 离线规则资源许可和发行门槛仍开放。保持 Linux 无 TUN、Karing 多层分流剔除订阅/ISP 路由来源、Core pin 与 stable main 不变；必须在依赖 PR #79 合并并对新基线精确 head 的普通 CI、Race 4/4、Managed Core、原生 Linux amd64/arm64 全通过后才合并。
