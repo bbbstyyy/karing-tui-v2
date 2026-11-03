@@ -95,6 +95,22 @@ func lockSealedArchiveParent(ctx context.Context, path string) (*os.File, error)
 	return nil, ErrUnsafeSealedArchive
 }
 
+// sameLeasedSealedArchiveParent requires the canonical pathname to still
+// identify the exact directory inode protected by the existing parent flock.
+// A same-UID process can ignore advisory flock and rename the parent during
+// retention inspection, so never fsync an unrelated replacement pathname.
+func sameLeasedSealedArchiveParent(path string, lock *os.File) bool {
+	if lock == nil || verifySealedArchiveParent(path) != nil {
+		return false
+	}
+	opened, err := lock.Stat()
+	if err != nil || !opened.IsDir() || opened.Mode().Perm() != 0o700 {
+		return false
+	}
+	atPath, err := os.Lstat(path)
+	return err == nil && os.SameFile(opened, atPath)
+}
+
 func recognizedSealedArchiveTemporary(name string) bool {
 	if !strings.HasPrefix(name, sealedArchiveTemporaryPrefix) {
 		return false
@@ -232,6 +248,15 @@ func InspectSealedArchiveRetention(
 // are never touched. Unknown entries fail closed, without recursive deletion.
 func ReclaimAbandonedSealedArchives(
 	ctx context.Context, parent string,
+) (SealedArchiveRetentionReport, error) {
+	return reclaimAbandonedSealedArchivesProbed(ctx, parent, nil)
+}
+
+// The private beforeParentSync checkpoint makes a deterministic rename
+// regression possible after a successful unlink. Production passes nil;
+// this callback never leaves the backupclosure package.
+func reclaimAbandonedSealedArchivesProbed(
+	ctx context.Context, parent string, beforeParentSync func(),
 ) (report SealedArchiveRetentionReport, err error) {
 	lock, err := lockSealedArchiveParent(ctx, parent)
 	if err != nil {
@@ -247,6 +272,9 @@ func ReclaimAbandonedSealedArchives(
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
+		if !sameLeasedSealedArchiveParent(parent, lock) {
+			return report, ErrUnsafeSealedArchive
+		}
 		opened, statErr := item.file.Stat()
 		atPath, pathErr := os.Lstat(filepath.Join(parent, item.name))
 		if statErr != nil || pathErr != nil ||
@@ -261,9 +289,19 @@ func ReclaimAbandonedSealedArchives(
 		report.Reclaimed++
 	}
 	if report.Reclaimed != 0 {
-		if err := syncSealedArchiveDir(parent); err != nil {
+		if beforeParentSync != nil {
+			beforeParentSync()
+		}
+		// Persistence must target the original flocked parent inode, not
+		// whatever now occupies parent after the destructive unlink.
+		if !sameLeasedSealedArchiveParent(parent, lock) ||
+			lock.Sync() != nil ||
+			!sameLeasedSealedArchiveParent(parent, lock) {
 			return report, ErrUnsafeSealedArchive
 		}
+	}
+	if !sameLeasedSealedArchiveParent(parent, lock) {
+		return report, ErrUnsafeSealedArchive
 	}
 	return report, nil
 }

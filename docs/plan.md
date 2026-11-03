@@ -1978,3 +1978,11 @@ docs/
 - 本轮内部 `removeNewEmptyInertScopeIfIdentical` 必须接收仍持有 flock 的父目录 fd；在任何删除前校验父 fd/path inode、原创建的子目录 inode 与权限，并通过 `openat(parent_fd, child_name, O_DIRECTORY|O_NOFOLLOW)` 再次核对原子目录 fd 身份。只以 `unix.Unlinkat(parent_fd, child_name, AT_REMOVEDIR)` 删除已验证的**空目录**，禁止递归删除、符号链接跟随或绝对路径回退；删除后以同一父 fd 同步并重新核对父路径身份。仍只用于 Stage 收养前两个失败位置，已获取候选租约后的 Discard 由 ADR 0195 单独保护。
 - Linux 回归：直接 helper 在父路径已替换、原子目录 inode 被搬回该路径时必须拒绝删除并保留外部哨兵；含未知文件的非空 scope 不能清除；完整 Stage 在 `scope_created` 注入同样换名与原子目录搬移并拒绝接管，原空目录及源密文必须保留；现有全阶段故障测试持续验证正常失败不会泄露空候选配额。
 - **限制**：fd 相对的 inode 检查及删除仍不是原子 compare-and-unlink，对在同一父目录 inode 中重排目录项的同 UID 不合作进程不能提供彻底证明；归属不确定时允许保留空 scope，不得猜测路径自动清理。Issue #59、真实恢复/自动 GC、T15/T23/T20/T25、CN 离线资源许可闭包及正式发布门槛保持开放。严格保留 Linux 无 TUN、Karing 多层分流排除订阅/ISP 来源、Core pin 与稳定 main 不变；必须等待依赖 PR #75 合并，并对新基线精确提交完成普通 CI、Race 4/4、Managed Core、Linux 原生 amd64/arm64 全部验证后才合并。
+
+
+### 2026-11-02 — M5 ADR 0197 / 加密归档回收后父目录持久化绑定 flock fd
+
+- 独立加密归档临时文件回收 `ReclaimAbandonedSealedArchives` 已通过持锁父目录 fd 的 `unlinkat` 删除经识别且无活跃文件 flock、当前 UID 所有、单硬链接的 v2 临时密文。但完成删除后的 `syncSealedArchiveDir(parent)` 仍按绝对路径打开父目录。非协作同 UID 进程可在删除后替换父目录路径，使 fsync 作用于其他 0700 目录或符号链接目标，而非执行 unlink 的原 inode。
+- 新实现对每次不可逆删除前核对父 fd 与标准路径 inode，删除后在同一 flocked fd 上 `Sync()`，fsync 前后验证 fd/path 身份；未发生删除的只读检查也在返回前复核父目录。没有路径回退、不延长锁时间、不修改公开 API、文件格式、临时文件预算、活跃写入 flock 或已发布归档的保留策略。任何删除后身份漂移均返回拒绝错误，不将潜在不确定的持久化结果包装成成功，也不自动重试。
+- Linux 回归在删除已识别 orphan 后、fsync 前注入父目录换名，并以私有 0700 目录或 symlink 替代原路径；必须失败关闭，原父目录只失去已识别临时密文，不触碰外部哨兵。正常路径覆盖无 orphan 不运行注入点、有 orphan 时通过固定 fd fsync 清理成功；已有 SIGKILL、活动 writer、硬链接、配额、已发布归档及并发 writer 测试继续承担兼容验证。
+- **限制**：对同 UID 对手在**原父目录 inode 内**的目录项竞态，检查和 `unlinkat` 仍非原子 compare-and-unlink；已发布密文创建/发布及其他临时文件路径操作尚需后续单独加固，Issue #59 根因仍未确认。不得据此开放真实恢复、自动 GC、T15/T23/T20/T25、CN 离线资产许可或发行门槛。保持 Linux 无 TUN、五层分流剥除订阅/ISP 来源、批准 Core pin 与稳定 main 不变。待依赖 PR #76 合并后再核对本 PR 的精确 head 普通 CI、Go Race 四片、Managed Core 和原生 Linux amd64/arm64 Provenance。
