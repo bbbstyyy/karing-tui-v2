@@ -143,8 +143,7 @@ func TestLeasedSealedTempStageRefusesParentReplacedAfterInventory(t *testing.T) 
 				len(entries) != 1 || entries[0].Name() != "sentinel" {
 				t.Fatalf("failed creation changed replacement: %v %v", entries, err)
 			}
-			if sentinel, err := os.ReadFile(filepath.Join(foreignPath, "sentinel")); err != nil ||
-				string(sentinel) != "keep" {
+			if sentinel, err := os.ReadFile(filepath.Join(foreignPath, "sentinel")); err != nil || string(sentinel) != "keep" {
 				t.Fatalf("foreign sentinel changed: %v", err)
 			}
 		})
