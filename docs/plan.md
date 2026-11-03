@@ -2018,3 +2018,11 @@ docs/
 - 本轮保持公开 `VerifyInertArchive(ctx,path,key)`、加密格式和收据不变，在只读校验前打开 `O_DIRECTORY|O_NOFOLLOW` 的独立、**不持 flock** 父目录 fd，并要求该 fd/path 与原始当前 UID 0700 私有 inode 一致。归档叶子通过 `openat(parent_fd, base, O_RDONLY|O_NOFOLLOW|O_NONBLOCK)` 打开；在文件打开后及完整 AES-CTR/HMAC、资源摘要、EOF 校验后再次检查父目录 fd/path 身份，保留现有文件 inode、权限、长度、密钥和认证失败关闭策略，不通过绝对路径回退读取。
 - Linux 回归以真实加密归档先证明正常 Verify 成功，再在父 fd 已固定、子文件打开前将父目录替换为另一 0700 目录或 symlink，并在替换目标放入**相同有效密文**，必须失败关闭且不触碰原密文或外部哨兵；在 HMAC 认证结束后将**同一个原归档 inode**移动到替换父目录的原标准路径，要求仍拒绝 Verify、保留加密文件和外部哨兵。两个可控注入点均仅内部测试使用，生产 API 不开放回调。
 - **边界**：这只能固定单次 Verify 调用中的父目录 inode，不能作为不合作同 UID 对手在原父 inode 内重排条目的原子保护，也不能为重新启动或独立下一次读取建立跨进程父目录身份证明；`PreflightInertArchive` 的多轮验证及其他路径打开仍需后续独立审查。Issue #59 根因、真实恢复/自动候选 GC、T15/T23/T20/T25、CN 离线规则许可与正式发布门槛均保持开放。Linux 无 TUN、Karing 五层分流排除订阅/ISP 路由来源、批准 Core pin 和稳定 main 不变。必须在依赖 PR #80 合并并对最终精确 head 执行普通 CI、4 个 Race 分片、Managed Core 和原生 Linux amd64/arm64 Provenance 全部通过后才合并。
+
+
+### 2026-11-03 — M5 ADR 0203 / Issue #59 候选子目录租约偶发拒绝的安全定位
+
+- 新的可重复调查证据：PR #82 精确 head `6d27a207` 的普通 CI run `41574188362` 在 `TestInertCandidateScopeLeaseCyclesDoNotLeakOrGrantCompetingLease` 第 **93** 个循环，打开子候选目录独占租约时返回固定 `ErrUnsafeInertRestoreCandidate`。Managed Core 及原生 linux-amd64/arm64 通过，普通测试失败导致 Race 分片跳过。这与 Issue #59 历史中的 `create_scope` 间歇性拒绝相关，但**不是根因证明**，不允许靠重跑或忽略失败宣称解决。
+- 本轮将 Linux 端到端父 flock → 私有 scope → 子 flock → 并发争锁拒绝 → Close/Reopen → 精准清除的测试循环从 128 提至有界 512；首次子租约使用已有私有阶段 probe，仅在意外失败时输出固定阶段标记、现有有界 syscall 类别、`/proc/self/fd` 打开数量与进程 fd 软限制、以及候选子路径/父 fd inode 和权限布尔核对，不输出私有路径、文件名、凭据、原始 errno 或密文。父身份后验拒绝增加 `scope_child_parent_identity_refused` 固定 probe 标记，生产 nil-probe 路径、错误哨兵和安全检查逻辑不变。
+- 新增确定性 Linux 回归：在子目录已持 flock/身份核对之后、父目录身份确认之前换名原父目录，原绝对路径新建不同 0700 私有父目录，并把**同一原子目录 inode**移入替代父目录；不得收养，必须发出固定父目录拒绝标记并保留原子目录。
+- **现阶段仅有更强故障定位，没有根因修复**。下一次失败需根据固定检查点与 fd/身份数据查清原因，编写因果回归后单独修复；不得削弱 UID/0700、flock、子目录 inode、密文 HMAC/SQLite 或通过自动重试掩盖异常。Issue #59 继续保持 OPEN，真实恢复/自动 GC、T15/T23/T20/T25、CN 离线规则资源许可和发行门槛均不开放。保持 Linux 无 TUN、Karing 五层分流剥除订阅/ISP 规则来源、已批准 Core pin 与 stable main 不变；待 ADR 0201/0202 依赖合并、精确 head 普通 CI、Race 四片、Managed Core、原生 linux-amd64/arm64 全通过后才能合并。
