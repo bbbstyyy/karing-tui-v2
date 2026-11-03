@@ -2018,3 +2018,11 @@ docs/
 - 本轮保持公开 `VerifyInertArchive(ctx,path,key)`、加密格式和收据不变，在只读校验前打开 `O_DIRECTORY|O_NOFOLLOW` 的独立、**不持 flock** 父目录 fd，并要求该 fd/path 与原始当前 UID 0700 私有 inode 一致。归档叶子通过 `openat(parent_fd, base, O_RDONLY|O_NOFOLLOW|O_NONBLOCK)` 打开；在文件打开后及完整 AES-CTR/HMAC、资源摘要、EOF 校验后再次检查父目录 fd/path 身份，保留现有文件 inode、权限、长度、密钥和认证失败关闭策略，不通过绝对路径回退读取。
 - Linux 回归以真实加密归档先证明正常 Verify 成功，再在父 fd 已固定、子文件打开前将父目录替换为另一 0700 目录或 symlink，并在替换目标放入**相同有效密文**，必须失败关闭且不触碰原密文或外部哨兵；在 HMAC 认证结束后将**同一个原归档 inode**移动到替换父目录的原标准路径，要求仍拒绝 Verify、保留加密文件和外部哨兵。两个可控注入点均仅内部测试使用，生产 API 不开放回调。
 - **边界**：这只能固定单次 Verify 调用中的父目录 inode，不能作为不合作同 UID 对手在原父 inode 内重排条目的原子保护，也不能为重新启动或独立下一次读取建立跨进程父目录身份证明；`PreflightInertArchive` 的多轮验证及其他路径打开仍需后续独立审查。Issue #59 根因、真实恢复/自动候选 GC、T15/T23/T20/T25、CN 离线规则许可与正式发布门槛均保持开放。Linux 无 TUN、Karing 五层分流排除订阅/ISP 路由来源、批准 Core pin 和稳定 main 不变。必须在依赖 PR #80 合并并对最终精确 head 执行普通 CI、4 个 Race 分片、Managed Core 和原生 Linux amd64/arm64 Provenance 全部通过后才合并。
+
+
+### 2026-11-03 — M5 ADR 0202 / Preflight 三次加密归档读取共享同一个父目录 inode 租约
+
+- ADR 0201 已将 `VerifyInertArchive` HMAC/资源认证绑定父目录 fd，但 `PreflightInertArchive` 还要独立重读完整密文并验证 SHA+manifest，然后重读完整密文并获取 SQLite 内存快照；后两次分别按绝对路径打开文件。即使两次都严格比较初次认证的 SHA，同 UID 不合作进程仍能在读取间隙将原 0700 父目录换名，在原路径新建另一个 0700 私有父目录，放入**字节完全一致且 HMAC 有效**的密文副本；或者在两轮间把**原始已认证文件 inode**移动到替换父目录下，造成父目录归属漂移。
+- 本轮在 Preflight 开始固定一个不持父 flock 的独立只读 `O_DIRECTORY|O_NOFOLLOW` 父目录 fd，保持到初次 Verify/HMAC、完整密文 SHA+inventory 读取、完整密文 SHA+SQLite 读取、最终只读内存 SQLite schema/domain 验证全部结束。初次 Verify 后、inventory 后、SQLite 重读后、Live Closure 复核及最终报告返回前都要求父 fd/path 仍指向同一个当前 UID 0700 原始 inode；inventory 和 SQLite 的叶子文件只允许以 `openat(pinned_parent_fd, basename, O_RDONLY|O_NOFOLLOW|O_NONBLOCK)` 打开，不按绝对路径回退。现有每轮完整 SHA、权限/UID/单硬链接、资源摘要、SQLite 内容清零、预算和不可恢复的 blocker 不变。
+- Linux 端到端回归先用真实加密归档验证健康三轮 Preflight；随后分别在认证结束后、inventory 重读后替换父目录路径为另一私有目录或指向该目录的 symlink，替换目录放入**完全一致的有效密文**，必须拒绝并返回空报告，原件/副本/外部哨兵无变化。另验证 HMAC 后换名父目录并把**同一原始文件 inode**搬回替换父路径，仍必须拒绝。故障注入仅为 package-private 测试能力，公开 API 和持久格式不变。
+- **限制**：这只保证单次 Preflight 中各阶段按原父目录 fd 读取，并通过前后身份核对拒绝明显换名；检查不能对同 UID 不合作进程在原父 inode 内交换目录项提供原子身份保证，也不构成跨独立调用的持久父目录身份凭据。初次 Verify 使用独立短期父 fd，跨系统调用检查仍非原子；其他资源读取器和候选 Stage/Reopen 仍需独立审查。Issue #59、真实恢复/自动 GC、T15/T23/T20/T25、CN 离线许可资源与正式发行门槛全部保持开放。继续保留 Linux 无 TUN、Karing 五层分流无订阅/ISP 来源、Core pin、稳定 main 不变；依赖 PR #81 合并，并在最终精确 head 的普通 CI、Race 四片、Managed Core、原生 Linux amd64/arm64 全部通过后才合并。
