@@ -19,7 +19,10 @@ func TestInertCandidateScopeLeaseCyclesDoNotLeakOrGrantCompetingLease(t *testing
 	if err := os.Chmod(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	const cycles = 128
+	// Exercise enough repeated leases to expose uncommon, high-cycle
+	// refusals such as the unexpected cycle 93 denial in PR #82. Keep this
+	// bounded; no production retry or error classification is changed.
+	const cycles = 512
 	for cycle := 0; cycle < cycles; cycle++ {
 		parentLock, err := lockSealedArchiveParent(context.Background(), parent)
 		if err != nil {
@@ -30,10 +33,29 @@ func TestInertCandidateScopeLeaseCyclesDoNotLeakOrGrantCompetingLease(t *testing
 			_ = parentLock.Close()
 			t.Fatalf("cycle %d: private scope: %v", cycle, err)
 		}
-		candidate, err := openLockedInertRestoreCandidate(path)
+		var phases []string
+		candidate, err := openLockedInertRestoreCandidateProbed(path, func(phase string) bool {
+			// Only fixed stage identifiers and bounded syscall classes
+			// can enter these diagnostics; no paths, keys or errno text.
+			phases = append(phases, phase)
+			return true
+		})
 		if err != nil || candidate == nil {
+			fdEntries, fdErr := os.ReadDir("/proc/self/fd")
+			var limit syscall.Rlimit
+			limitErr := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit)
+			childInfo, childErr := os.Lstat(path)
+			parentInfo, parentErr := os.Lstat(parent)
+			parentIdentity, parentFDerr := parentLock.Stat()
 			_ = parentLock.Close()
-			t.Fatalf("cycle %d: candidate lease denied: %v", cycle, err)
+			t.Fatalf("cycle %d: candidate lease denied: %v; checkpoints=%v; proc_fd_count=%d fd_probe_ok=%t fd_soft_limit=%d rlimit_ok=%t; valid_name=%t; child_lstat_ok=%t child_private=%t; parent_lstat_ok=%t parent_fd_stat_ok=%t parent_same_inode=%t",
+				cycle, err, phases, len(fdEntries), fdErr == nil,
+				limit.Cur, limitErr == nil,
+				validInertRestoreCandidateDir(path),
+				childErr == nil,
+				childErr == nil && childInfo.IsDir() && childInfo.Mode().Perm() == 0o700,
+				parentErr == nil, parentFDerr == nil,
+				parentErr == nil && parentFDerr == nil && os.SameFile(parentInfo, parentIdentity))
 		}
 		contender, conflict := openLockedInertRestoreCandidate(path)
 		if contender != nil {
