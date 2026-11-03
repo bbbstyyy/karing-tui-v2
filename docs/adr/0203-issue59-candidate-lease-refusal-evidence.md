@@ -19,10 +19,14 @@ or inode check. A retry alone would be insufficient to claim a fix.
 ## Decision
 
 - Expand the existing *test-only* empty candidate scope/child flock
-  stress loop from 128 to 512 bounded iterations. It must still
-  perform real parent flock acquisition, fresh private scope
-  creation, original child lease admission, competing lease
-  rejection, release/reacquisition and exact empty-scope removal.
+  stress loop from 128 to 512 bounded iterations. Make it exercise
+  the **current production Stage path**, using `mkdirat` against the
+  flocked parent and capturing the created child inode, adopting it
+  via the original parent fd and verifying the lease identity, then
+  exercising independent competing flock refusal, lease release,
+  reacquisition and exact fd-relative empty-scope cleanup. The old
+  stress loop used `os.MkdirTemp` and pathname-based test cleanup,
+  not the actual Stage creation/cleanup mechanism.
 - Use the existing package-private probe callback on the initial
   child lease open. On an **unexpected failure only**, report
   bounded fixed checkpoint names, existing classified syscall
