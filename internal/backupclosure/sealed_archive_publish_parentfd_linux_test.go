@@ -21,7 +21,7 @@ func newSealedPublishTestFile(t *testing.T) (string, *os.File, *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := file.Write(bytes.Repeat([]byte("encrypted-payload"), 4)); err != nil {
+	if _, err := file.Write(bytes.Repeat([]byte("encrypted-payload"), 8)); err != nil {
 		_ = file.Close()
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestSealedPublishPinnedParentNormalAndNoOverwrite(t *testing.T) {
 		t.Fatalf("published temp name survived: %v", err)
 	}
 	got, err := os.ReadFile(destination)
-	if err != nil || !bytes.Equal(got, bytes.Repeat([]byte("encrypted-payload"), 4)) {
+	if err != nil || !bytes.Equal(got, bytes.Repeat([]byte("encrypted-payload"), 8)) {
 		t.Fatalf("published data changed: %v", err)
 	}
 	info, err := os.Lstat(destination)
