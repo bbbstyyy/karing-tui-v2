@@ -1986,3 +1986,11 @@ docs/
 - 新实现对每次不可逆删除前核对父 fd 与标准路径 inode，删除后在同一 flocked fd 上 `Sync()`，fsync 前后验证 fd/path 身份；未发生删除的只读检查也在返回前复核父目录。没有路径回退、不延长锁时间、不修改公开 API、文件格式、临时文件预算、活跃写入 flock 或已发布归档的保留策略。任何删除后身份漂移均返回拒绝错误，不将潜在不确定的持久化结果包装成成功，也不自动重试。
 - Linux 回归在删除已识别 orphan 后、fsync 前注入父目录换名，并以私有 0700 目录或 symlink 替代原路径；必须失败关闭，原父目录只失去已识别临时密文，不触碰外部哨兵。正常路径覆盖无 orphan 不运行注入点、有 orphan 时通过固定 fd fsync 清理成功；已有 SIGKILL、活动 writer、硬链接、配额、已发布归档及并发 writer 测试继续承担兼容验证。
 - **限制**：对同 UID 对手在**原父目录 inode 内**的目录项竞态，检查和 `unlinkat` 仍非原子 compare-and-unlink；已发布密文创建/发布及其他临时文件路径操作尚需后续单独加固，Issue #59 根因仍未确认。不得据此开放真实恢复、自动 GC、T15/T23/T20/T25、CN 离线资产许可或发行门槛。保持 Linux 无 TUN、五层分流剥除订阅/ISP 来源、批准 Core pin 与稳定 main 不变。待依赖 PR #76 合并后再核对本 PR 的精确 head 普通 CI、Go Race 四片、Managed Core 和原生 Linux amd64/arm64 Provenance。
+
+
+### 2026-11-03 — M5 ADR 0198 / 加密归档 retention 清单与文件检查绑定原父目录 fd
+
+- ADR 0197 已将废弃加密密文删除后的父目录 fsync 固定到持 flock 的 inode，但 `inspectSealedArchiveDirectory` 仍直接消费长生命周期父 flock fd 的 `ReadDir` 游标，并通过拼接绝对路径 `os.Lstat`、`openSealedArchiveNoFollow` 读取每一项。重复使用同一 fd 可能错误报告“空目录”；非协作同 UID 进程若在清单读取后更换父目录路径，路径扫描和 open 可能观察到不属于原始 inventory 的同名密文。
+- 本轮通过 `openat(flocked_parent_fd, ".", O_DIRECTORY|O_NOFOLLOW)` 获取独立目录扫描流，确保 inode 与持锁父目录一致且不消耗 flock fd 的目录偏移；逐项识别 8 个已发布归档/32 个 v2 临时密文预算以及合法名称、文件类型，通过 `openat(flocked_parent_fd, name, O_NOFOLLOW|O_NONBLOCK)` 验证原 inode 文件，要求 0600、当前 UID、受限大小、硬链接语义与标准路径的 `Lstat` 一致。已发布文件仅校验计数后关闭 fd，临时文件仍保留独立非阻塞 flock 与双硬链接失败关闭要求；每项及最终返回前复核父目录 fd/path 身份，包含空清单。
+- Linux 回归在同一个父 flock 下连续检查已发布归档+临时密文三次，不得因目录偏移误计配额；注入清单完成后的父目录换名，以同名但不同字节的私有目录或符号链接替换，必须拒绝被替换父目录中的已发布或暂存密文，不改变原密文或外部哨兵。独立扫描流仍必须对应原 inode；nil 父租约失败关闭。
+- **安全限制**：检查不是针对同 UID 不合作进程在**原父 inode 内**更换目录项的原子 compare-and-unlink；加密归档 `createLeasedSealedArchiveTemp` 及发布/失败清理仍有 pathname-based 环节，需后续继续检查。Issue #59、真实恢复/自动 GC、T15/T23/T20/T25、CN 离线许可资源和正式发行门槛仍开放。继续保持 Linux 无 TUN、Karing 五层分流去除订阅/ISP 路由来源、批准 Core pin 与稳定 main 不变。待 ADR 0197 合并后对新基线的精确 head 执行普通 CI、Go Race 四片、Managed Core 和原生 Linux amd64/arm64 Provenance 全部验证，通过之前不合并。
