@@ -170,7 +170,6 @@ func TestInertCandidateLockBusyClassification(t *testing.T) {
 	}
 }
 
-
 // A parent swapped after the child inode check but before the parent
 // identity receipt must produce a bounded test-only refusal label. The
 // replacement contains the SAME original child inode, so a child-only
