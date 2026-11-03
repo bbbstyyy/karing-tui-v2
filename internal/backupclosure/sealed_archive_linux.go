@@ -224,6 +224,16 @@ func (c *Closure) SealInertArchive(
 // future importer acts upon decrypted data.
 func VerifyInertArchive(
 	ctx context.Context, path string, key [32]byte,
+) (SealedArchiveReceipt, error) {
+	return verifyInertArchiveProbed(ctx, path, key, nil, nil)
+}
+
+// Test-only callbacks are strictly package-private: production verification
+// never permits mutations between the parent lease, file open and final
+// authenticated inode checks.
+func verifyInertArchiveProbed(
+	ctx context.Context, path string, key [32]byte,
+	beforeFileOpen, afterAuthentication func(),
 ) (receipt SealedArchiveReceipt, err error) {
 	if ctx == nil || key == ([32]byte{}) || !validSealedArchivePath(path) {
 		return receipt, ErrUnsafeSealedArchive
@@ -233,14 +243,45 @@ func VerifyInertArchive(
 	}
 	ctx, cancel := context.WithTimeout(ctx, sealedArchiveTimeout)
 	defer cancel()
-	if err := verifySealedArchiveParent(filepath.Dir(path)); err != nil {
+	parentPath := filepath.Dir(path)
+	if verifySealedArchiveParent(parentPath) != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
-	file, err := openSealedArchiveNoFollow(path)
+	// Pin the authenticated archive's parent inode throughout the read,
+	// without acquiring or extending an exclusive writer flock.
+	parentFD, err := syscall.Open(parentPath,
+		syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
+	parent := os.NewFile(uintptr(parentFD), parentPath)
+	if parent == nil {
+		_ = syscall.Close(parentFD)
+		return receipt, ErrUnsafeSealedArchive
+	}
+	defer parent.Close()
+	if !sameLeasedSealedArchiveParent(parentPath, parent) {
+		return receipt, ErrUnsafeSealedArchive
+	}
+	if beforeFileOpen != nil {
+		beforeFileOpen()
+	}
+	// Resolve the archive inside the pinned original parent inode. A
+	// substituted private directory at parentPath can never supply bytes.
+	fd, err := syscall.Openat(int(parent.Fd()), filepath.Base(path),
+		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return receipt, ErrUnsafeSealedArchive
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		_ = syscall.Close(fd)
+		return receipt, ErrUnsafeSealedArchive
+	}
 	defer file.Close()
+	if !sameLeasedSealedArchiveParent(parentPath, parent) {
+		return receipt, ErrUnsafeSealedArchive
+	}
 	info, err := file.Stat()
 	if err != nil || verifySealedFile(file, path, info, 0, false) != nil ||
 		info.Size() <= int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes+4) ||
@@ -314,11 +355,15 @@ func VerifyInertArchive(
 	if _, err := reader.Read(trailing[:]); !errors.Is(err, io.EOF) {
 		return receipt, ErrUnsafeSealedArchive
 	}
+	if afterAuthentication != nil {
+		afterAuthentication()
+	}
 	after, err := file.Stat()
 	if err != nil || !os.SameFile(info, after) ||
 		info.Size() != after.Size() || info.Mode() != after.Mode() ||
 		!info.ModTime().Equal(after.ModTime()) ||
 		verifySealedFile(file, path, info, info.Size(), true) != nil ||
+		!sameLeasedSealedArchiveParent(parentPath, parent) ||
 		ctx.Err() != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}

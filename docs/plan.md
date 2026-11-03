@@ -2010,3 +2010,11 @@ docs/
 - 本轮在获得临时密文文件租约后、长时间加密复制前单独打开一个**不持父 flock**的 `O_DIRECTORY|O_NOFOLLOW` 私有父目录 fd，要求它通过 `openat(parent_fd, temp_name)` 指向相同临时密文 inode；写入、哈希、Core 复制时不延长此前短期配额预留锁。正式发布前校验该父 fd/path、已锁临时文件 fd/path 及 0600/当前 UID/单硬链接身份，再以 `unix.Linkat(parent_fd, temp_name, parent_fd, destination_name, 0)` 实现不可覆盖式发布。硬链接一旦存在即视为可能已发布，之后校验目标 fd/path 与写入 fd 同 inode，只有在原父 fd 身份仍可信时才以 `unix.Unlinkat(parent_fd, temp_name)` 删除临时名并同步该父 fd，拒绝绝对路径回退。
 - 加密写入中途失败仅在原父目录和原单硬链接临时文件身份都仍一致时使用既有 fd 相对 `unlinkJustCreatedSealedTemp` 清理；身份不确定则保留临时文件等待严格识别的回收，绝不猜测路径删除。Linux 回归覆盖正常发布、重复目标不可覆盖、同名临时文件 inode 替换拒绝，以及在 `linkat` 前/后将原父目录换名并以另一私有目录或 symlink 替代：最多只可在已固定原父 inode 发布硬链接，原密文及外部哨兵均保留，必须向调用方返回不安全/不确定结果。
 - **限制**：父 inode 固定并非原父目录**内部**的目录项 check/link 原子性，对能不合作地在相同 inode 内更换 source name 的同 UID 对手不能保证绝对不发布错误 inode。若链接已产生但验证失败，严禁自动删除不确定目标或重试。离线 Verify/Preflight 仍包含路径环节；Issue #59、真实恢复/自动候选 GC、T15/T23/T20/T25、CN 离线规则资源许可和发行门槛仍开放。保持 Linux 无 TUN、Karing 多层分流剔除订阅/ISP 路由来源、Core pin 与 stable main 不变；必须在依赖 PR #79 合并并对新基线精确 head 的普通 CI、Race 4/4、Managed Core、原生 Linux amd64/arm64 全通过后才合并。
+
+
+### 2026-11-03 — M5 ADR 0201 / 已认证加密归档 Verify 读取固定原始父目录 inode
+
+- ADR 0197–0200 已将归档的临时创建/清单/发布和目录同步逐步绑定私有父目录 fd；但 `VerifyInertArchive` 仍先按绝对路径验证 0700 父目录，再重新按绝对路径打开归档文件。同 UID 不合作进程可在两步之间换名原父目录，并在原路径放入另一个私有目录中的同名、甚至**字节完全相同且 HMAC 有效**的归档，导致读取的对象不属于先前检查的 inode。另一个风险是文件已打开和完成 HMAC 后更换父目录，再将**原归档 inode**移动到替换父目录的同一标准路径，子文件 fd/path 仍匹配但原父目录身份已丢失。
+- 本轮保持公开 `VerifyInertArchive(ctx,path,key)`、加密格式和收据不变，在只读校验前打开 `O_DIRECTORY|O_NOFOLLOW` 的独立、**不持 flock** 父目录 fd，并要求该 fd/path 与原始当前 UID 0700 私有 inode 一致。归档叶子通过 `openat(parent_fd, base, O_RDONLY|O_NOFOLLOW|O_NONBLOCK)` 打开；在文件打开后及完整 AES-CTR/HMAC、资源摘要、EOF 校验后再次检查父目录 fd/path 身份，保留现有文件 inode、权限、长度、密钥和认证失败关闭策略，不通过绝对路径回退读取。
+- Linux 回归以真实加密归档先证明正常 Verify 成功，再在父 fd 已固定、子文件打开前将父目录替换为另一 0700 目录或 symlink，并在替换目标放入**相同有效密文**，必须失败关闭且不触碰原密文或外部哨兵；在 HMAC 认证结束后将**同一个原归档 inode**移动到替换父目录的原标准路径，要求仍拒绝 Verify、保留加密文件和外部哨兵。两个可控注入点均仅内部测试使用，生产 API 不开放回调。
+- **边界**：这只能固定单次 Verify 调用中的父目录 inode，不能作为不合作同 UID 对手在原父 inode 内重排条目的原子保护，也不能为重新启动或独立下一次读取建立跨进程父目录身份证明；`PreflightInertArchive` 的多轮验证及其他路径打开仍需后续独立审查。Issue #59 根因、真实恢复/自动候选 GC、T15/T23/T20/T25、CN 离线规则许可与正式发布门槛均保持开放。Linux 无 TUN、Karing 五层分流排除订阅/ISP 路由来源、批准 Core pin 和稳定 main 不变。必须在依赖 PR #80 合并并对最终精确 head 执行普通 CI、4 个 Race 分片、Managed Core 和原生 Linux amd64/arm64 Provenance 全部通过后才合并。
