@@ -28,13 +28,15 @@ func TestInertCandidateScopeLeaseCyclesDoNotLeakOrGrantCompetingLease(t *testing
 		if err != nil {
 			t.Fatalf("cycle %d: private parent lock: %v", cycle, err)
 		}
-		path, err := os.MkdirTemp(parent, inertRestoreCandidatePrefix)
+		// Reuse production's mkdirat and creation inode receipt. The old
+		// stress test used os.MkdirTemp instead of Stage's actual path.
+		path, created, err := createInertScopeAtLeasedParent(parentLock, parent)
 		if err != nil {
 			_ = parentLock.Close()
 			t.Fatalf("cycle %d: private scope: %v", cycle, err)
 		}
 		var phases []string
-		candidate, err := openLockedInertRestoreCandidateProbed(path, func(phase string) bool {
+		candidate, err := openLockedInertRestoreCandidateAtParentProbed(path, parentLock, func(phase string) bool {
 			// Only fixed stage identifiers and bounded syscall classes
 			// can enter these diagnostics; no paths, keys or errno text.
 			phases = append(phases, phase)
@@ -56,6 +58,11 @@ func TestInertCandidateScopeLeaseCyclesDoNotLeakOrGrantCompetingLease(t *testing
 				childErr == nil && childInfo.IsDir() && childInfo.Mode().Perm() == 0o700,
 				parentErr == nil, parentFDerr == nil,
 				parentErr == nil && parentFDerr == nil && os.SameFile(parentInfo, parentIdentity))
+		}
+		if !os.SameFile(created, candidate.directoryIdentity) {
+			_ = candidate.Close()
+			_ = parentLock.Close()
+			t.Fatalf("cycle %d: child inode differs from mkdirat creation receipt", cycle)
 		}
 		contender, conflict := openLockedInertRestoreCandidate(path)
 		if contender != nil {
@@ -79,11 +86,12 @@ func TestInertCandidateScopeLeaseCyclesDoNotLeakOrGrantCompetingLease(t *testing
 			_ = parentLock.Close()
 			t.Fatalf("cycle %d: close reopened candidate: %v", cycle, err)
 		}
+		if err := removeNewEmptyInertScopeIfIdentical(parentLock, path, created); err != nil {
+			_ = parentLock.Close()
+			t.Fatalf("cycle %d: original empty scope cleanup refused: %v", cycle, err)
+		}
 		if err := parentLock.Close(); err != nil {
 			t.Fatalf("cycle %d: parent lock close: %v", cycle, err)
-		}
-		if err := os.Remove(path); err != nil {
-			t.Fatalf("cycle %d: exact empty scope not removable: %v", cycle, err)
 		}
 	}
 	entries, err := os.ReadDir(parent)
