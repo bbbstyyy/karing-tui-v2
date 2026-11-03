@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 )
 
 // InertDigestDifference compares content identities, not imported database
@@ -77,6 +78,15 @@ func preflightInertArchive(
 	ctx context.Context, path string, key [32]byte, current *Closure,
 	afterAuth func(),
 ) (InertArchivePreflight, error) {
+	return preflightInertArchiveProbed(ctx, path, key, current, afterAuth, nil)
+}
+
+// afterInventory is a strictly internal deterministic fault-injection hook
+// between the second full-ciphertext hash and the SQLite replay.
+func preflightInertArchiveProbed(
+	ctx context.Context, path string, key [32]byte, current *Closure,
+	afterAuth, afterInventory func(),
+) (InertArchivePreflight, error) {
 	var empty InertArchivePreflight
 	if ctx == nil {
 		return empty, ErrUnsafeSealedArchive
@@ -89,6 +99,13 @@ func preflightInertArchive(
 	if current != nil && current.Verify(ctx) != nil {
 		return empty, ErrUnsafeSealedArchive
 	}
+	// Keep the exact same owner-private parent inode throughout the
+	// separately authenticated HMAC, inventory and SQLite replay passes.
+	parent, err := pinSealedArchiveReadParent(path)
+	if err != nil {
+		return empty, ErrUnsafeSealedArchive
+	}
+	defer parent.Close()
 	// VerifyInertArchive checks the full HMAC, SHA-256 of every decrypted
 	// resource, exact record lengths and trailing bytes before returning.
 	receipt, err := VerifyInertArchive(ctx, path, key)
@@ -98,15 +115,24 @@ func preflightInertArchive(
 	if afterAuth != nil {
 		afterAuth()
 	}
+	if !sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+		return empty, ErrUnsafeSealedArchive
+	}
 	// This second read compares SHA-256 of the ENTIRE ciphertext with the
 	// authenticated pass. Merely reopening and parsing the first record
 	// would introduce a path-swap and post-verification mutation window.
-	inventory, err := readAuthenticatedInventory(ctx, path, key, receipt)
+	inventory, err := readAuthenticatedInventoryAtParent(ctx, path, key, receipt, parent)
 	if err != nil {
 		return empty, ErrUnsafeSealedArchive
 	}
-	sqliteBytes, err := readAuthenticatedSQLiteBytes(ctx, path, key, receipt, inventory)
-	if err != nil {
+	if afterInventory != nil {
+		afterInventory()
+	}
+	if !sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+		return empty, ErrUnsafeSealedArchive
+	}
+	sqliteBytes, err := readAuthenticatedSQLiteBytesAtParent(ctx, path, key, receipt, inventory, parent)
+	if err != nil || !sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
 		return empty, ErrUnsafeSealedArchive
 	}
 	defer clear(sqliteBytes)
@@ -114,7 +140,8 @@ func preflightInertArchive(
 	if err != nil {
 		return empty, ErrUnsafeSealedArchive
 	}
-	if current != nil && current.Verify(ctx) != nil {
+	if (current != nil && current.Verify(ctx) != nil) ||
+		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
 		return empty, ErrUnsafeSealedArchive
 	}
 	report := InertArchivePreflight{
@@ -149,6 +176,9 @@ func preflightInertArchive(
 		report.Generations = compareGenerationDigests(inventory.Generations, current.Inventory.Generations)
 		report.RuleSets = compareDigestCounts(inventory.RuleSets, current.Inventory.RuleSets)
 	}
+	if !sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+		return empty, ErrUnsafeSealedArchive
+	}
 	return report, nil
 }
 
@@ -168,11 +198,78 @@ func assessArchiveTarget(report *InertArchivePreflight, inventory Inventory) {
 	report.TargetMetadataCompatible = true
 }
 
+// pinSealedArchiveReadParent creates a read-only, non-flocked lease for a
+// canonical private sealed archive parent. Preflight retains this descriptor
+// through ALL three independent authenticated reads rather than allowing each
+// read to reopen an unrelated same-UID 0700 directory.
+func pinSealedArchiveReadParent(path string) (*os.File, error) {
+	if !validSealedArchivePath(path) {
+		return nil, ErrUnsafeSealedArchive
+	}
+	parentPath := filepath.Dir(path)
+	if verifySealedArchiveParent(parentPath) != nil {
+		return nil, ErrUnsafeSealedArchive
+	}
+	fd, err := syscall.Open(parentPath,
+		syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrUnsafeSealedArchive
+	}
+	parent := os.NewFile(uintptr(fd), parentPath)
+	if parent == nil {
+		_ = syscall.Close(fd)
+		return nil, ErrUnsafeSealedArchive
+	}
+	if !sameLeasedSealedArchiveParent(parentPath, parent) {
+		_ = parent.Close()
+		return nil, ErrUnsafeSealedArchive
+	}
+	return parent, nil
+}
+
+// openSealedArchiveAtPinnedParent opens the precise basename relative to the
+// original parent inode. Inode/path identity checks in each replay reader
+// still enforce the existing immutable 0600, single-link file constraints.
+func openSealedArchiveAtPinnedParent(path string, parent *os.File) (*os.File, error) {
+	if !validSealedArchivePath(path) || parent == nil ||
+		filepath.Dir(path) != parent.Name() ||
+		!sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		return nil, ErrUnsafeSealedArchive
+	}
+	fd, err := syscall.Openat(int(parent.Fd()), filepath.Base(path),
+		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrUnsafeSealedArchive
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		_ = syscall.Close(fd)
+		return nil, ErrUnsafeSealedArchive
+	}
+	if !sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		_ = file.Close()
+		return nil, ErrUnsafeSealedArchive
+	}
+	return file, nil
+}
+
 // readAuthenticatedInventory never interprets a replayed manifest until the
 // complete file SHA-256 matches the first, MAC-verified pass. It buffers no
 // more than the small canonical inventory prefix, not the database or rules.
 func readAuthenticatedInventory(
 	ctx context.Context, path string, key [32]byte, receipt SealedArchiveReceipt,
+) (Inventory, error) {
+	parent, err := pinSealedArchiveReadParent(path)
+	if err != nil {
+		return Inventory{}, ErrUnsafeSealedArchive
+	}
+	defer parent.Close()
+	return readAuthenticatedInventoryAtParent(ctx, path, key, receipt, parent)
+}
+
+func readAuthenticatedInventoryAtParent(
+	ctx context.Context, path string, key [32]byte, receipt SealedArchiveReceipt,
+	parent *os.File,
 ) (Inventory, error) {
 	var none Inventory
 	if ctx == nil || !validSealedArchivePath(path) || key == ([32]byte{}) ||
@@ -184,10 +281,7 @@ func readAuthenticatedInventory(
 	if err := ctx.Err(); err != nil {
 		return none, err
 	}
-	if verifySealedArchiveParent(filepath.Dir(path)) != nil {
-		return none, ErrUnsafeSealedArchive
-	}
-	file, err := openSealedArchiveNoFollow(path)
+	file, err := openSealedArchiveAtPinnedParent(path, parent)
 	if err != nil {
 		return none, ErrUnsafeSealedArchive
 	}
@@ -219,7 +313,8 @@ func readAuthenticatedInventory(
 	after, err := file.Stat()
 	if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() ||
 		before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) ||
-		verifySealedFile(file, path, before, receipt.Bytes, true) != nil {
+		verifySealedFile(file, path, before, receipt.Bytes, true) != nil ||
+		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
 		return none, ErrUnsafeSealedArchive
 	}
 	if len(prefix) < sealedArchiveHeaderBytes+4 ||
@@ -240,7 +335,8 @@ func readAuthenticatedInventory(
 		return none, ErrUnsafeSealedArchive
 	}
 	inventory, err := ParseInertInventory(plaintextPrefix[4:4+int(size)], receipt.InventorySHA256)
-	if err != nil || inventory.Format != receipt.Format {
+	if err != nil || inventory.Format != receipt.Format ||
+		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
 		return none, ErrUnsafeSealedArchive
 	}
 	return inventory, nil

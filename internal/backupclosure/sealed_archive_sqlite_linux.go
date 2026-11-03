@@ -38,6 +38,18 @@ var ErrArchiveLogicalVerification = errors.New("inert archive SQLite logical ver
 func readAuthenticatedSQLiteBytes(
 	ctx context.Context, path string, key [32]byte,
 	receipt SealedArchiveReceipt, inventory Inventory,
+) ([]byte, error) {
+	parent, err := pinSealedArchiveReadParent(path)
+	if err != nil {
+		return nil, ErrArchiveLogicalVerification
+	}
+	defer parent.Close()
+	return readAuthenticatedSQLiteBytesAtParent(ctx, path, key, receipt, inventory, parent)
+}
+
+func readAuthenticatedSQLiteBytesAtParent(
+	ctx context.Context, path string, key [32]byte,
+	receipt SealedArchiveReceipt, inventory Inventory, parent *os.File,
 ) (result []byte, err error) {
 	if ctx == nil || !validSealedArchivePath(path) || key == ([32]byte{}) ||
 		inventory.DatabaseBytes < 512 ||
@@ -50,10 +62,7 @@ func readAuthenticatedSQLiteBytes(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if verifySealedArchiveParent(filepath.Dir(path)) != nil {
-		return nil, ErrArchiveLogicalVerification
-	}
-	file, err := openSealedArchiveNoFollow(path)
+	file, err := openSealedArchiveAtPinnedParent(path, parent)
 	if err != nil {
 		return nil, ErrArchiveLogicalVerification
 	}
@@ -132,7 +141,8 @@ func readAuthenticatedSQLiteBytes(
 	if err != nil || !os.SameFile(before, after) ||
 		before.Size() != after.Size() || before.Mode() != after.Mode() ||
 		!before.ModTime().Equal(after.ModTime()) ||
-		verifySealedFile(file, path, before, receipt.Bytes, true) != nil {
+		verifySealedFile(file, path, before, receipt.Bytes, true) != nil ||
+		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
 		return nil, ErrArchiveLogicalVerification
 	}
 	return database, nil
