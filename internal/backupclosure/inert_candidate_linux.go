@@ -221,6 +221,9 @@ func openLockedInertRestoreCandidateAtParentProbed(
 		parentIdentity, err = os.Lstat(parentPath)
 	}
 	if err != nil || !sameInertCandidateParentIdentity(parentPath, parentIdentity) {
+		if probe != nil {
+			_ = probe("scope_child_parent_identity_refused")
+		}
 		_ = lock.Close()
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
