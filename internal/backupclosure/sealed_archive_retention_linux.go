@@ -130,13 +130,54 @@ func recognizedSealedArchiveTemporary(name string) bool {
 	return true
 }
 
-// Called only with an exclusive flock on a fresh parent directory descriptor.
-// Holds an independent nonblocking flock on each reclaimable temporary file.
-// Active writers are skipped, never mistaken for abandoned files.
+// openLeasedSealedRetentionInventoryReader opens an independent directory
+// stream from the already-flocked parent inode. Scanning the flock descriptor
+// directly would permanently advance its directory offset, so a repeated
+// inventory could otherwise incorrectly report an empty parent.
+func openLeasedSealedRetentionInventoryReader(parent *os.File) (*os.File, error) {
+	if parent == nil || !sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		return nil, ErrUnsafeSealedArchive
+	}
+	original, err := parent.Stat()
+	if err != nil || !original.IsDir() || original.Mode().Perm() != 0o700 {
+		return nil, ErrUnsafeSealedArchive
+	}
+	fd, err := syscall.Openat(int(parent.Fd()), ".",
+		syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrUnsafeSealedArchive
+	}
+	reader := os.NewFile(uintptr(fd), parent.Name())
+	if reader == nil {
+		_ = syscall.Close(fd)
+		return nil, ErrUnsafeSealedArchive
+	}
+	info, err := reader.Stat()
+	if err != nil || !os.SameFile(original, info) ||
+		!sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		_ = reader.Close()
+		return nil, ErrUnsafeSealedArchive
+	}
+	return reader, nil
+}
+
+// Called only with the exclusive flock on an original private parent inode.
+// Entries are opened via openat on the same parent, then independently
+// compared with their current pathname. Active writers remain protected by
+// their own file flocks; neither published nor unknown files are deleted.
 func inspectSealedArchiveDirectory(
 	ctx context.Context, parent *os.File,
+) (SealedArchiveRetentionReport, []abandonedSealedArchive, error) {
+	return inspectSealedArchiveDirectoryProbed(ctx, parent, nil)
+}
+
+// afterInventory is a package-private Linux fault injection checkpoint
+// after ReadDir but before any child lookup. Production passes nil.
+func inspectSealedArchiveDirectoryProbed(
+	ctx context.Context, parent *os.File, afterInventory func(),
 ) (report SealedArchiveRetentionReport, candidates []abandonedSealedArchive, err error) {
-	if ctx == nil || parent == nil {
+	if ctx == nil || parent == nil ||
+		!sameLeasedSealedArchiveParent(parent.Name(), parent) {
 		return report, nil, ErrUnsafeSealedArchive
 	}
 	defer func() {
@@ -145,38 +186,65 @@ func inspectSealedArchiveDirectory(
 			candidates = nil
 		}
 	}()
-	entries, readErr := parent.ReadDir(MaxRetainedSealedArchives + MaxSealedArchiveTemporaryFiles + 1)
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
+	reader, err := openLeasedSealedRetentionInventoryReader(parent)
+	if err != nil {
+		return report, nil, ErrUnsafeSealedArchive
+	}
+	entries, readErr := reader.ReadDir(MaxRetainedSealedArchives + MaxSealedArchiveTemporaryFiles + 1)
+	closeErr := reader.Close()
+	if (readErr != nil && !errors.Is(readErr, io.EOF)) || closeErr != nil ||
+		len(entries) > MaxRetainedSealedArchives+MaxSealedArchiveTemporaryFiles {
 		return report, candidates, ErrUnsafeSealedArchive
 	}
-	if len(entries) > MaxRetainedSealedArchives+MaxSealedArchiveTemporaryFiles {
-		return report, candidates, ErrUnsafeSealedArchive
+	if afterInventory != nil {
+		afterInventory()
 	}
 	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return report, candidates, err
+		if ctx.Err() != nil {
+			return report, candidates, ctx.Err()
+		}
+		if !sameLeasedSealedArchiveParent(parent.Name(), parent) {
+			return report, candidates, ErrUnsafeSealedArchive
 		}
 		name := entry.Name()
 		path := filepath.Join(parent.Name(), name)
 		temporary := recognizedSealedArchiveTemporary(name)
 		completed := validSealedArchivePath(path)
-		if !temporary && !completed {
-			// Legacy .ktui-sealed-* scopes never held flock leases. Do NOT
-			// guess they are abandoned, even if they look old or empty.
+		if (!temporary && !completed) || !entry.Type().IsRegular() {
+			// Reject unknown entries, directories, symlinks and legacy
+			// staging names. No fallback to another namespace.
 			return report, candidates, ErrUnsafeSealedArchive
 		}
-		info, statErr := os.Lstat(path)
-		if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 ||
+		// Open by dirfd, never by the mutable parent pathname. NONBLOCK
+		// prevents a substituted FIFO from blocking while fstat rejects it.
+		fd, openErr := syscall.Openat(int(parent.Fd()), name,
+			syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0)
+		if openErr != nil {
+			return report, candidates, ErrUnsafeSealedArchive
+		}
+		file := os.NewFile(uintptr(fd), path)
+		if file == nil {
+			_ = syscall.Close(fd)
+			return report, candidates, ErrUnsafeSealedArchive
+		}
+		info, statErr := file.Stat()
+		atPath, pathErr := os.Lstat(path)
+		if statErr != nil || pathErr != nil || !os.SameFile(info, atPath) ||
+			!info.Mode().IsRegular() || info.Mode().Perm() != 0o600 ||
 			info.Size() < 0 || info.Size() > MaxSealedArchiveBytes {
+			_ = file.Close()
 			return report, candidates, ErrUnsafeSealedArchive
 		}
 		ownership, valid := info.Sys().(*syscall.Stat_t)
 		if !valid || int(ownership.Uid) != os.Getuid() ||
 			ownership.Nlink < 1 || ownership.Nlink > 2 {
+			_ = file.Close()
 			return report, candidates, ErrUnsafeSealedArchive
 		}
 		if completed {
-			if info.Size() <= int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes+4) ||
+			closeErr := file.Close()
+			if closeErr != nil ||
+				info.Size() <= int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes+4) ||
 				!singleOwnedSealedFile(info) {
 				return report, candidates, ErrUnsafeSealedArchive
 			}
@@ -190,16 +258,6 @@ func inspectSealedArchiveDirectory(
 		}
 		report.Temporary++
 		if report.Temporary > MaxSealedArchiveTemporaryFiles {
-			return report, candidates, ErrUnsafeSealedArchive
-		}
-		file, openErr := openSealedArchiveNoFollow(path)
-		if openErr != nil {
-			return report, candidates, ErrUnsafeSealedArchive
-		}
-		opened, openStatErr := file.Stat()
-		if openStatErr != nil || !os.SameFile(info, opened) ||
-			!opened.Mode().IsRegular() || opened.Mode().Perm() != 0o600 ||
-			opened.Size() > MaxSealedArchiveBytes {
 			_ = file.Close()
 			return report, candidates, ErrUnsafeSealedArchive
 		}
@@ -211,16 +269,18 @@ func inspectSealedArchiveDirectory(
 			}
 			return report, candidates, ErrUnsafeSealedArchive
 		}
-		// The old hard-link publication might have crashed between Link
-		// and Remove. An unlocked two-link file is ambiguous and must
-		// be reviewed by an operator, not automatically unlinked.
-		if !singleOwnedSealedFile(opened) {
+		// Crash between hard-link publication and temp name removal is
+		// ambiguous. Never reclaim a two-link temp, even if unlocked.
+		if !singleOwnedSealedFile(info) {
 			_ = file.Close()
 			return report, candidates, ErrUnsafeSealedArchive
 		}
 		candidates = append(candidates, abandonedSealedArchive{
-			name: name, file: file, identity: opened,
+			name: name, file: file, identity: info,
 		})
+	}
+	if !sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		return report, candidates, ErrUnsafeSealedArchive
 	}
 	report.AtCapacity = report.Completed >= MaxRetainedSealedArchives ||
 		report.CompletedBytes >= MaxRetainedSealedArchiveBytes
