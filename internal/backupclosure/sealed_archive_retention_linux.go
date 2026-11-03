@@ -4,6 +4,8 @@ package backupclosure
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -366,10 +368,106 @@ func reclaimAbandonedSealedArchivesProbed(
 	return report, nil
 }
 
+// openSealedArchiveTempAtLeasedParent creates a new v2 temporary file ONLY
+// under the inode already holding the exclusive parent flock. A path-based
+// CreateTemp can create a file in a substituted private directory if a
+// noncooperating same-UID actor renames the parent after inventory.
+func openSealedArchiveTempAtLeasedParent(
+	parent string, lock *os.File,
+) (*os.File, error) {
+	return openSealedArchiveTempAtLeasedParentProbed(parent, lock, nil)
+}
+
+// beforeOpen is a package-private test checkpoint after the lease identity
+// check and before openat. Production never supplies this callback.
+func openSealedArchiveTempAtLeasedParentProbed(
+	parent string, lock *os.File, beforeOpen func(),
+) (*os.File, error) {
+	if lock == nil || lock.Name() != parent ||
+		!sameLeasedSealedArchiveParent(parent, lock) {
+		return nil, ErrUnsafeSealedArchive
+	}
+	for attempt := 0; attempt < 8; attempt++ {
+		var nonce [12]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return nil, ErrUnsafeSealedArchive
+		}
+		name := sealedArchiveTemporaryPrefix + hex.EncodeToString(nonce[:])
+		if beforeOpen != nil {
+			beforeOpen()
+		}
+		fd, err := syscall.Openat(int(lock.Fd()), name,
+			syscall.O_RDWR|syscall.O_CREAT|syscall.O_EXCL|
+				syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o600)
+		if errors.Is(err, syscall.EEXIST) {
+			continue
+		}
+		if err != nil {
+			return nil, ErrUnsafeSealedArchive
+		}
+		path := filepath.Join(parent, name)
+		file := os.NewFile(uintptr(fd), path)
+		if file == nil {
+			_ = syscall.Close(fd)
+			return nil, ErrUnsafeSealedArchive
+		}
+		info, statErr := file.Stat()
+		atPath, pathErr := os.Lstat(path)
+		if statErr != nil || pathErr != nil ||
+			!info.Mode().IsRegular() || info.Mode().Perm() != 0o600 ||
+			!singleOwnedSealedFile(info) || !os.SameFile(info, atPath) ||
+			!sameLeasedSealedArchiveParent(parent, lock) {
+			// The file may exist in a parent inode that has since moved.
+			// Its pathname is untrusted: close, but never guess a target
+			// for path-based deletion.
+			_ = file.Close()
+			return nil, ErrUnsafeSealedArchive
+		}
+		return file, nil
+	}
+	return nil, ErrUnsafeSealedArchive
+}
+
+// unlinkJustCreatedSealedTemp removes a known, single-linked temporary file
+// through the same parent directory fd used for its creation. Never unlink
+// a replacement of the original name or a file in a different parent.
+func unlinkJustCreatedSealedTemp(lock, file *os.File) error {
+	if lock == nil || file == nil ||
+		!recognizedSealedArchiveTemporary(filepath.Base(file.Name())) ||
+		filepath.Dir(file.Name()) != lock.Name() ||
+		!sameLeasedSealedArchiveParent(lock.Name(), lock) {
+		return ErrUnsafeSealedArchive
+	}
+	info, statErr := file.Stat()
+	atPath, pathErr := os.Lstat(file.Name())
+	if statErr != nil || pathErr != nil ||
+		!info.Mode().IsRegular() || info.Mode().Perm() != 0o600 ||
+		!singleOwnedSealedFile(info) || !os.SameFile(info, atPath) ||
+		!sameLeasedSealedArchiveParent(lock.Name(), lock) {
+		return ErrUnsafeSealedArchive
+	}
+	if err := syscall.Unlinkat(int(lock.Fd()), filepath.Base(file.Name())); err != nil {
+		return ErrUnsafeSealedArchive
+	}
+	if lock.Sync() != nil || !sameLeasedSealedArchiveParent(lock.Name(), lock) {
+		return ErrUnsafeSealedArchive
+	}
+	return nil
+}
+
 // createLeasedSealedArchiveTemp coordinates inventory capacity and the
 // creation-to-file-flock gap under the same parent flock as the scavenger.
 func createLeasedSealedArchiveTemp(
 	ctx context.Context, parent string, requestedBytes int64,
+) (file *os.File, err error) {
+	return createLeasedSealedArchiveTempProbed(ctx, parent, requestedBytes, nil)
+}
+
+// The private afterInventory hook permits a deterministic same-UID parent
+// pathname substitution between retention inventory and temp creation.
+// Production passes nil; no external caller can supply this callback.
+func createLeasedSealedArchiveTempProbed(
+	ctx context.Context, parent string, requestedBytes int64, afterInventory func(),
 ) (file *os.File, err error) {
 	if requestedBytes <= 0 || requestedBytes > MaxSealedArchiveBytes {
 		return nil, ErrUnsafeSealedArchive
@@ -381,13 +479,10 @@ func createLeasedSealedArchiveTemp(
 	defer func() {
 		if closeErr := lock.Close(); closeErr != nil {
 			if file != nil {
-				name := file.Name()
-				info, _ := file.Stat()
+				// The parent fd is no longer available to authorize a
+				// safe unlink. Leave an orphan for guarded reclamation;
+				// never attempt os.Remove on the mutable temp path.
 				_ = file.Close()
-				if atPath, statErr := os.Lstat(name); statErr == nil &&
-					info != nil && os.SameFile(atPath, info) {
-					_ = os.Remove(name)
-				}
 				file = nil
 			}
 			err = errors.Join(err, ErrUnsafeSealedArchive)
@@ -405,14 +500,26 @@ func createLeasedSealedArchiveTemp(
 			MaxRetainedSealedArchiveBytes-requestedBytes {
 		return nil, ErrUnsafeSealedArchive
 	}
-	file, err = os.CreateTemp(parent, sealedArchiveTemporaryPrefix)
+	if afterInventory != nil {
+		afterInventory()
+	}
+	// Create only through the already-flocked parent dirfd; no fallback to
+	// os.CreateTemp(parent) or other absolute-path creation.
+	file, err = openSealedArchiveTempAtLeasedParent(parent, lock)
 	if err != nil {
 		return nil, ErrUnsafeSealedArchive
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		name := file.Name()
+		cleanupErr := unlinkJustCreatedSealedTemp(lock, file)
+		closeErr := file.Close()
+		file = nil
+		return nil, errors.Join(ErrUnsafeSealedArchive, cleanupErr, closeErr)
+	}
+	if !sameLeasedSealedArchiveParent(parent, lock) {
+		// File flock is held, but the canonical parent has changed. Do not
+		// claim a usable lease or delete an uncertain pathname.
 		_ = file.Close()
-		_ = os.Remove(name)
+		file = nil
 		return nil, ErrUnsafeSealedArchive
 	}
 	return file, nil
