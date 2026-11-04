@@ -644,10 +644,32 @@ func stageInertRestoreCandidate(
 	if !checkpoint("source_preflight") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// Pin the source's ORIGINAL private parent and exact archive inode
+	// before authentication. Retain both read-only descriptors through
+	// inventory, candidate reservation, ciphertext copy and final checks:
+	// a same-UID actor must not redirect a later copy to a replacement
+	// parent or an identically authenticated but different file inode.
+	sourceParent, err := pinSealedArchiveReadParent(sourceArchive)
+	if err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	defer sourceParent.Close()
+	sourceFile, err := openSealedArchiveAtPinnedParent(sourceArchive, sourceParent)
+	if err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	defer sourceFile.Close()
+	sourceIdentity, err := sourceFile.Stat()
+	if err != nil || !samePinnedInertStageSource(sourceArchive, sourceParent, sourceFile,
+		sourceIdentity, sourceIdentity.Size()) {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	report, err := PreflightInertArchive(ctx, sourceArchive, key, nil)
 	if err != nil || !report.SQLiteLogicalVerified || !report.SchemaCatalogVerified ||
 		report.RestoreReady || report.RestoreSupported ||
-		!validLowerSHA(report.ArchiveSHA256) || report.ArchiveBytes <= 0 {
+		!validLowerSHA(report.ArchiveSHA256) || report.ArchiveBytes <= 0 ||
+		!samePinnedInertStageSource(sourceArchive, sourceParent, sourceFile,
+			sourceIdentity, report.ArchiveBytes) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !checkpoint("disk_reserve") ||
@@ -767,7 +789,8 @@ func stageInertRestoreCandidate(
 	if !checkpoint("cipher_copy") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if err = copyInertCandidateCipher(ctx, sourceArchive, candidate, report, probe); err != nil {
+	if err = copyInertCandidateCipherAtPinnedSource(ctx, sourceArchive,
+		sourceParent, sourceFile, sourceIdentity, candidate, report, probe); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !checkpoint("scope_sync") {
@@ -816,6 +839,30 @@ func sameInertPreflightEvidence(a, b InertArchivePreflight) bool {
 		!a.RestoreSupported && !b.RestoreSupported
 }
 
+// samePinnedInertStageSource proves that both the private parent inode and
+// the exact sealed archive file inode first opened by Stage remain the
+// source. Copying authenticated bytes from an unrelated replacement path
+// would be a failed custody check even when its SHA/HMAC match exactly.
+func samePinnedInertStageSource(
+	path string, parent, file *os.File, original os.FileInfo, size int64,
+) bool {
+	if parent == nil || file == nil || original == nil ||
+		parent.Name() != filepath.Dir(path) || file.Name() != path ||
+		!validSealedArchivePath(path) ||
+		!sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		return false
+	}
+	atFD, err := file.Stat()
+	if err != nil || !os.SameFile(original, atFD) ||
+		original.Size() != size || atFD.Size() != size ||
+		original.Mode() != atFD.Mode() ||
+		!original.ModTime().Equal(atFD.ModTime()) ||
+		verifySealedFile(file, path, original, size, true) != nil {
+		return false
+	}
+	return sameLeasedSealedArchiveParent(parent.Name(), parent)
+}
+
 // copyInertCandidateCipher creates the ciphertext relative to the LOCKED
 // directory fd, not a pathname whose intermediate components a same-UID actor
 // could replace after admission. A path-based post-write check is still
@@ -825,21 +872,43 @@ func copyInertCandidateCipher(
 	ctx context.Context, sourcePath string, candidate *InertRestoreCandidate,
 	expected InertArchivePreflight, probe func(string) bool,
 ) error {
-	if candidate == nil || candidate.dir == nil ||
-		candidate.directoryIdentity == nil {
+	// Preserve this existing package-private test entry point. Actual
+	// Stage calls the pinned variant with descriptors opened BEFORE its
+	// first full authenticated source preflight, not new path opens.
+	parent, err := pinSealedArchiveReadParent(sourcePath)
+	if err != nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
-	locked, lockErr := verifyCandidateDirLock(candidate.directory, candidate.dir)
-	if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) {
-		return ErrUnsafeInertRestoreCandidate
-	}
-	file, err := openSealedArchiveNoFollow(sourcePath)
+	defer parent.Close()
+	file, err := openSealedArchiveAtPinnedParent(sourcePath, parent)
 	if err != nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || verifySealedFile(file, sourcePath, info, expected.ArchiveBytes, true) != nil {
+	if err != nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	return copyInertCandidateCipherAtPinnedSource(
+		ctx, sourcePath, parent, file, info, candidate, expected, probe)
+}
+
+// copyInertCandidateCipherAtPinnedSource writes only into the existing
+// leased candidate child fd, and reads only from the original source
+// descriptor obtained relative to its original private parent inode.
+func copyInertCandidateCipherAtPinnedSource(
+	ctx context.Context, sourcePath string, parent, file *os.File,
+	info os.FileInfo, candidate *InertRestoreCandidate,
+	expected InertArchivePreflight, probe func(string) bool,
+) error {
+	if candidate == nil || candidate.dir == nil ||
+		candidate.directoryIdentity == nil ||
+		!samePinnedInertStageSource(sourcePath, parent, file, info,
+			expected.ArchiveBytes) {
+		return ErrUnsafeInertRestoreCandidate
+	}
+	locked, lockErr := verifyCandidateDirLock(candidate.directory, candidate.dir)
+	if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) {
 		return ErrUnsafeInertRestoreCandidate
 	}
 	// A test probe may replace candidate.directory right here. Openat must
@@ -875,12 +944,8 @@ func copyInertCandidateCipher(
 	if _, err := file.Read(trailing[:]); !errors.Is(err, io.EOF) {
 		return ErrUnsafeInertRestoreCandidate
 	}
-	atSource, err := os.Lstat(sourcePath)
-	after, statErr := file.Stat()
-	if err != nil || statErr != nil || !os.SameFile(info, atSource) ||
-		!os.SameFile(info, after) || info.Size() != after.Size() ||
-		!info.ModTime().Equal(after.ModTime()) ||
-		verifySealedFile(file, sourcePath, info, expected.ArchiveBytes, true) != nil {
+	if !samePinnedInertStageSource(sourcePath, parent, file, info,
+		expected.ArchiveBytes) {
 		return ErrUnsafeInertRestoreCandidate
 	}
 	targetInfo, err := target.Stat()
