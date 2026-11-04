@@ -105,21 +105,51 @@ func preflightInertArchiveBeforeVerifyProbed(
 	if err := ctx.Err(); err != nil {
 		return empty, err
 	}
+	// Preserve the standalone API's original timeout across parent lookup
+	// as well as all three authenticated passes; the borrowed helper's
+	// deadline may be nested but never extends this outer budget.
 	ctx, cancel := context.WithTimeout(ctx, sealedArchiveTimeout)
 	defer cancel()
-	if current != nil && current.Verify(ctx) != nil {
-		return empty, ErrUnsafeSealedArchive
-	}
-	// Keep the exact same owner-private parent inode throughout the
-	// separately authenticated HMAC, inventory and SQLite replay passes.
+	// Standalone callers own a strict parent fd. Stage, Reopen and Verify
+	// instead borrow their already-pinned original directory inode.
 	parent, err := pinSealedArchiveReadParent(path)
 	if err != nil {
 		return empty, ErrUnsafeSealedArchive
 	}
 	defer parent.Close()
-	// The first complete HMAC + decrypted resource pass MUST also use
-	// this same parent fd. Do not independently reopen the canonical
-	// parent path before the inventory and SQLite replay passes.
+	return preflightInertArchiveAtParentProbed(
+		ctx, path, key, current, parent, beforeVerify, afterAuth, afterInventory)
+}
+
+// The internal preflight borrows a caller-owned directory descriptor and never
+// closes it or reopens the parent. Stage supplies its source parent; candidate
+// Stage/Reopen/Verify supply their existing exclusive directory flock fd.
+func preflightInertArchiveAtParent(
+	ctx context.Context, path string, key [32]byte, current *Closure, parent *os.File,
+) (InertArchivePreflight, error) {
+	return preflightInertArchiveAtParentProbed(ctx, path, key, current, parent, nil, nil, nil)
+}
+
+// Private callbacks allow deterministic Linux path-swap regressions. No
+// production API accepts them. The borrowed fd belongs to the caller.
+func preflightInertArchiveAtParentProbed(
+	ctx context.Context, path string, key [32]byte, current *Closure, parent *os.File,
+	beforeVerify, afterAuth, afterInventory func(),
+) (InertArchivePreflight, error) {
+	var empty InertArchivePreflight
+	if ctx == nil || parent == nil || !validSealedArchivePath(path) ||
+		parent.Name() != filepath.Dir(path) ||
+		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+		return empty, ErrUnsafeSealedArchive
+	}
+	if err := ctx.Err(); err != nil {
+		return empty, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, sealedArchiveTimeout)
+	defer cancel()
+	if current != nil && current.Verify(ctx) != nil {
+		return empty, ErrUnsafeSealedArchive
+	}
 	if beforeVerify != nil {
 		beforeVerify()
 	}

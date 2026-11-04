@@ -2050,3 +2050,11 @@ docs/
 - 本轮将 Verify 完整 AES-CTR/HMAC、资源摘要与 EOF 验证逻辑抽成仅包内使用的 `verifyInertArchiveAtParentProbed`，由调用方提供已经固定的、**不持 flock**的父目录 fd；验证它的路径/inode 归属后，通过已有的 `openSealedArchiveAtPinnedParent` 只在该目录 inode 中打开源密文。独立公开 `VerifyInertArchive` 仍自行固定一个父 fd，而 `PreflightInertArchive` 则将此前已经固定的同一父 fd 传入**第一次** HMAC 验证，并继续用于清单与 SQLite 重读；不新增公开参数、持久状态、密钥暴露、恢复权限或格式更改。既有 inode/权限/UID/单硬链接、完整 SHA/HMAC、SQLite 逻辑校验、资源大小和超时限制保持。
 - Linux 回归：真实有效加密归档验证健康独立 Verify 与 Preflight 一致、调用方持有的父目录 fd 不被 Verify 关闭；在父 inode 已固定、初轮 HMAC 开始前将原父目录换名，用另一 0700 私有目录或 symlink 替换并放入**完全相同的有效密文**，须拒绝且返回空报告，原件、副本、哨兵不变；再将**同一原始加密文件 inode**移入新父目录的原标准路径，亦须拒绝。将其他目录 fd（哪怕含相同密文）交给内部 Verify 必须拒绝，且不得关闭调用方 fd。
 - **限制**：此增强只对一次 Preflight 固定整个来源父 inode，仍无法原子防御同 UID 不合作进程在原父 inode **内部**重排条目，也没有跨重启来源身份证明；ADR 0204 的 Stage 来源文件 fd 生命周期是独立闭包。Issue #59 根因继续 OPEN，ADR 0203 是诊断而非已验证修复；实际恢复、自动 GC、T15/T23/T20/T25、CN 离线许可资产与发行门槛不开放。维持 Linux 普通用户无 TUN、Karing 多层五级分流不含订阅/ISP 规则来源、批准 Core pin 和稳定 main 不变。待前置 PR #84 合并后，重新对齐开发主线并在最终精确 head 普通 CI、Go Race 四片、Managed Core、原生 Linux amd64/arm64 全绿后方可合并。
+
+
+### 2026-11-04 — M5 ADR 0206 / 在恢复候选三遍认证中复用已持有的源及目录租约
+
+- ADR 0204 已在 Stage 保留源加密归档原父目录 fd 与原文件 fd；ADR 0205 让单次 Preflight 的 HMAC/资源、完整密文清单与 SQLite 三遍认证共用一个目录 fd。但 Stage 首次来源认证、末次候选认证、Reopen 及持锁 Verify 仍通过独立的 Preflight 重新按绝对路径打开父目录，可能在已持原目录/文件 inode 的前提下短暂重新选择另一个同名目录作为认证来源。
+- 新增严格包内 `preflightInertArchiveAtParent`，借用调用方已有的当前 UID/0700/路径一致 inode 目录 fd，拒绝关闭、不符或替代的目录，不关闭调用方描述符，也不重开父目录。Stage 首次完整来源认证借用原源父 fd 并继续校验其原文件 inode；Stage 末次候选验证、Reopen 和 Verify 使用已持独占 flock 的候选子目录 fd。独立公开 Preflight 仍自行固定/关闭目录 fd，完整 HMAC/SHA/资源/EOF、三遍重读、SQLite/schema/profile 验证和恢复禁用收据不变。
+- Linux 回归以真实加密归档检验正常 Stage、Verify、Close/Reopen、借用与独立预检收据一致且不关闭原 fd；新增源父目录和源文件 fd 固定后/初轮 Preflight 前的测试阶段，替换源父路径为含相同有效密文的私有目录或 symlink 必须拒绝且无候选生成；在借用目录准入后/HMAC 之前将已锁候选 scope 换成另一 0700 私有目录或 symlink，其中密文**逐字节相同且合法**、另有哨兵，必须返回空报告且保持两份密文和原持锁 fd；借用另一个持有相同密文但原父 inode 不符的 fd 必须拒绝且不能关闭 fd。
+- **边界**：不构成针对同 UID 非协作进程在原父目录 inode **内部**更换子目录项的原子 compare-and-open；多次读密文仍以 `openat` 分别打开叶子，Issue #59 偶发 create_scope 拒绝仍未定位根因。真实恢复、自动候选 GC、T15/T23、T20/T25、CN 离线规则许可与正式发行仍关闭。坚持 Linux 普通用户无 TUN、Karing 五层分流剔除订阅/ISP 来源、批准 Core pin、稳定 main 不动。必须待 ADR 0205 合并并在本 PR 最终精确 head 普通 CI、Race 4/4、Managed Core、原生 Linux amd64/arm64 全绿后才合并。

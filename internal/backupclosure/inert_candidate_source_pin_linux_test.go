@@ -17,7 +17,7 @@ import (
 // the exact SAME valid ciphertext. Stage must keep reading the original
 // parent and child fds, but fail closed rather than accept new custody.
 func TestInertStageRefusesCopiedSourceInReplacedParent(t *testing.T) {
-	for _, phase := range []string{"cipher_copy", "cipher_target_fd_opened"} {
+	for _, phase := range []string{"source_inode_pinned", "cipher_copy", "cipher_target_fd_opened"} {
 		for _, replacement := range []string{"directory", "symlink"} {
 			t.Run(phase+"_"+replacement, func(t *testing.T) {
 				f := newFixture(t)

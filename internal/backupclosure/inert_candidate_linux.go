@@ -664,7 +664,12 @@ func stageInertRestoreCandidate(
 		sourceIdentity, sourceIdentity.Size()) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	report, err := PreflightInertArchive(ctx, sourceArchive, key, nil)
+	// Test-only checkpoint after the ORIGINAL source parent and child are
+	// pinned, before any complete Preflight read may begin.
+	if !checkpoint("source_inode_pinned") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	report, err := preflightInertArchiveAtParent(ctx, sourceArchive, key, nil, sourceParent)
 	if err != nil || !report.SQLiteLogicalVerified || !report.SchemaCatalogVerified ||
 		report.RestoreReady || report.RestoreSupported ||
 		!validLowerSHA(report.ArchiveSHA256) || report.ArchiveBytes <= 0 ||
@@ -813,7 +818,7 @@ func stageInertRestoreCandidate(
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	var checked InertArchivePreflight
-	checked, err = PreflightInertArchive(ctx, candidate.archive, key, nil)
+	checked, err = preflightInertArchiveAtParent(ctx, candidate.archive, key, nil, candidate.dir)
 	if err != nil || !sameInertPreflightEvidence(report, checked) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
@@ -1022,7 +1027,7 @@ func reopenInertRestoreCandidateAtParentProbed(
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	var report InertArchivePreflight
-	report, err = PreflightInertArchive(ctx, candidate.archive, key, nil)
+	report, err = preflightInertArchiveAtParent(ctx, candidate.archive, key, nil, candidate.dir)
 	if err != nil || !report.SchemaCatalogVerified ||
 		!report.SQLiteLogicalVerified || report.RestoreReady ||
 		report.RestoreSupported {
@@ -1069,7 +1074,7 @@ func (c *InertRestoreCandidate) Verify(
 	if err != nil {
 		return none, ErrUnsafeInertRestoreCandidate
 	}
-	report, err := PreflightInertArchive(ctx, c.archive, key, nil)
+	report, err := preflightInertArchiveAtParent(ctx, c.archive, key, nil, c.dir)
 	if err != nil || !sameInertPreflightEvidence(c.receipt, report) {
 		return none, ErrUnsafeInertRestoreCandidate
 	}
