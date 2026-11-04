@@ -2066,3 +2066,11 @@ docs/
 - 将现有首轮完整 HMAC/资源/EOF 校验提取出仅包内的可选文件 fd 保留变体：只有全程成功时才将已认证源文件 fd 交由 Preflight 持有，任何失败立即关闭、不返回有效租约；普通公开 Verify 继续按原语义关闭自身 fd。预检把这个原文件 fd 持有到清单和 SQLite 的独立重读、完整内存 SQLite 逻辑验证及最终报告复核结束，且所有返回路径都关闭。每次新叶子 fd 均须与初轮原 fd 有相同 inode、当前路径、UID/0600/单硬链接、大小/权限/mtime 及原父目录 inode；各轮完整 SHA、HMAC、资源、SQLite 验证与恢复禁用收据不变。
 - Linux 端到端回归在 HMAC 后及清单后分别将**原父目录内**的加密文件重命名，以另一份**逐字节相同且有效**的 0600 密文 inode 替代原名；独立与借用父目录 Preflight 都应返回空报告并失败关闭，原密文、替代密文、源 inode 和无关哨兵保持不变。另覆盖成功认证才转移原文件 fd、错误密钥不能泄漏 fd 或关闭调用方父目录 fd。
 - **限制**：多轮 `openat` 与身份复核仍不是针对非协作同 UID 进程在原目录 inode 内高速切换目录项的原子 compare-and-open；不证明 Issue #59 的 create_scope 根因解决。真实恢复、候选自动 GC、T15/T23、T20/T25、CN 离线规则资源许可及正式发行门槛保持关闭。坚持 Linux 普通用户无 TUN、Karing 五层分流不含订阅/ISP 来源、批准 Core pin 和 stable main 不动。依赖 PR #86 先通过完整 CI 合并，本项须再按最终精确 head 执行普通 CI、Race 4/4、Managed Core 和原生 Linux amd64/arm64 Provenance 全通过后才准合并。
+
+
+### 2026-11-04 — M5 ADR 0208 / Stage 初轮 HMAC 认证绑定提前持有的源密文文件 inode
+
+- ADR 0204 已在 Stage 预检前固定原始源父目录 fd 和原密文文件 fd，ADR 0206 使 Stage Preflight 借用已有父目录 inode，ADR 0207 使 Preflight 首轮完整 HMAC、后续密文清单与内存 SQLite 重读都绑定同一个已认证文件 inode。但首轮 HMAC 仍会独立 `openat` 打开同名密文叶子，尚未在**读入第一个密文字节前**与 Stage 在预检前固定的原始源文件 fd 核对 inode；同 UID 非协作进程可在原私有父目录内替换成另一份**逐字节相同且有效**的独立文件，让初轮读取错误来源，尽管 Stage 末尾身份检查可以拒绝。
+- 增加仅包内 `preflightInertArchiveAtParentExpectedFile`，Stage 首次预检同时借用原有父 fd 与独立的原密文 fd；首轮 `verifyInertArchiveAtParentExpectedFileProbed` 在打开新读 fd 后、真正读取 AES-CTR/HMAC 数据前，检查它与 Stage 原文件 fd 的同 inode、当前路径、UID/0600/单硬链接、大小/mode/mtime、原父目录身份，完整 HMAC 与 EOF 后再复核。成功的初轮读 fd 继续按 ADR 0207 交给后续 Preflight 完整三轮认证；Stage 原 fd 仍由 Stage 持有，不能关闭、读取、改变 offset。独立公开 Verify/Preflight、候选 Stage 末次验证、Reopen/Verify 维持现有 API 和读取行为，恢复门槛为 false。
+- Linux 真实有效密文回归：提前固定原文件后、初轮 HMAC 前仅在原 0700 私有父目录**内部**替换密文同名叶子为另一 0600 inode（密文字节、HMAC 全相同），新内部 Preflight 必须返回空报告并失败关闭，原始和替换密文、inode、外部哨兵保持；同时独立 Preflight 仍可认证替代副本，证明拒绝来自 inode 身份而非 SHA/密钥。正常借用必须与独立收据完全相同、不改变原 fd offset；传入其他有效 fd 必须拒绝，错误校验不能返回新的文件 fd 或关闭调用方租约。Stage 源已固定时的同目录文件替换必须拒绝，且不得预留或落盘候选。
+- **限制**：不是对原目录 inode 内恶意目录项变化的原子 compare-and-open，也不能跨进程持久证明来源，Issue #59 create_scope 间歇性拒绝根因继续开放。正式 restore、候选自动 GC、T15/T23、T20/T25、CN 离线许可规则资源及发行门槛保持关闭；保留 Linux 无 TUN、Karing 五层分流去除订阅/ISP 来源、已批准 Core 与 stable main。不经 PR #87 合并及本 PR 最终精确 head 普通 CI、Race 4/4、Managed Core、原生 linux-amd64/arm64 全绿不得合并。
