@@ -1308,11 +1308,53 @@ func (c *InertRestoreCandidate) discardLockedProbed(
 		requireFile, nil, false, beforeDirectoryUnlink)
 }
 
-// This common cleanup keeps the user-invoked explicit Discard semantics;
-// Stage's additional ownership check never authorizes deleting foreign
-// encrypted bytes based on filename or ciphertext SHA alone.
+// Explicit Discard keeps the exact file inode inspected for deletion open
+// until immediately before unlinkat, rather than trusting the same filename
+// after an uncooperative same-UID actor has changed that directory entry.
+func sameInspectedInertCipherForDiscard(
+	c *InertRestoreCandidate, inspected *os.File, first os.FileInfo,
+) bool {
+	if c == nil || c.dir == nil || inspected == nil || first == nil ||
+		inspected.Name() != c.archive || !validSealedArchivePath(c.archive) {
+		return false
+	}
+	atFD, err := inspected.Stat()
+	if err != nil || !os.SameFile(first, atFD) ||
+		atFD.Size() != first.Size() || atFD.Mode() != first.Mode() ||
+		!atFD.ModTime().Equal(first.ModTime()) ||
+		verifySealedFile(inspected, c.archive, first, first.Size(), true) != nil ||
+		!sameInertCandidateParentIdentity(c.parent, c.parentIdentity) {
+		return false
+	}
+	locked, err := verifyCandidateDirLock(c.directory, c.dir)
+	return err == nil && os.SameFile(locked, c.directoryIdentity)
+}
+
+// The private checkpoint runs after the exact cipher fd is pinned and the
+// original parent is pinned, but BEFORE an irreversible ciphertext unlink.
+// All production Discard paths pass nil; no external hook is exposed.
+func (c *InertRestoreCandidate) discardLockedBeforeCipherUnlinkProbed(
+	requireFile bool, beforeCipherUnlink func(),
+) error {
+	return c.discardLockedWithLeafProbe(
+		requireFile, nil, false, beforeCipherUnlink, nil)
+}
+
+// Preserve the internal caller contract used by failed-Stage cleanup and
+// the existing post-ciphertext, pre-directory-unlink regression tests.
 func (c *InertRestoreCandidate) discardLockedWithStageOwnership(
 	requireFile bool, createdTarget *os.File, stageOnly bool, beforeDirectoryUnlink func(),
+) error {
+	return c.discardLockedWithLeafProbe(
+		requireFile, createdTarget, stageOnly, nil, beforeDirectoryUnlink)
+}
+
+// User-invoked Discard and failed-Stage cleanup share inode-anchored parent
+// deletion. Explicit Discard borrows the exact inspected file descriptor;
+// Stage instead validates its independently held O_EXCL-created file fd.
+func (c *InertRestoreCandidate) discardLockedWithLeafProbe(
+	requireFile bool, createdTarget *os.File, stageOnly bool,
+	beforeCipherUnlink, beforeDirectoryUnlink func(),
 ) error {
 	if c == nil || c.dir == nil {
 		return ErrUnsafeInertRestoreCandidate
@@ -1328,6 +1370,18 @@ func (c *InertRestoreCandidate) discardLockedWithStageOwnership(
 	if stageOnly && !sameStageCreatedCipherForCleanup(c, createdTarget, file) {
 		return ErrUnsafeInertRestoreCandidate
 	}
+	// The inventory inspection only returns FileInfo. Borrow a new exact
+	// read-only fd from the already locked child inode, then compare to the
+	// inspected snapshot. Never follow a substitute pathname. The fd remains
+	// owned by this operation until every deletion is finished.
+	var inspected *os.File
+	if !stageOnly && file != nil {
+		inspected, err = pinInspectedInertCandidateCipher(c, file)
+		if err != nil {
+			return ErrUnsafeInertRestoreCandidate
+		}
+		defer inspected.Close()
+	}
 	// Pin the admitted parent before deleting even the ciphertext. Opening
 	// by pathname is read-only; its inode must match the parent captured
 	// at child-lease admission before any irreversible operation.
@@ -1337,10 +1391,18 @@ func (c *InertRestoreCandidate) discardLockedWithStageOwnership(
 	}
 	defer parent.Close()
 	if file != nil {
+		if beforeCipherUnlink != nil {
+			beforeCipherUnlink()
+		}
 		// Re-evaluate exact file custody immediately before irreversible
-		// fd-relative unlink. This narrows (but cannot atomically eliminate)
-		// hostile same-UID rename races within the original directory inode.
-		if stageOnly && !sameStageCreatedCipherForCleanup(c, createdTarget, file) {
+		// fd-relative unlink. Explicit Discard uses the inode inspected on
+		// entry; failed Stage uses only its own created target. This is not
+		// atomic against continuously racing same-UID directory swaps.
+		if stageOnly {
+			if !sameStageCreatedCipherForCleanup(c, createdTarget, file) {
+				return ErrUnsafeInertRestoreCandidate
+			}
+		} else if !sameInspectedInertCipherForDiscard(c, inspected, file) {
 			return ErrUnsafeInertRestoreCandidate
 		}
 		// Never remove unknown sibling files or follow a ciphertext symlink.
