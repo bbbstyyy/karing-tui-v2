@@ -87,6 +87,17 @@ func preflightInertArchiveProbed(
 	ctx context.Context, path string, key [32]byte, current *Closure,
 	afterAuth, afterInventory func(),
 ) (InertArchivePreflight, error) {
+	return preflightInertArchiveBeforeVerifyProbed(
+		ctx, path, key, current, nil, afterAuth, afterInventory)
+}
+
+// This package-private pre-Verify checkpoint runs AFTER the parent inode is
+// captured and BEFORE any authenticated HMAC bytes are read. Production and
+// existing phase tests pass nil; no external caller can install a callback.
+func preflightInertArchiveBeforeVerifyProbed(
+	ctx context.Context, path string, key [32]byte, current *Closure,
+	beforeVerify, afterAuth, afterInventory func(),
+) (InertArchivePreflight, error) {
 	var empty InertArchivePreflight
 	if ctx == nil {
 		return empty, ErrUnsafeSealedArchive
@@ -106,9 +117,13 @@ func preflightInertArchiveProbed(
 		return empty, ErrUnsafeSealedArchive
 	}
 	defer parent.Close()
-	// VerifyInertArchive checks the full HMAC, SHA-256 of every decrypted
-	// resource, exact record lengths and trailing bytes before returning.
-	receipt, err := VerifyInertArchive(ctx, path, key)
+	// The first complete HMAC + decrypted resource pass MUST also use
+	// this same parent fd. Do not independently reopen the canonical
+	// parent path before the inventory and SQLite replay passes.
+	if beforeVerify != nil {
+		beforeVerify()
+	}
+	receipt, err := verifyInertArchiveAtParentProbed(ctx, path, key, parent, nil, nil)
 	if err != nil {
 		return empty, err
 	}
