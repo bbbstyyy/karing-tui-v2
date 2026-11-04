@@ -136,6 +136,26 @@ func preflightInertArchiveAtParentProbed(
 	ctx context.Context, path string, key [32]byte, current *Closure, parent *os.File,
 	beforeVerify, afterAuth, afterInventory func(),
 ) (InertArchivePreflight, error) {
+	return preflightInertArchiveAtParentExpectedFileProbed(
+		ctx, path, key, current, parent, nil, beforeVerify, afterAuth, afterInventory)
+}
+
+// Stage's original source file descriptor is a separate, caller-owned inode
+// pin from ADR 0204. Borrow it across initial HMAC and all replays without
+// transferring ownership or perturbing its read offset.
+func preflightInertArchiveAtParentExpectedFile(
+	ctx context.Context, path string, key [32]byte, current *Closure,
+	parent, expectedFile *os.File,
+) (InertArchivePreflight, error) {
+	return preflightInertArchiveAtParentExpectedFileProbed(
+		ctx, path, key, current, parent, expectedFile, nil, nil, nil)
+}
+
+// Private hooks are deterministic fault-injection points, not public APIs.
+func preflightInertArchiveAtParentExpectedFileProbed(
+	ctx context.Context, path string, key [32]byte, current *Closure,
+	parent, expectedFile *os.File, beforeVerify, afterAuth, afterInventory func(),
+) (InertArchivePreflight, error) {
 	var empty InertArchivePreflight
 	if ctx == nil || parent == nil || !validSealedArchivePath(path) ||
 		parent.Name() != filepath.Dir(path) ||
@@ -154,8 +174,8 @@ func preflightInertArchiveAtParentProbed(
 		beforeVerify()
 	}
 	var authenticatedFile *os.File
-	receipt, err := verifyInertArchiveAtParentPinnedFileProbed(
-		ctx, path, key, parent, &authenticatedFile, nil, nil)
+	receipt, err := verifyInertArchiveAtParentExpectedFileProbed(
+		ctx, path, key, parent, expectedFile, &authenticatedFile, nil, nil)
 	if err != nil {
 		return empty, err
 	}
@@ -163,6 +183,10 @@ func preflightInertArchiveAtParentProbed(
 		return empty, ErrUnsafeSealedArchive
 	}
 	defer authenticatedFile.Close()
+	if expectedFile != nil && !samePinnedSealedPreflightFile(
+		path, parent, expectedFile, authenticatedFile, receipt.Bytes) {
+		return empty, ErrUnsafeSealedArchive
+	}
 	if afterAuth != nil {
 		afterAuth()
 	}
@@ -231,7 +255,9 @@ func preflightInertArchiveAtParentProbed(
 		report.Generations = compareGenerationDigests(inventory.Generations, current.Inventory.Generations)
 		report.RuleSets = compareDigestCounts(inventory.RuleSets, current.Inventory.RuleSets)
 	}
-	if !samePinnedSealedPreflightFile(path, parent, authenticatedFile, authenticatedFile, receipt.Bytes) {
+	if !samePinnedSealedPreflightFile(path, parent, authenticatedFile, authenticatedFile, receipt.Bytes) ||
+		(expectedFile != nil && !samePinnedSealedPreflightFile(
+			path, parent, expectedFile, authenticatedFile, receipt.Bytes)) {
 		return empty, ErrUnsafeSealedArchive
 	}
 	return report, nil

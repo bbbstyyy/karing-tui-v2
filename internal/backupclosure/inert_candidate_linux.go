@@ -669,7 +669,8 @@ func stageInertRestoreCandidate(
 	if !checkpoint("source_inode_pinned") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	report, err := preflightInertArchiveAtParent(ctx, sourceArchive, key, nil, sourceParent)
+	report, err := preflightInertArchiveAtParentExpectedFile(
+		ctx, sourceArchive, key, nil, sourceParent, sourceFile)
 	if err != nil || !report.SQLiteLogicalVerified || !report.SchemaCatalogVerified ||
 		report.RestoreReady || report.RestoreSupported ||
 		!validLowerSHA(report.ArchiveSHA256) || report.ArchiveBytes <= 0 ||

@@ -272,6 +272,18 @@ func verifyInertArchiveAtParentProbed(
 func verifyInertArchiveAtParentPinnedFileProbed(
 	ctx context.Context, path string, key [32]byte, parent *os.File,
 	retained **os.File, beforeFileOpen, afterAuthentication func(),
+) (SealedArchiveReceipt, error) {
+	return verifyInertArchiveAtParentExpectedFileProbed(
+		ctx, path, key, parent, nil, retained, beforeFileOpen, afterAuthentication)
+}
+
+// Stage already pins the original source leaf before preflight. Require that
+// original exact inode before reading even the first encrypted HMAC byte.
+// The separately opened verification fd is still retained on success to
+// bind the subsequent inventory and SQLite passes, never shared for seeking.
+func verifyInertArchiveAtParentExpectedFileProbed(
+	ctx context.Context, path string, key [32]byte, parent, expectedFile *os.File,
+	retained **os.File, beforeFileOpen, afterAuthentication func(),
 ) (receipt SealedArchiveReceipt, err error) {
 	if retained != nil {
 		*retained = nil
@@ -305,9 +317,12 @@ func verifyInertArchiveAtParentPinnedFileProbed(
 	info, err := file.Stat()
 	if err != nil || verifySealedFile(file, path, info, 0, false) != nil ||
 		info.Size() <= int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes+4) ||
-		info.Size() > MaxSealedArchiveBytes {
+		info.Size() > MaxSealedArchiveBytes ||
+		(expectedFile != nil && !samePinnedSealedPreflightFile(
+			path, parent, expectedFile, file, info.Size())) {
 		return receipt, ErrUnsafeSealedArchive
 	}
+	// The expected-file check above must precede ALL ciphertext reads.
 	archiveHash := sha256.New()
 	reader := io.TeeReader(file, archiveHash)
 	header := make([]byte, sealedArchiveHeaderBytes)
@@ -384,6 +399,8 @@ func verifyInertArchiveAtParentPinnedFileProbed(
 		!info.ModTime().Equal(after.ModTime()) ||
 		verifySealedFile(file, path, info, info.Size(), true) != nil ||
 		!sameLeasedSealedArchiveParent(parentPath, parent) ||
+		(expectedFile != nil && !samePinnedSealedPreflightFile(
+			path, parent, expectedFile, file, info.Size())) ||
 		ctx.Err() != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
