@@ -2056,5 +2056,5 @@ docs/
 
 - ADR 0204 已在 Stage 保留源加密归档原父目录 fd 与原文件 fd；ADR 0205 让单次 Preflight 的 HMAC/资源、完整密文清单与 SQLite 三遍认证共用一个目录 fd。但 Stage 首次来源认证、末次候选认证、Reopen 及持锁 Verify 仍通过独立的 Preflight 重新按绝对路径打开父目录，可能在已持原目录/文件 inode 的前提下短暂重新选择另一个同名目录作为认证来源。
 - 新增严格包内 `preflightInertArchiveAtParent`，借用调用方已有的当前 UID/0700/路径一致 inode 目录 fd，拒绝关闭、不符或替代的目录，不关闭调用方描述符，也不重开父目录。Stage 首次完整来源认证借用原源父 fd 并继续校验其原文件 inode；Stage 末次候选验证、Reopen 和 Verify 使用已持独占 flock 的候选子目录 fd。独立公开 Preflight 仍自行固定/关闭目录 fd，完整 HMAC/SHA/资源/EOF、三遍重读、SQLite/schema/profile 验证和恢复禁用收据不变。
-- Linux 回归以真实加密归档检验正常 Stage、Verify、Close/Reopen、借用与独立预检收据一致且不关闭原 fd；在借用目录准入后/HMAC 之前将已锁候选 scope 换成另一 0700 私有目录或 symlink，其中密文**逐字节相同且合法**、另有哨兵，必须返回空报告且保持两份密文和原持锁 fd；借用另一个持有相同密文但原父 inode 不符的 fd 必须拒绝且不能关闭 fd。
+- Linux 回归以真实加密归档检验正常 Stage、Verify、Close/Reopen、借用与独立预检收据一致且不关闭原 fd；新增源父目录和源文件 fd 固定后/初轮 Preflight 前的测试阶段，替换源父路径为含相同有效密文的私有目录或 symlink 必须拒绝且无候选生成；在借用目录准入后/HMAC 之前将已锁候选 scope 换成另一 0700 私有目录或 symlink，其中密文**逐字节相同且合法**、另有哨兵，必须返回空报告且保持两份密文和原持锁 fd；借用另一个持有相同密文但原父 inode 不符的 fd 必须拒绝且不能关闭 fd。
 - **边界**：不构成针对同 UID 非协作进程在原父目录 inode **内部**更换子目录项的原子 compare-and-open；多次读密文仍以 `openat` 分别打开叶子，Issue #59 偶发 create_scope 拒绝仍未定位根因。真实恢复、自动候选 GC、T15/T23、T20/T25、CN 离线规则许可与正式发行仍关闭。坚持 Linux 普通用户无 TUN、Karing 五层分流剔除订阅/ISP 来源、批准 Core pin、稳定 main 不动。必须待 ADR 0205 合并并在本 PR 最终精确 head 普通 CI、Race 4/4、Managed Core、原生 Linux amd64/arm64 全绿后才合并。

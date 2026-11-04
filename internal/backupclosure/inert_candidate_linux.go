@@ -664,6 +664,11 @@ func stageInertRestoreCandidate(
 		sourceIdentity, sourceIdentity.Size()) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// Test-only checkpoint after the ORIGINAL source parent and child are
+	// pinned, before any complete Preflight read may begin.
+	if !checkpoint("source_inode_pinned") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	report, err := preflightInertArchiveAtParent(ctx, sourceArchive, key, nil, sourceParent)
 	if err != nil || !report.SQLiteLogicalVerified || !report.SchemaCatalogVerified ||
 		report.RestoreReady || report.RestoreSupported ||

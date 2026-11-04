@@ -29,6 +29,10 @@ plaintext output, automatic retry, restore or cleanup permission is created.
 
 ## Linux regression and safety
 
+- A test-only Stage checkpoint immediately after pinning source parent and
+  file fds (before its first full Preflight) swaps the original source parent
+  for a private directory or symlink containing byte-identical ciphertext;
+  Stage must fail closed with no candidate created or foreign-file changes.
 - Full encrypted Stage -> borrowed Preflight -> Verify -> Close -> Reopen ->
   Verify remain healthy with identical read-only reports, and original
   caller-owned directory descriptors remain open.
