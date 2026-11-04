@@ -234,6 +234,32 @@ func VerifyInertArchive(
 func verifyInertArchiveProbed(
 	ctx context.Context, path string, key [32]byte,
 	beforeFileOpen, afterAuthentication func(),
+) (SealedArchiveReceipt, error) {
+	if ctx == nil || key == ([32]byte{}) || !validSealedArchivePath(path) {
+		return SealedArchiveReceipt{}, ErrUnsafeSealedArchive
+	}
+	if err := ctx.Err(); err != nil {
+		return SealedArchiveReceipt{}, err
+	}
+	// Standalone Verify owns its private, non-flocked parent fd. The
+	// multi-pass Preflight instead supplies its ALREADY pinned parent
+	// through verifyInertArchiveAtParentProbed, so the HMAC read cannot
+	// silently select a different parent from the later replay reads.
+	parent, err := pinSealedArchiveReadParent(path)
+	if err != nil {
+		return SealedArchiveReceipt{}, ErrUnsafeSealedArchive
+	}
+	defer parent.Close()
+	return verifyInertArchiveAtParentProbed(
+		ctx, path, key, parent, beforeFileOpen, afterAuthentication)
+}
+
+// verifyInertArchiveAtParentProbed performs the entire authenticated read
+// relative to its CALLER-OWNED parent fd. Do not close or replace that fd:
+// Preflight needs the exact same inode for its inventory and SQLite passes.
+func verifyInertArchiveAtParentProbed(
+	ctx context.Context, path string, key [32]byte, parent *os.File,
+	beforeFileOpen, afterAuthentication func(),
 ) (receipt SealedArchiveReceipt, err error) {
 	if ctx == nil || key == ([32]byte{}) || !validSealedArchivePath(path) {
 		return receipt, ErrUnsafeSealedArchive
@@ -244,44 +270,18 @@ func verifyInertArchiveProbed(
 	ctx, cancel := context.WithTimeout(ctx, sealedArchiveTimeout)
 	defer cancel()
 	parentPath := filepath.Dir(path)
-	if verifySealedArchiveParent(parentPath) != nil {
-		return receipt, ErrUnsafeSealedArchive
-	}
-	// Pin the authenticated archive's parent inode throughout the read,
-	// without acquiring or extending an exclusive writer flock.
-	parentFD, err := syscall.Open(parentPath,
-		syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
-	if err != nil {
-		return receipt, ErrUnsafeSealedArchive
-	}
-	parent := os.NewFile(uintptr(parentFD), parentPath)
-	if parent == nil {
-		_ = syscall.Close(parentFD)
-		return receipt, ErrUnsafeSealedArchive
-	}
-	defer parent.Close()
-	if !sameLeasedSealedArchiveParent(parentPath, parent) {
+	if parent == nil || parent.Name() != parentPath ||
+		!sameLeasedSealedArchiveParent(parentPath, parent) {
 		return receipt, ErrUnsafeSealedArchive
 	}
 	if beforeFileOpen != nil {
 		beforeFileOpen()
 	}
-	// Resolve the archive inside the pinned original parent inode. A
-	// substituted private directory at parentPath can never supply bytes.
-	fd, err := syscall.Openat(int(parent.Fd()), filepath.Base(path),
-		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	file, err := openSealedArchiveAtPinnedParent(path, parent)
 	if err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
-	file := os.NewFile(uintptr(fd), path)
-	if file == nil {
-		_ = syscall.Close(fd)
-		return receipt, ErrUnsafeSealedArchive
-	}
 	defer file.Close()
-	if !sameLeasedSealedArchiveParent(parentPath, parent) {
-		return receipt, ErrUnsafeSealedArchive
-	}
 	info, err := file.Stat()
 	if err != nil || verifySealedFile(file, path, info, 0, false) != nil ||
 		info.Size() <= int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes+4) ||
