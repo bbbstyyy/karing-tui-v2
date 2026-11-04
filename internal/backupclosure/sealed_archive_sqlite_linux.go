@@ -50,6 +50,15 @@ func readAuthenticatedSQLiteBytes(
 func readAuthenticatedSQLiteBytesAtParent(
 	ctx context.Context, path string, key [32]byte,
 	receipt SealedArchiveReceipt, inventory Inventory, parent *os.File,
+) ([]byte, error) {
+	return readAuthenticatedSQLiteBytesAtParentPinned(ctx, path, key, receipt, inventory, parent, nil)
+}
+
+// The full SQLite replay is rejected if the leaf inode differs from the
+// original successful HMAC pass, even for identical valid ciphertext.
+func readAuthenticatedSQLiteBytesAtParentPinned(
+	ctx context.Context, path string, key [32]byte,
+	receipt SealedArchiveReceipt, inventory Inventory, parent, authenticated *os.File,
 ) (result []byte, err error) {
 	if ctx == nil || !validSealedArchivePath(path) || key == ([32]byte{}) ||
 		inventory.DatabaseBytes < 512 ||
@@ -69,7 +78,9 @@ func readAuthenticatedSQLiteBytesAtParent(
 	defer file.Close()
 	before, err := file.Stat()
 	if err != nil || before.Size() != receipt.Bytes ||
-		verifySealedFile(file, path, before, receipt.Bytes, true) != nil {
+		verifySealedFile(file, path, before, receipt.Bytes, true) != nil ||
+		(authenticated != nil &&
+			!samePinnedSealedPreflightFile(path, parent, authenticated, file, receipt.Bytes)) {
 		return nil, ErrArchiveLogicalVerification
 	}
 	sha := sha256.New()
@@ -142,7 +153,9 @@ func readAuthenticatedSQLiteBytesAtParent(
 		before.Size() != after.Size() || before.Mode() != after.Mode() ||
 		!before.ModTime().Equal(after.ModTime()) ||
 		verifySealedFile(file, path, before, receipt.Bytes, true) != nil ||
-		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) ||
+		(authenticated != nil &&
+			!samePinnedSealedPreflightFile(path, parent, authenticated, file, receipt.Bytes)) {
 		return nil, ErrArchiveLogicalVerification
 	}
 	return database, nil

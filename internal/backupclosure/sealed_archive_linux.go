@@ -260,7 +260,22 @@ func verifyInertArchiveProbed(
 func verifyInertArchiveAtParentProbed(
 	ctx context.Context, path string, key [32]byte, parent *os.File,
 	beforeFileOpen, afterAuthentication func(),
+) (SealedArchiveReceipt, error) {
+	return verifyInertArchiveAtParentPinnedFileProbed(
+		ctx, path, key, parent, nil, beforeFileOpen, afterAuthentication)
+}
+
+// This private variant may return the *exact verified ciphertext file fd*
+// to a full multi-pass Preflight. Ownership transfers only on successful
+// HMAC/EOF verification; every error closes the opened descriptor. Callers
+// must close any returned pin after the final SQLite logical checks.
+func verifyInertArchiveAtParentPinnedFileProbed(
+	ctx context.Context, path string, key [32]byte, parent *os.File,
+	retained **os.File, beforeFileOpen, afterAuthentication func(),
 ) (receipt SealedArchiveReceipt, err error) {
+	if retained != nil {
+		*retained = nil
+	}
 	if ctx == nil || key == ([32]byte{}) || !validSealedArchivePath(path) {
 		return receipt, ErrUnsafeSealedArchive
 	}
@@ -281,7 +296,12 @@ func verifyInertArchiveAtParentProbed(
 	if err != nil {
 		return receipt, ErrUnsafeSealedArchive
 	}
-	defer file.Close()
+	keepFile := false
+	defer func() {
+		if !keepFile {
+			_ = file.Close()
+		}
+	}()
 	info, err := file.Stat()
 	if err != nil || verifySealedFile(file, path, info, 0, false) != nil ||
 		info.Size() <= int64(sealedArchiveHeaderBytes+sealedArchiveTagBytes+4) ||
@@ -366,6 +386,10 @@ func verifyInertArchiveAtParentProbed(
 		!sameLeasedSealedArchiveParent(parentPath, parent) ||
 		ctx.Err() != nil {
 		return receipt, ErrUnsafeSealedArchive
+	}
+	if retained != nil {
+		*retained = file
+		keepFile = true
 	}
 	return SealedArchiveReceipt{
 		ArchiveSHA256:   hex.EncodeToString(archiveHash.Sum(nil)),

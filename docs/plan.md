@@ -2058,3 +2058,11 @@ docs/
 - 新增严格包内 `preflightInertArchiveAtParent`，借用调用方已有的当前 UID/0700/路径一致 inode 目录 fd，拒绝关闭、不符或替代的目录，不关闭调用方描述符，也不重开父目录。Stage 首次完整来源认证借用原源父 fd 并继续校验其原文件 inode；Stage 末次候选验证、Reopen 和 Verify 使用已持独占 flock 的候选子目录 fd。独立公开 Preflight 仍自行固定/关闭目录 fd，完整 HMAC/SHA/资源/EOF、三遍重读、SQLite/schema/profile 验证和恢复禁用收据不变。
 - Linux 回归以真实加密归档检验正常 Stage、Verify、Close/Reopen、借用与独立预检收据一致且不关闭原 fd；新增源父目录和源文件 fd 固定后/初轮 Preflight 前的测试阶段，替换源父路径为含相同有效密文的私有目录或 symlink 必须拒绝且无候选生成；在借用目录准入后/HMAC 之前将已锁候选 scope 换成另一 0700 私有目录或 symlink，其中密文**逐字节相同且合法**、另有哨兵，必须返回空报告且保持两份密文和原持锁 fd；借用另一个持有相同密文但原父 inode 不符的 fd 必须拒绝且不能关闭 fd。
 - **边界**：不构成针对同 UID 非协作进程在原父目录 inode **内部**更换子目录项的原子 compare-and-open；多次读密文仍以 `openat` 分别打开叶子，Issue #59 偶发 create_scope 拒绝仍未定位根因。真实恢复、自动候选 GC、T15/T23、T20/T25、CN 离线规则许可与正式发行仍关闭。坚持 Linux 普通用户无 TUN、Karing 五层分流剔除订阅/ISP 来源、批准 Core pin、稳定 main 不动。必须待 ADR 0205 合并并在本 PR 最终精确 head 普通 CI、Race 4/4、Managed Core、原生 Linux amd64/arm64 全绿后才合并。
+
+
+### 2026-11-04 — M5 ADR 0207 / 三遍加密归档预检保持首轮 HMAC 文件 inode 身份
+
+- ADR 0205/0206 已将完整 HMAC、加密清单、内存 SQLite 三轮读取绑定原父目录 fd，Stage/Reopen/Verify 也借用已有源/候选目录租约；但三轮中每次 `openat` 打开归档叶子时可得到不同 inode。非协作同 UID 进程可在原父目录 inode **内部**把 0600 加密原件改名，并将另一个**字节完全相同、SHA/HMAC 都合法**的密文 inode 移到同名路径；仅逐轮校验 SHA 与目录身份无法证明来源文件一直相同。
+- 将现有首轮完整 HMAC/资源/EOF 校验提取出仅包内的可选文件 fd 保留变体：只有全程成功时才将已认证源文件 fd 交由 Preflight 持有，任何失败立即关闭、不返回有效租约；普通公开 Verify 继续按原语义关闭自身 fd。预检把这个原文件 fd 持有到清单和 SQLite 的独立重读、完整内存 SQLite 逻辑验证及最终报告复核结束，且所有返回路径都关闭。每次新叶子 fd 均须与初轮原 fd 有相同 inode、当前路径、UID/0600/单硬链接、大小/权限/mtime 及原父目录 inode；各轮完整 SHA、HMAC、资源、SQLite 验证与恢复禁用收据不变。
+- Linux 端到端回归在 HMAC 后及清单后分别将**原父目录内**的加密文件重命名，以另一份**逐字节相同且有效**的 0600 密文 inode 替代原名；独立与借用父目录 Preflight 都应返回空报告并失败关闭，原密文、替代密文、源 inode 和无关哨兵保持不变。另覆盖成功认证才转移原文件 fd、错误密钥不能泄漏 fd 或关闭调用方父目录 fd。
+- **限制**：多轮 `openat` 与身份复核仍不是针对非协作同 UID 进程在原目录 inode 内高速切换目录项的原子 compare-and-open；不证明 Issue #59 的 create_scope 根因解决。真实恢复、候选自动 GC、T15/T23、T20/T25、CN 离线规则资源许可及正式发行门槛保持关闭。坚持 Linux 普通用户无 TUN、Karing 五层分流不含订阅/ISP 来源、批准 Core pin 和 stable main 不动。依赖 PR #86 先通过完整 CI 合并，本项须再按最终精确 head 执行普通 CI、Race 4/4、Managed Core 和原生 Linux amd64/arm64 Provenance 全通过后才准合并。

@@ -153,31 +153,41 @@ func preflightInertArchiveAtParentProbed(
 	if beforeVerify != nil {
 		beforeVerify()
 	}
-	receipt, err := verifyInertArchiveAtParentProbed(ctx, path, key, parent, nil, nil)
+	var authenticatedFile *os.File
+	receipt, err := verifyInertArchiveAtParentPinnedFileProbed(
+		ctx, path, key, parent, &authenticatedFile, nil, nil)
 	if err != nil {
 		return empty, err
 	}
+	if authenticatedFile == nil {
+		return empty, ErrUnsafeSealedArchive
+	}
+	defer authenticatedFile.Close()
 	if afterAuth != nil {
 		afterAuth()
 	}
-	if !sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+	if !samePinnedSealedPreflightFile(path, parent, authenticatedFile, authenticatedFile, receipt.Bytes) {
 		return empty, ErrUnsafeSealedArchive
 	}
 	// This second read compares SHA-256 of the ENTIRE ciphertext with the
 	// authenticated pass. Merely reopening and parsing the first record
 	// would introduce a path-swap and post-verification mutation window.
-	inventory, err := readAuthenticatedInventoryAtParent(ctx, path, key, receipt, parent)
+	inventory, err := readAuthenticatedInventoryAtParentPinned(
+		ctx, path, key, receipt, parent, authenticatedFile)
 	if err != nil {
 		return empty, ErrUnsafeSealedArchive
 	}
 	if afterInventory != nil {
 		afterInventory()
 	}
-	if !sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+	if !samePinnedSealedPreflightFile(path, parent, authenticatedFile, authenticatedFile, receipt.Bytes) {
 		return empty, ErrUnsafeSealedArchive
 	}
-	sqliteBytes, err := readAuthenticatedSQLiteBytesAtParent(ctx, path, key, receipt, inventory, parent)
-	if err != nil || !sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+	sqliteBytes, err := readAuthenticatedSQLiteBytesAtParentPinned(
+		ctx, path, key, receipt, inventory, parent, authenticatedFile)
+	if err != nil || !samePinnedSealedPreflightFile(
+		path, parent, authenticatedFile, authenticatedFile, receipt.Bytes) {
+		clear(sqliteBytes)
 		return empty, ErrUnsafeSealedArchive
 	}
 	defer clear(sqliteBytes)
@@ -186,7 +196,7 @@ func preflightInertArchiveAtParentProbed(
 		return empty, ErrUnsafeSealedArchive
 	}
 	if (current != nil && current.Verify(ctx) != nil) ||
-		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+		!samePinnedSealedPreflightFile(path, parent, authenticatedFile, authenticatedFile, receipt.Bytes) {
 		return empty, ErrUnsafeSealedArchive
 	}
 	report := InertArchivePreflight{
@@ -221,7 +231,7 @@ func preflightInertArchiveAtParentProbed(
 		report.Generations = compareGenerationDigests(inventory.Generations, current.Inventory.Generations)
 		report.RuleSets = compareDigestCounts(inventory.RuleSets, current.Inventory.RuleSets)
 	}
-	if !sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+	if !samePinnedSealedPreflightFile(path, parent, authenticatedFile, authenticatedFile, receipt.Bytes) {
 		return empty, ErrUnsafeSealedArchive
 	}
 	return report, nil
@@ -298,6 +308,35 @@ func openSealedArchiveAtPinnedParent(path string, parent *os.File) (*os.File, er
 	return file, nil
 }
 
+// samePinnedSealedPreflightFile checks that an independently opened replay
+// fd still names the *same authenticated leaf inode*, not merely bytes with
+// identical SHA/HMAC in the same parent directory. The HMAC pass retains its
+// original fd through SQLite logical validation. This check is not atomic
+// against non-cooperative same-UID entry swaps between system calls.
+func samePinnedSealedPreflightFile(
+	path string, parent, authenticated, replay *os.File, expectedBytes int64,
+) bool {
+	if parent == nil || authenticated == nil || replay == nil ||
+		authenticated.Name() != path || replay.Name() != path ||
+		parent.Name() != filepath.Dir(path) || !validSealedArchivePath(path) ||
+		expectedBytes <= 0 || expectedBytes > MaxSealedArchiveBytes ||
+		!sameLeasedSealedArchiveParent(parent.Name(), parent) {
+		return false
+	}
+	original, originalErr := authenticated.Stat()
+	opened, openedErr := replay.Stat()
+	if originalErr != nil || openedErr != nil ||
+		!os.SameFile(original, opened) ||
+		original.Size() != opened.Size() ||
+		original.Mode() != opened.Mode() ||
+		!original.ModTime().Equal(opened.ModTime()) ||
+		verifySealedFile(authenticated, path, original, expectedBytes, true) != nil ||
+		verifySealedFile(replay, path, opened, expectedBytes, true) != nil {
+		return false
+	}
+	return sameLeasedSealedArchiveParent(parent.Name(), parent)
+}
+
 // readAuthenticatedInventory never interprets a replayed manifest until the
 // complete file SHA-256 matches the first, MAC-verified pass. It buffers no
 // more than the small canonical inventory prefix, not the database or rules.
@@ -316,6 +355,15 @@ func readAuthenticatedInventoryAtParent(
 	ctx context.Context, path string, key [32]byte, receipt SealedArchiveReceipt,
 	parent *os.File,
 ) (Inventory, error) {
+	return readAuthenticatedInventoryAtParentPinned(ctx, path, key, receipt, parent, nil)
+}
+
+// The pinned variant refuses a different same-name leaf inode even when its
+// encrypted bytes have exactly the authenticated SHA and HMAC.
+func readAuthenticatedInventoryAtParentPinned(
+	ctx context.Context, path string, key [32]byte, receipt SealedArchiveReceipt,
+	parent, authenticated *os.File,
+) (Inventory, error) {
 	var none Inventory
 	if ctx == nil || !validSealedArchivePath(path) || key == ([32]byte{}) ||
 		!validLowerSHA(receipt.ArchiveSHA256) || !validLowerSHA(receipt.InventorySHA256) ||
@@ -333,7 +381,9 @@ func readAuthenticatedInventoryAtParent(
 	defer file.Close()
 	before, err := file.Stat()
 	if err != nil || before.Size() != receipt.Bytes ||
-		verifySealedFile(file, path, before, receipt.Bytes, true) != nil {
+		verifySealedFile(file, path, before, receipt.Bytes, true) != nil ||
+		(authenticated != nil &&
+			!samePinnedSealedPreflightFile(path, parent, authenticated, file, receipt.Bytes)) {
 		return none, ErrUnsafeSealedArchive
 	}
 	maxPrefix := int64(sealedArchiveHeaderBytes + 4 + maxManifestBytes)
@@ -359,7 +409,9 @@ func readAuthenticatedInventoryAtParent(
 	if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() ||
 		before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) ||
 		verifySealedFile(file, path, before, receipt.Bytes, true) != nil ||
-		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) {
+		!sameLeasedSealedArchiveParent(filepath.Dir(path), parent) ||
+		(authenticated != nil &&
+			!samePinnedSealedPreflightFile(path, parent, authenticated, file, receipt.Bytes)) {
 		return none, ErrUnsafeSealedArchive
 	}
 	if len(prefix) < sealedArchiveHeaderBytes+4 ||
