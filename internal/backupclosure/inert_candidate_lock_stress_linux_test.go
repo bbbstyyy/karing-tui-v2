@@ -19,21 +19,50 @@ func TestInertCandidateScopeLeaseCyclesDoNotLeakOrGrantCompetingLease(t *testing
 	if err := os.Chmod(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	const cycles = 128
+	// Exercise enough repeated leases to expose uncommon, high-cycle
+	// refusals such as the unexpected cycle 93 denial in PR #82. Keep this
+	// bounded; no production retry or error classification is changed.
+	const cycles = 512
 	for cycle := 0; cycle < cycles; cycle++ {
 		parentLock, err := lockSealedArchiveParent(context.Background(), parent)
 		if err != nil {
 			t.Fatalf("cycle %d: private parent lock: %v", cycle, err)
 		}
-		path, err := os.MkdirTemp(parent, inertRestoreCandidatePrefix)
+		// Reuse production's mkdirat and creation inode receipt. The old
+		// stress test used os.MkdirTemp instead of Stage's actual path.
+		path, created, err := createInertScopeAtLeasedParent(parentLock, parent)
 		if err != nil {
 			_ = parentLock.Close()
 			t.Fatalf("cycle %d: private scope: %v", cycle, err)
 		}
-		candidate, err := openLockedInertRestoreCandidate(path)
+		var phases []string
+		candidate, err := openLockedInertRestoreCandidateAtParentProbed(path, parentLock, func(phase string) bool {
+			// Only fixed stage identifiers and bounded syscall classes
+			// can enter these diagnostics; no paths, keys or errno text.
+			phases = append(phases, phase)
+			return true
+		})
 		if err != nil || candidate == nil {
+			fdEntries, fdErr := os.ReadDir("/proc/self/fd")
+			var limit syscall.Rlimit
+			limitErr := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit)
+			childInfo, childErr := os.Lstat(path)
+			parentInfo, parentErr := os.Lstat(parent)
+			parentIdentity, parentFDerr := parentLock.Stat()
 			_ = parentLock.Close()
-			t.Fatalf("cycle %d: candidate lease denied: %v", cycle, err)
+			t.Fatalf("cycle %d: candidate lease denied: %v; checkpoints=%v; proc_fd_count=%d fd_probe_ok=%t fd_soft_limit=%d rlimit_ok=%t; valid_name=%t; child_lstat_ok=%t child_private=%t; parent_lstat_ok=%t parent_fd_stat_ok=%t parent_same_inode=%t",
+				cycle, err, phases, len(fdEntries), fdErr == nil,
+				limit.Cur, limitErr == nil,
+				validInertRestoreCandidateDir(path),
+				childErr == nil,
+				childErr == nil && childInfo.IsDir() && childInfo.Mode().Perm() == 0o700,
+				parentErr == nil, parentFDerr == nil,
+				parentErr == nil && parentFDerr == nil && os.SameFile(parentInfo, parentIdentity))
+		}
+		if !os.SameFile(created, candidate.directoryIdentity) {
+			_ = candidate.Close()
+			_ = parentLock.Close()
+			t.Fatalf("cycle %d: child inode differs from mkdirat creation receipt", cycle)
 		}
 		contender, conflict := openLockedInertRestoreCandidate(path)
 		if contender != nil {
@@ -57,11 +86,12 @@ func TestInertCandidateScopeLeaseCyclesDoNotLeakOrGrantCompetingLease(t *testing
 			_ = parentLock.Close()
 			t.Fatalf("cycle %d: close reopened candidate: %v", cycle, err)
 		}
+		if err := removeNewEmptyInertScopeIfIdentical(parentLock, path, created); err != nil {
+			_ = parentLock.Close()
+			t.Fatalf("cycle %d: original empty scope cleanup refused: %v", cycle, err)
+		}
 		if err := parentLock.Close(); err != nil {
 			t.Fatalf("cycle %d: parent lock close: %v", cycle, err)
-		}
-		if err := os.Remove(path); err != nil {
-			t.Fatalf("cycle %d: exact empty scope not removable: %v", cycle, err)
 		}
 	}
 	entries, err := os.ReadDir(parent)
@@ -145,5 +175,74 @@ func TestInertCandidateScopeIdentityRefusesPathSwapAndPermissionDrift(t *testing
 func TestInertCandidateLockBusyClassification(t *testing.T) {
 	if got := inertCandidateErrnoClass(syscall.EWOULDBLOCK); got != "lock_contention" {
 		t.Fatalf("unexpected lock contention class: %q", got)
+	}
+}
+
+// A parent swapped after the child inode check but before the parent
+// identity receipt must produce a bounded test-only refusal label. The
+// replacement contains the SAME original child inode, so a child-only
+// identity check would miss the change. Neither target is ever cleaned
+// by this read-only diagnostic helper.
+func TestInertCandidateParentIdentityRefusalHasFixedProbeLabel(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(root, "parent")
+	moved := filepath.Join(root, "moved-parent")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parentLock, err := lockSealedArchiveParent(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parentLock.Close()
+	path, created, err := createInertScopeAtLeasedParent(parentLock, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(path)
+	var mutationErr error
+	injected := false
+	var phases []string
+	candidate, openErr := openLockedInertRestoreCandidateAtParentProbed(
+		path, parentLock, func(phase string) bool {
+			phases = append(phases, phase)
+			if phase == "scope_child_identity_verified" {
+				injected = true
+				mutationErr = os.Rename(parent, moved)
+				if mutationErr != nil {
+					return true
+				}
+				mutationErr = os.Mkdir(parent, 0o700)
+				if mutationErr != nil {
+					return true
+				}
+				mutationErr = os.Rename(filepath.Join(moved, name), path)
+			}
+			return true
+		},
+	)
+	if candidate != nil {
+		_ = candidate.Close()
+	}
+	if !injected || mutationErr != nil || candidate != nil ||
+		!errors.Is(openErr, ErrUnsafeInertRestoreCandidate) {
+		t.Fatalf("parent changed but child lease accepted: injected=%t err=%v mutation=%v",
+			injected, openErr, mutationErr)
+	}
+	found := false
+	for _, phase := range phases {
+		if phase == "scope_child_parent_identity_refused" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("parent inode refusal did not emit fixed diagnostic phase: %v", phases)
+	}
+	atPath, err := os.Lstat(path)
+	if err != nil || !os.SameFile(created, atPath) {
+		t.Fatalf("failed scope admission modified original child inode: %v", err)
 	}
 }
