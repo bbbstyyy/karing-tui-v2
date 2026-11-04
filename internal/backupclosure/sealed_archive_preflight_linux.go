@@ -105,6 +105,11 @@ func preflightInertArchiveBeforeVerifyProbed(
 	if err := ctx.Err(); err != nil {
 		return empty, err
 	}
+	// Preserve the standalone API's original timeout across parent lookup
+	// as well as all three authenticated passes; the borrowed helper's
+	// deadline may be nested but never extends this outer budget.
+	ctx, cancel := context.WithTimeout(ctx, sealedArchiveTimeout)
+	defer cancel()
 	// Standalone callers own a strict parent fd. Stage, Reopen and Verify
 	// instead borrow their already-pinned original directory inode.
 	parent, err := pinSealedArchiveReadParent(path)
