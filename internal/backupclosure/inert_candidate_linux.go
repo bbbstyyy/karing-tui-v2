@@ -605,6 +605,44 @@ func inspectInertCandidateFileProbed(
 	return identity, nil
 }
 
+// pinInspectedInertCandidateCipher upgrades a metadata-only candidate
+// inspection to a caller-owned read-only file descriptor for the SAME
+// ciphertext inode. A same-UID process must not switch the first HMAC read
+// to another byte-identical file after the locked directory was inspected.
+// The caller closes this fd; no directory flock or source offset is consumed.
+func pinInspectedInertCandidateCipher(
+	candidate *InertRestoreCandidate, original os.FileInfo,
+) (*os.File, error) {
+	if candidate == nil || candidate.dir == nil ||
+		candidate.directoryIdentity == nil || original == nil ||
+		!sameInertCandidateParentIdentity(candidate.parent, candidate.parentIdentity) {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	directory, err := verifyCandidateDirLock(candidate.directory, candidate.dir)
+	if err != nil || !os.SameFile(candidate.directoryIdentity, directory) {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	file, err := openSealedArchiveAtPinnedParent(candidate.archive, candidate.dir)
+	if err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	atFD, err := file.Stat()
+	if err != nil || !os.SameFile(original, atFD) ||
+		original.Size() != atFD.Size() || original.Mode() != atFD.Mode() ||
+		!original.ModTime().Equal(atFD.ModTime()) ||
+		verifySealedFile(file, candidate.archive, original, original.Size(), true) != nil ||
+		!sameInertCandidateParentIdentity(candidate.parent, candidate.parentIdentity) {
+		_ = file.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	directory, err = verifyCandidateDirLock(candidate.directory, candidate.dir)
+	if err != nil || !os.SameFile(candidate.directoryIdentity, directory) {
+		_ = file.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	return file, nil
+}
+
 // StageInertRestoreCandidate copies ONLY the ciphertext from an already
 // authenticated, fully SQLite-audited source archive to an independently
 // UID-owned encrypted candidate scope. The separate 0700 parent must exist.
@@ -992,6 +1030,17 @@ func reopenInertRestoreCandidateProbed(
 func reopenInertRestoreCandidateAtParentProbed(
 	ctx context.Context, directory string, key [32]byte,
 	beforeChildOpen, afterPreflight func(),
+) (*InertRestoreCandidate, error) {
+	return reopenInertRestoreCandidateAtFileProbed(
+		ctx, directory, key, beforeChildOpen, nil, afterPreflight)
+}
+
+// This strictly internal hook runs after the exact candidate file fd is
+// pinned and before the first HMAC opens its own read descriptor. Production
+// always passes nil, including the public Reopen API.
+func reopenInertRestoreCandidateAtFileProbed(
+	ctx context.Context, directory string, key [32]byte,
+	beforeChildOpen, beforePreflight, afterPreflight func(),
 ) (_ *InertRestoreCandidate, err error) {
 	if ctx == nil || key == ([32]byte{}) ||
 		!validInertRestoreCandidateDir(directory) {
@@ -1027,8 +1076,20 @@ func reopenInertRestoreCandidateAtParentProbed(
 	if err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// The previously inspected exact ciphertext inode stays open through
+	// all three authenticated passes; a same-name byte-identical replacement
+	// cannot be selected for the FIRST HMAC read.
+	expectedFile, err := pinInspectedInertCandidateCipher(candidate, before)
+	if err != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	defer expectedFile.Close()
+	if beforePreflight != nil {
+		beforePreflight()
+	}
 	var report InertArchivePreflight
-	report, err = preflightInertArchiveAtParent(ctx, candidate.archive, key, nil, candidate.dir)
+	report, err = preflightInertArchiveAtParentExpectedFile(
+		ctx, candidate.archive, key, nil, candidate.dir, expectedFile)
 	if err != nil || !report.SchemaCatalogVerified ||
 		!report.SQLiteLogicalVerified || report.RestoreReady ||
 		report.RestoreSupported {
@@ -1062,6 +1123,14 @@ func (c *InertRestoreCandidate) Directory() string {
 func (c *InertRestoreCandidate) Verify(
 	ctx context.Context, key [32]byte,
 ) (InertArchivePreflight, error) {
+	return c.verifyInertRestoreCandidateProbed(ctx, key, nil)
+}
+
+// A package-private, nil-in-production checkpoint permits deterministic
+// same-directory ciphertext replacement tests before the first HMAC pass.
+func (c *InertRestoreCandidate) verifyInertRestoreCandidateProbed(
+	ctx context.Context, key [32]byte, beforePreflight func(),
+) (InertArchivePreflight, error) {
 	var none InertArchivePreflight
 	if c == nil || ctx == nil || key == ([32]byte{}) {
 		return none, ErrUnsafeInertRestoreCandidate
@@ -1075,7 +1144,16 @@ func (c *InertRestoreCandidate) Verify(
 	if err != nil {
 		return none, ErrUnsafeInertRestoreCandidate
 	}
-	report, err := preflightInertArchiveAtParent(ctx, c.archive, key, nil, c.dir)
+	expectedFile, err := pinInspectedInertCandidateCipher(c, before)
+	if err != nil {
+		return none, ErrUnsafeInertRestoreCandidate
+	}
+	defer expectedFile.Close()
+	if beforePreflight != nil {
+		beforePreflight()
+	}
+	report, err := preflightInertArchiveAtParentExpectedFile(
+		ctx, c.archive, key, nil, c.dir, expectedFile)
 	if err != nil || !sameInertPreflightEvidence(c.receipt, report) {
 		return none, ErrUnsafeInertRestoreCandidate
 	}
