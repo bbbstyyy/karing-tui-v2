@@ -821,20 +821,30 @@ func stageInertRestoreCandidate(
 	}()
 	if err != nil || candidate == nil {
 		if candidate != nil {
-			_ = candidate.discardLocked(false)
+			_ = candidate.discardStageLocked(nil)
 		}
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// The exact ciphertext fd originally CREATED with O_EXCL remains open
+	// through final HMAC/inventory/SQLite and also through failed-Stage
+	// cleanup. Its inode alone authorizes deletion of this Stage's bytes.
+	var ownedTarget *os.File
+	defer func() {
+		if ownedTarget != nil {
+			_ = ownedTarget.Close()
+		}
+	}()
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, candidate.discardLocked(false))
+			err = errors.Join(err, candidate.discardStageLocked(ownedTarget))
 		}
 	}()
 	if !checkpoint("cipher_copy") {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if err = copyInertCandidateCipherAtPinnedSource(ctx, sourceArchive,
-		sourceParent, sourceFile, sourceIdentity, candidate, report, probe); err != nil {
+	if err = copyInertCandidateCipherAtPinnedSourceRetained(ctx, sourceArchive,
+		sourceParent, sourceFile, sourceIdentity, candidate, report, probe,
+		&ownedTarget); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !checkpoint("scope_sync") {
@@ -857,7 +867,8 @@ func stageInertRestoreCandidate(
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	var checked InertArchivePreflight
-	checked, err = preflightInertArchiveAtParent(ctx, candidate.archive, key, nil, candidate.dir)
+	checked, err = preflightInertArchiveAtParentExpectedFile(
+		ctx, candidate.archive, key, nil, candidate.dir, ownedTarget)
 	if err != nil || !sameInertPreflightEvidence(report, checked) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
@@ -945,6 +956,23 @@ func copyInertCandidateCipherAtPinnedSource(
 	info os.FileInfo, candidate *InertRestoreCandidate,
 	expected InertArchivePreflight, probe func(string) bool,
 ) error {
+	return copyInertCandidateCipherAtPinnedSourceRetained(
+		ctx, sourcePath, parent, file, info, candidate, expected, probe, nil)
+}
+
+// Stage can retain ownership of the EXACT ciphertext inode it creates.
+// The new target fd transfers to Stage immediately after O_EXCL succeeds,
+// even if the subsequent copy fails, so cleanup can verify custody of
+// partial bytes. Direct package-private callers keep closing it locally.
+func copyInertCandidateCipherAtPinnedSourceRetained(
+	ctx context.Context, sourcePath string, parent, file *os.File,
+	info os.FileInfo, candidate *InertRestoreCandidate,
+	expected InertArchivePreflight, probe func(string) bool,
+	retained **os.File,
+) error {
+	if retained != nil {
+		*retained = nil
+	}
 	if candidate == nil || candidate.dir == nil ||
 		candidate.directoryIdentity == nil ||
 		!samePinnedInertStageSource(sourcePath, parent, file, info,
@@ -973,7 +1001,11 @@ func copyInertCandidateCipherAtPinnedSource(
 		_ = syscall.Close(fd)
 		return ErrUnsafeInertRestoreCandidate
 	}
-	defer target.Close()
+	if retained != nil {
+		*retained = target
+	} else {
+		defer target.Close()
+	}
 	if probe != nil && !probe("cipher_target_fd_opened") {
 		return ErrUnsafeInertRestoreCandidate
 	}
@@ -1230,11 +1262,57 @@ func (c *InertRestoreCandidate) discardLocked(requireFile bool) error {
 	return c.discardLockedProbed(requireFile, nil)
 }
 
+// sameStageCreatedCipherForCleanup refuses to delete an encrypted file
+// unless it is the same one the current Stage created using O_EXCL. It also
+// refuses any file when Stage never successfully opened its target. Empty
+// scopes may still be safely reclaimed. This is a fail-closed admission
+// check, not atomic protection against a hostile same-UID entry swap.
+func sameStageCreatedCipherForCleanup(
+	c *InertRestoreCandidate, createdTarget *os.File, scanned os.FileInfo,
+) bool {
+	if c == nil || c.dir == nil {
+		return false
+	}
+	if createdTarget == nil {
+		return scanned == nil
+	}
+	if scanned == nil || createdTarget.Name() != c.archive {
+		return false
+	}
+	onFD, err := createdTarget.Stat()
+	if err != nil || !os.SameFile(onFD, scanned) ||
+		onFD.Size() != scanned.Size() || onFD.Mode() != scanned.Mode() ||
+		!onFD.ModTime().Equal(scanned.ModTime()) ||
+		verifySealedFile(createdTarget, c.archive, onFD, onFD.Size(), true) != nil {
+		return false
+	}
+	dir, err := verifyCandidateDirLock(c.directory, c.dir)
+	return err == nil && os.SameFile(dir, c.directoryIdentity) &&
+		sameInertCandidateParentIdentity(c.parent, c.parentIdentity)
+}
+
+// Failed Stage may unlink only its own newly O_EXCL-created ciphertext fd.
+// Before target creation, the only safe cleanup is an EMPTY candidate scope.
+// A different same-name file (even valid, identical ciphertext) is foreign.
+func (c *InertRestoreCandidate) discardStageLocked(createdTarget *os.File) error {
+	return c.discardLockedWithStageOwnership(false, createdTarget, true, nil)
+}
+
 // The internal pre-directory-unlink hook tests an uncooperative same-UID
 // namespace replacement after the ciphertext leaf is removed. Production
 // always passes nil; external code cannot obtain this callback.
 func (c *InertRestoreCandidate) discardLockedProbed(
 	requireFile bool, beforeDirectoryUnlink func(),
+) error {
+	return c.discardLockedWithStageOwnership(
+		requireFile, nil, false, beforeDirectoryUnlink)
+}
+
+// This common cleanup keeps the user-invoked explicit Discard semantics;
+// Stage's additional ownership check never authorizes deleting foreign
+// encrypted bytes based on filename or ciphertext SHA alone.
+func (c *InertRestoreCandidate) discardLockedWithStageOwnership(
+	requireFile bool, createdTarget *os.File, stageOnly bool, beforeDirectoryUnlink func(),
 ) error {
 	if c == nil || c.dir == nil {
 		return ErrUnsafeInertRestoreCandidate
@@ -1247,6 +1325,9 @@ func (c *InertRestoreCandidate) discardLockedProbed(
 	if err != nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
+	if stageOnly && !sameStageCreatedCipherForCleanup(c, createdTarget, file) {
+		return ErrUnsafeInertRestoreCandidate
+	}
 	// Pin the admitted parent before deleting even the ciphertext. Opening
 	// by pathname is read-only; its inode must match the parent captured
 	// at child-lease admission before any irreversible operation.
@@ -1256,6 +1337,12 @@ func (c *InertRestoreCandidate) discardLockedProbed(
 	}
 	defer parent.Close()
 	if file != nil {
+		// Re-evaluate exact file custody immediately before irreversible
+		// fd-relative unlink. This narrows (but cannot atomically eliminate)
+		// hostile same-UID rename races within the original directory inode.
+		if stageOnly && !sameStageCreatedCipherForCleanup(c, createdTarget, file) {
+			return ErrUnsafeInertRestoreCandidate
+		}
 		// Never remove unknown sibling files or follow a ciphertext symlink.
 		if err := syscall.Unlinkat(int(c.dir.Fd()), inertRestoreCipherName); err != nil {
 			return ErrUnsafeInertRestoreCandidate
