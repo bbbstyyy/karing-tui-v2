@@ -38,6 +38,7 @@ func TestInertRestoreStageProbeFailClosedAtEveryBoundary(t *testing.T) {
 		"scope_before_mkdirat",
 		"scope_created",
 		"scope_child_open",
+		"scope_child_fd_reused",
 		"scope_child_fd_opened",
 		"scope_child_flock",
 		"scope_child_lock_held",

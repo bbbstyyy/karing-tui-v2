@@ -239,6 +239,83 @@ func openLockedInertRestoreCandidateAtParentProbed(
 	}, nil
 }
 
+// lockCreatedInertRestoreCandidateAtParentProbed transfers the SAME
+// O_DIRECTORY|O_NOFOLLOW file descriptor opened during mkdirat receipt
+// verification into Stage's exclusive child flock. The caller retains
+// ownership on failure and MUST close it; ownership transfers only after
+// every lock, child identity and original parent identity check succeeds.
+// Reopen and standalone test helpers continue to open a new fd as before.
+func lockCreatedInertRestoreCandidateAtParentProbed(
+	path string, parent, createdFD *os.File, created os.FileInfo,
+	probe func(string) bool,
+) (*InertRestoreCandidate, error) {
+	checkpoint := func(stage string) bool { return probe == nil || probe(stage) }
+	if createdFD == nil || created == nil || parent == nil ||
+		createdFD.Name() != path ||
+		!validInertRestoreCandidateDir(path) ||
+		verifySealedArchiveParent(path) != nil ||
+		!sameInertCandidateParentLease(filepath.Dir(path), parent) {
+		if probe != nil {
+			_ = probe("scope_child_precheck_refused")
+		}
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	onFD, err := createdFD.Stat()
+	if err != nil || !onFD.IsDir() || !os.SameFile(onFD, created) ||
+		onFD.Mode().Perm() != 0o700 ||
+		!singleOwnedSealedFileDirectory(onFD) {
+		if probe != nil {
+			_ = probe("scope_child_created_inode_refused")
+		}
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	// These existing boundaries remain test-injectable. No second
+	// openat is allowed between receipt validation and flock.
+	if !checkpoint("scope_child_open") ||
+		!checkpoint("scope_child_fd_reused") ||
+		!checkpoint("scope_child_fd_opened") ||
+		!checkpoint("scope_child_flock") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if err := syscall.Flock(int(createdFD.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		recordInertCandidateSyscallFailure(probe, "scope_child_flock", err)
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, ErrInertRestoreCandidateBusy
+		}
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if !checkpoint("scope_child_lock_held") || !checkpoint("scope_child_identity") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	identity, err := verifyCandidateDirLock(path, createdFD)
+	if err != nil || !os.SameFile(created, identity) ||
+		!sameInertCandidateParentLease(filepath.Dir(path), parent) {
+		if probe != nil {
+			_ = probe("scope_child_identity_refused")
+		}
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if !checkpoint("scope_child_identity_verified") {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	parentPath := filepath.Dir(path)
+	parentIdentity, err := parent.Stat()
+	if err != nil || !sameInertCandidateParentIdentity(parentPath, parentIdentity) {
+		if probe != nil {
+			_ = probe("scope_child_parent_identity_refused")
+		}
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	return &InertRestoreCandidate{
+		directory:         path,
+		parent:            parentPath,
+		archive:           filepath.Join(path, inertRestoreCipherName),
+		dir:               createdFD,
+		directoryIdentity: identity,
+		parentIdentity:    parentIdentity,
+	}, nil
+}
+
 // createInertScopeAtLeasedParent uses the already-flocked parent DIRECTORY
 // inode instead of resolving its mutable pathname during creation. The
 // returned identity comes from a child fd opened relative to that same
@@ -260,6 +337,19 @@ func createInertScopeAtLeasedParent(
 func createInertScopeAtLeasedParentProbed(
 	parent *os.File, parentPath string, probe func(string) bool,
 ) (string, os.FileInfo, error) {
+	return createInertScopeAtLeasedParentRetainedProbed(parent, parentPath, probe, nil)
+}
+
+// The optional retained descriptor was opened from the original parent fd
+// and validated against the earlier fstatat creation receipt. On success
+// Stage takes ownership of it through the child flock and encrypted copy.
+// All failure exits close it; direct callers still receive only FileInfo.
+func createInertScopeAtLeasedParentRetainedProbed(
+	parent *os.File, parentPath string, probe func(string) bool, retained **os.File,
+) (string, os.FileInfo, error) {
+	if retained != nil {
+		*retained = nil
+	}
 	checkpoint := func(stage string) bool { return probe == nil || probe(stage) }
 	refusal := func(stage string) {
 		if probe != nil {
@@ -337,14 +427,15 @@ func createInertScopeAtLeasedParentProbed(
 			refusal("scope_created_newfile_refused")
 			return "", nil, ErrUnsafeInertRestoreCandidate
 		}
+		keepChild := false
+		defer func() {
+			if !keepChild {
+				_ = child.Close()
+			}
+		}()
 		created, statErr := child.Stat()
-		closeErr := child.Close()
 		if statErr != nil {
 			recordInertCandidateSyscallFailure(probe, "scope_created_fstat", statErr)
-			return "", nil, ErrUnsafeInertRestoreCandidate
-		}
-		if closeErr != nil {
-			recordInertCandidateSyscallFailure(probe, "scope_created_close", closeErr)
 			return "", nil, ErrUnsafeInertRestoreCandidate
 		}
 		if !created.IsDir() || created.Mode().Perm() != 0o700 ||
@@ -358,6 +449,17 @@ func createInertScopeAtLeasedParentProbed(
 			childStat.Uid != createdName.Uid {
 			refusal("scope_created_inode_changed")
 			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		if retained != nil {
+			*retained = child
+			keepChild = true
+		} else {
+			closeErr := child.Close()
+			keepChild = true
+			if closeErr != nil {
+				recordInertCandidateSyscallFailure(probe, "scope_created_close", closeErr)
+				return "", nil, ErrUnsafeInertRestoreCandidate
+			}
 		}
 		return directory, created, nil
 	}
@@ -843,7 +945,14 @@ func stageInertRestoreCandidate(
 		// collected through that fd, before any pathname-based adoption.
 		var directory string
 		var created os.FileInfo
-		directory, created, err = createInertScopeAtLeasedParentProbed(parentLock, candidateParent, probe)
+		var pinnedChild *os.File
+		defer func() {
+			if pinnedChild != nil {
+				_ = pinnedChild.Close()
+			}
+		}()
+		directory, created, err = createInertScopeAtLeasedParentRetainedProbed(
+			parentLock, candidateParent, probe, &pinnedChild)
 		if err != nil {
 			recordInertCandidateSyscallFailure(probe, "scope_mkdir", err)
 			err = ErrUnsafeInertRestoreCandidate
@@ -858,19 +967,25 @@ func stageInertRestoreCandidate(
 			return
 		}
 		if !checkpoint("scope_created") {
+			_ = pinnedChild.Close()
+			pinnedChild = nil
 			_ = removeNewEmptyInertScopeIfIdentical(parentLock, directory, created)
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		candidate, err = openLockedInertRestoreCandidateAtParentProbed(
-			directory, parentLock, probe)
+		// Reuse the fd from mkdirat + fstatat + openat receipt verification:
+		// do not close it and re-open the mutable child pathname for flock.
+		candidate, err = lockCreatedInertRestoreCandidateAtParentProbed(
+			directory, parentLock, pinnedChild, created, probe)
 		if err != nil {
-			// An untrusted actor could have replaced the empty scope while
-			// this process held the parent advisory flock. Never unlink
-			// the replacement merely because it occupies our old name.
+			_ = pinnedChild.Close()
+			pinnedChild = nil
+			// A foreign scope may occupy the same path: cleanup is guarded
+			// by exact original inode and the original parent lease.
 			_ = removeNewEmptyInertScopeIfIdentical(parentLock, directory, created)
 			return
 		}
+		pinnedChild = nil // Exclusive child flock ownership moved to candidate.
 		if candidate == nil || candidate.directoryIdentity == nil ||
 			!os.SameFile(created, candidate.directoryIdentity) ||
 			!sameNewInertScopeIdentity(directory, created) {
