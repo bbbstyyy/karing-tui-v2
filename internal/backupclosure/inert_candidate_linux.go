@@ -932,11 +932,13 @@ func stageInertRestoreCandidate(
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		if !checkpoint("create_scope") {
+		// A timed-out or cancelled Stage is not permitted to allocate a
+		// new persistent private scope after the parent reservation.
+		if !checkpoint("create_scope") || ctx.Err() != nil {
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		if !checkpoint("scope_before_mkdirat") {
+		if !checkpoint("scope_before_mkdirat") || ctx.Err() != nil {
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
@@ -966,7 +968,10 @@ func stageInertRestoreCandidate(
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		if !checkpoint("scope_created") {
+		// A cancellation during mkdirat/fstatat/openat cannot publish a
+		// candidate; release the exact created child fd, then attempt only
+		// owner-verified empty scope cleanup using the original parent fd.
+		if !checkpoint("scope_created") || ctx.Err() != nil {
 			_ = pinnedChild.Close()
 			pinnedChild = nil
 			_ = removeNewEmptyInertScopeIfIdentical(parentLock, directory, created)
@@ -998,7 +1003,10 @@ func stageInertRestoreCandidate(
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		if !checkpoint("scope_locked") ||
+		// If cancellation occurred during the child flock checkpoints,
+		// fail before parent fsync/lease publication. The outer Stage
+		// cleanup discards only the exact known empty candidate scope.
+		if !checkpoint("scope_locked") || ctx.Err() != nil ||
 			!sameInertCandidateParentLease(candidateParent, parentLock) ||
 			parentLock.Sync() != nil {
 			// Fsync the leased parent inode, not a replacement path.
@@ -1033,7 +1041,7 @@ func stageInertRestoreCandidate(
 			err = errors.Join(err, candidate.discardStageLocked(ownedTarget))
 		}
 	}()
-	if !checkpoint("cipher_copy") {
+	if !checkpoint("cipher_copy") || ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if err = copyInertCandidateCipherAtPinnedSourceRetained(ctx, sourceArchive,
