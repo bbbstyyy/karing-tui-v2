@@ -48,6 +48,8 @@ func inertCandidateErrnoClass(err error) string {
 		return "missing_path"
 	case errors.Is(err, syscall.ELOOP):
 		return "symlink"
+	case errors.Is(err, syscall.ENOTDIR):
+		return "not_directory"
 	case errors.Is(err, syscall.EIO):
 		return "io_error"
 	default:
@@ -246,25 +248,50 @@ func openLockedInertRestoreCandidateAtParentProbed(
 func createInertScopeAtLeasedParent(
 	parent *os.File, parentPath string,
 ) (string, os.FileInfo, error) {
+	return createInertScopeAtLeasedParentProbed(parent, parentPath, nil)
+}
+
+// createInertScopeAtLeasedParentProbed records only fixed private test
+// checkpoints/errno CLASSES. It is never exposed to users or logs. The
+// post-mkdirat fstatat receipt precedes child openat, so a persistent child
+// inode replacement between these calls cannot become Stage's own scope.
+// This cannot make mkdirat+fstatat+openat atomic against hostile same-UID
+// directory entry replacement; the later path/lease checks still apply.
+func createInertScopeAtLeasedParentProbed(
+	parent *os.File, parentPath string, probe func(string) bool,
+) (string, os.FileInfo, error) {
+	checkpoint := func(stage string) bool { return probe == nil || probe(stage) }
+	refusal := func(stage string) {
+		if probe != nil {
+			_ = probe(stage)
+		}
+	}
 	if parent == nil || !filepath.IsAbs(parentPath) ||
 		filepath.Clean(parentPath) != parentPath {
+		refusal("scope_create_parent_path_refused")
 		return "", nil, ErrUnsafeInertRestoreCandidate
 	}
 	opened, err := parent.Stat()
-	if err != nil || !opened.IsDir() || opened.Mode().Perm() != 0o700 {
+	if err != nil {
+		recordInertCandidateSyscallFailure(probe, "scope_create_parent_fstat", err)
+		return "", nil, ErrUnsafeInertRestoreCandidate
+	}
+	if !opened.IsDir() || opened.Mode().Perm() != 0o700 {
+		refusal("scope_create_parent_mode_refused")
 		return "", nil, ErrUnsafeInertRestoreCandidate
 	}
 	owner, ok := opened.Sys().(*syscall.Stat_t)
 	if !ok || int(owner.Uid) != os.Getuid() {
+		refusal("scope_create_parent_owner_refused")
 		return "", nil, ErrUnsafeInertRestoreCandidate
 	}
-	// 96 bits of cryptographic randomness; 24 lowercase hex characters
-	// satisfy the existing candidate scope name validator. Collisions are
-	// retried only a bounded number of times, never by falling back to a
-	// path-based MkdirTemp.
+	// Each attempted name has 96 bits of cryptographic randomness. Only a
+	// genuine EEXIST can advance the bounded collision loop; all other
+	// creation failures remain fail-closed without a production retry.
 	for attempt := 0; attempt < 8; attempt++ {
 		var randomName [12]byte
 		if _, err := rand.Read(randomName[:]); err != nil {
+			recordInertCandidateSyscallFailure(probe, "scope_random", err)
 			return "", nil, ErrUnsafeInertRestoreCandidate
 		}
 		name := inertRestoreCandidatePrefix + hex.EncodeToString(randomName[:])
@@ -272,28 +299,80 @@ func createInertScopeAtLeasedParent(
 			if errors.Is(err, syscall.EEXIST) {
 				continue
 			}
+			recordInertCandidateSyscallFailure(probe, "scope_mkdirat", err)
 			return "", nil, err
+		}
+		// A test-only callback can replace the name here, before the first
+		// metadata receipt. Production has no callback.
+		if !checkpoint("scope_mkdirat_created") {
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		var createdName unix.Stat_t
+		if err := unix.Fstatat(int(parent.Fd()), name, &createdName, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			recordInertCandidateSyscallFailure(probe, "scope_created_fstatat", err)
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		if createdName.Mode&unix.S_IFMT != unix.S_IFDIR ||
+			createdName.Mode&0o777 != 0o700 ||
+			int(createdName.Uid) != os.Getuid() {
+			refusal("scope_created_receipt_refused")
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		// Capturing dev+ino BEFORE openat provides a concrete identity
+		// receipt; a later replacement directory may be equally private
+		// but may not be adopted as the newly created scope.
+		if !checkpoint("scope_created_inode_receipt") {
+			return "", nil, ErrUnsafeInertRestoreCandidate
 		}
 		fd, err := syscall.Openat(int(parent.Fd()), name,
 			syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 		if err != nil {
+			recordInertCandidateSyscallFailure(probe, "scope_created_openat", err)
 			return "", nil, ErrUnsafeInertRestoreCandidate
 		}
 		directory := filepath.Join(parentPath, name)
 		child := os.NewFile(uintptr(fd), directory)
 		if child == nil {
 			_ = syscall.Close(fd)
+			refusal("scope_created_newfile_refused")
 			return "", nil, ErrUnsafeInertRestoreCandidate
 		}
 		created, statErr := child.Stat()
 		closeErr := child.Close()
-		if statErr != nil || closeErr != nil || !created.IsDir() ||
-			created.Mode().Perm() != 0o700 {
+		if statErr != nil {
+			recordInertCandidateSyscallFailure(probe, "scope_created_fstat", statErr)
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		if closeErr != nil {
+			recordInertCandidateSyscallFailure(probe, "scope_created_close", closeErr)
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		if !created.IsDir() || created.Mode().Perm() != 0o700 ||
+			!singleOwnedSealedFileDirectory(created) {
+			refusal("scope_created_child_mode_refused")
+			return "", nil, ErrUnsafeInertRestoreCandidate
+		}
+		childStat, ok := created.Sys().(*syscall.Stat_t)
+		if !ok || uint64(childStat.Dev) != uint64(createdName.Dev) ||
+			childStat.Ino != createdName.Ino ||
+			childStat.Uid != createdName.Uid {
+			refusal("scope_created_inode_changed")
 			return "", nil, ErrUnsafeInertRestoreCandidate
 		}
 		return directory, created, nil
 	}
+	refusal("scope_mkdirat_collisions_exhausted")
 	return "", nil, ErrUnsafeInertRestoreCandidate
+}
+
+// The temporary receipt checks the child inode's owner without imposing
+// the single-link rule for directories (their link count includes "..").
+func singleOwnedSealedFileDirectory(info os.FileInfo) bool {
+	if info == nil || !info.IsDir() {
+		return false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Getuid()
 }
 
 // sameInertCandidateParentLease checks that the pathname still refers
@@ -764,7 +843,7 @@ func stageInertRestoreCandidate(
 		// collected through that fd, before any pathname-based adoption.
 		var directory string
 		var created os.FileInfo
-		directory, created, err = createInertScopeAtLeasedParent(parentLock, candidateParent)
+		directory, created, err = createInertScopeAtLeasedParentProbed(parentLock, candidateParent, probe)
 		if err != nil {
 			recordInertCandidateSyscallFailure(probe, "scope_mkdir", err)
 			err = ErrUnsafeInertRestoreCandidate
