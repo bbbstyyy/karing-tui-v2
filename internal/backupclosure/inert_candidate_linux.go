@@ -249,7 +249,31 @@ func lockCreatedInertRestoreCandidateAtParentProbed(
 	path string, parent, createdFD *os.File, created os.FileInfo,
 	probe func(string) bool,
 ) (*InertRestoreCandidate, error) {
+	return lockCreatedInertRestoreCandidateAtParentContextProbed(
+		context.Background(), path, parent, createdFD, created, probe)
+}
+
+// Stage supplies its bounded context to prevent a cancelled operation
+// from obtaining a new child flock or issuing more pathname checks.
+// The older private wrapper remains available for direct lease tests.
+// The original created FD ALWAYS remains caller-owned on refusal.
+func lockCreatedInertRestoreCandidateAtParentContextProbed(
+	ctx context.Context, path string, parent, createdFD *os.File,
+	created os.FileInfo, probe func(string) bool,
+) (*InertRestoreCandidate, error) {
 	checkpoint := func(stage string) bool { return probe == nil || probe(stage) }
+	cancelled := func() bool {
+		if ctx != nil && ctx.Err() == nil {
+			return false
+		}
+		if probe != nil {
+			_ = probe("scope_child_context_cancelled")
+		}
+		return true
+	}
+	if cancelled() {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	if createdFD == nil || created == nil || parent == nil ||
 		createdFD.Name() != path ||
 		!validInertRestoreCandidateDir(path) ||
@@ -271,12 +295,15 @@ func lockCreatedInertRestoreCandidateAtParentProbed(
 	}
 	// These existing boundaries remain test-injectable. No second
 	// openat is allowed between receipt validation and flock.
-	if !checkpoint("scope_child_open") ||
-		!checkpoint("scope_child_fd_reused") ||
-		!checkpoint("scope_child_fd_opened") ||
-		!checkpoint("scope_child_flock") {
+	if !checkpoint("scope_child_open") || cancelled() ||
+		!checkpoint("scope_child_fd_reused") || cancelled() ||
+		!checkpoint("scope_child_fd_opened") || cancelled() ||
+		!checkpoint("scope_child_flock") || cancelled() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// The final cancellation check above is adjacent to flock(2).
+	// Context cancellation and flock cannot be atomic: Stage still owns
+	// the fd, so any later refusal releases this lock by closing it.
 	if err := syscall.Flock(int(createdFD.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		recordInertCandidateSyscallFailure(probe, "scope_child_flock", err)
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
@@ -284,7 +311,8 @@ func lockCreatedInertRestoreCandidateAtParentProbed(
 		}
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("scope_child_lock_held") || !checkpoint("scope_child_identity") {
+	if !checkpoint("scope_child_lock_held") || cancelled() ||
+		!checkpoint("scope_child_identity") || cancelled() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	identity, err := verifyCandidateDirLock(path, createdFD)
@@ -295,7 +323,7 @@ func lockCreatedInertRestoreCandidateAtParentProbed(
 		}
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("scope_child_identity_verified") {
+	if !checkpoint("scope_child_identity_verified") || cancelled() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	parentPath := filepath.Dir(path)
@@ -304,6 +332,9 @@ func lockCreatedInertRestoreCandidateAtParentProbed(
 		if probe != nil {
 			_ = probe("scope_child_parent_identity_refused")
 		}
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if cancelled() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	return &InertRestoreCandidate{
@@ -980,8 +1011,8 @@ func stageInertRestoreCandidate(
 		}
 		// Reuse the fd from mkdirat + fstatat + openat receipt verification:
 		// do not close it and re-open the mutable child pathname for flock.
-		candidate, err = lockCreatedInertRestoreCandidateAtParentProbed(
-			directory, parentLock, pinnedChild, created, probe)
+		candidate, err = lockCreatedInertRestoreCandidateAtParentContextProbed(
+			ctx, directory, parentLock, pinnedChild, created, probe)
 		if err != nil {
 			_ = pinnedChild.Close()
 			pinnedChild = nil
