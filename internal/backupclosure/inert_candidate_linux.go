@@ -159,8 +159,31 @@ func openLockedInertRestoreCandidateProbed(
 func openLockedInertRestoreCandidateAtParentProbed(
 	path string, parent *os.File, probe func(string) bool,
 ) (*InertRestoreCandidate, error) {
+	return openLockedInertRestoreCandidateAtParentContextProbed(
+		context.Background(), path, parent, probe)
+}
+
+// Reopen supplies its bounded context to the independent O_DIRECTORY open
+// and exclusive flock. On cancellation every newly acquired child fd is
+// closed, while the borrowed parent lease stays owned by the caller.
+// The legacy helper above deliberately keeps its existing signature.
+func openLockedInertRestoreCandidateAtParentContextProbed(
+	ctx context.Context, path string, parent *os.File, probe func(string) bool,
+) (*InertRestoreCandidate, error) {
 	checkpoint := func(stage string) bool {
 		return probe == nil || probe(stage)
+	}
+	cancelled := func() bool {
+		if ctx != nil && ctx.Err() == nil {
+			return false
+		}
+		if probe != nil {
+			_ = probe("scope_reopen_context_cancelled")
+		}
+		return true
+	}
+	if cancelled() {
+		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	if !validInertRestoreCandidateDir(path) || verifySealedArchiveParent(path) != nil ||
 		(parent != nil && !sameInertCandidateParentLease(filepath.Dir(path), parent)) {
@@ -169,7 +192,7 @@ func openLockedInertRestoreCandidateAtParentProbed(
 		}
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("scope_child_open") {
+	if !checkpoint("scope_child_open") || cancelled() {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	flags := syscall.O_RDONLY | syscall.O_DIRECTORY |
@@ -186,10 +209,13 @@ func openLockedInertRestoreCandidateAtParentProbed(
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	lock := os.NewFile(uintptr(fd), path)
-	if !checkpoint("scope_child_fd_opened") || !checkpoint("scope_child_flock") {
+	if !checkpoint("scope_child_fd_opened") || cancelled() ||
+		!checkpoint("scope_child_flock") || cancelled() {
 		_ = lock.Close()
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// Cancellation is checked adjacent to flock; it cannot be atomic
+	// with the syscall, but any refusal closes this newly opened fd.
 	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		recordInertCandidateSyscallFailure(probe, "scope_child_flock", err)
 		_ = lock.Close()
@@ -198,7 +224,8 @@ func openLockedInertRestoreCandidateAtParentProbed(
 		}
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("scope_child_lock_held") || !checkpoint("scope_child_identity") {
+	if !checkpoint("scope_child_lock_held") || cancelled() ||
+		!checkpoint("scope_child_identity") || cancelled() {
 		_ = lock.Close()
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
@@ -211,7 +238,7 @@ func openLockedInertRestoreCandidateAtParentProbed(
 		_ = lock.Close()
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("scope_child_identity_verified") {
+	if !checkpoint("scope_child_identity_verified") || cancelled() {
 		_ = lock.Close()
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
@@ -226,6 +253,10 @@ func openLockedInertRestoreCandidateAtParentProbed(
 		if probe != nil {
 			_ = probe("scope_child_parent_identity_refused")
 		}
+		_ = lock.Close()
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if cancelled() {
 		_ = lock.Close()
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
@@ -1325,8 +1356,8 @@ func reopenInertRestoreCandidateAtFileProbed(
 			if beforeChildOpen != nil {
 				beforeChildOpen()
 			}
-			candidate, err = openLockedInertRestoreCandidateAtParentProbed(
-				directory, parent, nil)
+			candidate, err = openLockedInertRestoreCandidateAtParentContextProbed(
+				ctx, directory, parent, nil)
 		}
 	}()
 	if err != nil {
@@ -1337,6 +1368,9 @@ func reopenInertRestoreCandidateAtFileProbed(
 			_ = candidate.Close()
 		}
 	}()
+	if ctx.Err() != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	before, err := inspectInertCandidateFile(candidate, false)
 	if err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
@@ -1352,6 +1386,9 @@ func reopenInertRestoreCandidateAtFileProbed(
 	if beforePreflight != nil {
 		beforePreflight()
 	}
+	if ctx.Err() != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	var report InertArchivePreflight
 	report, err = preflightInertArchiveAtParentExpectedFile(
 		ctx, candidate.archive, key, nil, candidate.dir, expectedFile)
@@ -1362,6 +1399,9 @@ func reopenInertRestoreCandidateAtFileProbed(
 	}
 	if afterPreflight != nil {
 		afterPreflight()
+	}
+	if ctx.Err() != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	after, inspectErr := inspectInertCandidateFile(candidate, false)
 	if inspectErr != nil || !os.SameFile(before, after) ||
