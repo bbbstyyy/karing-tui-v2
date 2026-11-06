@@ -1431,10 +1431,23 @@ func (c *InertRestoreCandidate) Verify(
 	return c.verifyInertRestoreCandidateProbed(ctx, key, nil)
 }
 
-// A package-private, nil-in-production checkpoint permits deterministic
-// same-directory ciphertext replacement tests before the first HMAC pass.
+// The legacy package-private checkpoint remains for same-directory inode
+// replacement tests. Verify borrows the candidate's existing exclusive flock;
+// it must never release that caller-owned lease on cancellation or failure.
 func (c *InertRestoreCandidate) verifyInertRestoreCandidateProbed(
 	ctx context.Context, key [32]byte, beforePreflight func(),
+) (InertArchivePreflight, error) {
+	return c.verifyInertRestoreCandidateCancellationProbed(
+		ctx, key, nil, beforePreflight, nil, nil)
+}
+
+// Test-only checkpoints cover cancellation before inventory, before the
+// authenticated preflight, after it, and after the final identity inspection.
+// Production passes nil hooks. No extra public API, cleanup authority or
+// cancellation-dependent deletion is introduced.
+func (c *InertRestoreCandidate) verifyInertRestoreCandidateCancellationProbed(
+	ctx context.Context, key [32]byte,
+	beforeInventory, beforePreflight, afterPreflight, afterIdentity func(),
 ) (InertArchivePreflight, error) {
 	var none InertArchivePreflight
 	if c == nil || ctx == nil || key == ([32]byte{}) {
@@ -1442,7 +1455,13 @@ func (c *InertRestoreCandidate) verifyInertRestoreCandidateProbed(
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dir == nil {
+	if c.dir == nil || ctx.Err() != nil {
+		return none, ErrUnsafeInertRestoreCandidate
+	}
+	if beforeInventory != nil {
+		beforeInventory()
+	}
+	if ctx.Err() != nil {
 		return none, ErrUnsafeInertRestoreCandidate
 	}
 	before, err := inspectInertCandidateFile(c, false)
@@ -1457,14 +1476,32 @@ func (c *InertRestoreCandidate) verifyInertRestoreCandidateProbed(
 	if beforePreflight != nil {
 		beforePreflight()
 	}
+	if ctx.Err() != nil {
+		return none, ErrUnsafeInertRestoreCandidate
+	}
 	report, err := preflightInertArchiveAtParentExpectedFile(
 		ctx, c.archive, key, nil, c.dir, expectedFile)
 	if err != nil || !sameInertPreflightEvidence(c.receipt, report) {
 		return none, ErrUnsafeInertRestoreCandidate
 	}
+	if afterPreflight != nil {
+		afterPreflight()
+	}
+	if ctx.Err() != nil {
+		return none, ErrUnsafeInertRestoreCandidate
+	}
 	after, err := inspectInertCandidateFile(c, false)
 	if err != nil || !os.SameFile(before, after) ||
 		before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return none, ErrUnsafeInertRestoreCandidate
+	}
+	if afterIdentity != nil {
+		afterIdentity()
+	}
+	// A cancelled verification must never publish a preflight receipt,
+	// even when cancellation arrives after all HMAC/SQLite checks passed.
+	// Checking the context and returning the report cannot be atomic.
+	if ctx.Err() != nil {
 		return none, ErrUnsafeInertRestoreCandidate
 	}
 	return report, nil
