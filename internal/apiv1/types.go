@@ -592,6 +592,12 @@ type ProfileDeclarationPreviewResponse struct {
 	AddedNodeCount          int    `json:"added_node_count"`
 	RemovedNodeCount        int    `json:"removed_node_count"`
 	RetainedNodeCount       int    `json:"retained_node_count"`
+	AddedNodeIDs            []string `json:"added_node_ids"`
+	RemovedNodeIDs          []string `json:"removed_node_ids"`
+	RetainedNodeIDs         []string `json:"retained_node_ids"`
+	AddedIDsTruncated       bool `json:"added_ids_truncated"`
+	RemovedIDsTruncated     bool `json:"removed_ids_truncated"`
+	RetainedIDsTruncated    bool `json:"retained_ids_truncated"`
 	RuntimeOverlaySHA256    string `json:"runtime_overlay_sha256"`
 	CandidateSHA256         string `json:"candidate_sha256"`
 	CoreValidated           bool   `json:"core_validated"`
