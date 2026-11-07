@@ -1539,7 +1539,8 @@ func (c *InertRestoreCandidate) Discard(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return c.discardLocked(true)
+	return c.discardLockedWithLeafContextProbed(
+		ctx, true, nil, false, nil, nil)
 }
 
 // openInertCandidateParentForDiscard pins the ORIGINAL parent inode
@@ -1666,13 +1667,31 @@ func (c *InertRestoreCandidate) discardLockedWithLeafProbe(
 	requireFile bool, createdTarget *os.File, stageOnly bool,
 	beforeCipherUnlink, beforeDirectoryUnlink func(),
 ) error {
-	if c == nil || c.dir == nil {
+	// Failed Stage cleanup must always attempt safe cleanup even if its
+	// original request was cancelled. Existing private callers remain intact.
+	return c.discardLockedWithLeafContextProbed(
+		context.Background(), requireFile, createdTarget, stageOnly,
+		beforeCipherUnlink, beforeDirectoryUnlink)
+}
+
+// Only the explicit user-invoked Discard supplies a cancellable context.
+// Refuse before the FIRST irreversible unlink. Once ciphertext has been
+// unlinked, finish directory sync/unlink regardless of cancellation: the
+// original data cannot be restored and partial cleanup is less safe.
+func (c *InertRestoreCandidate) discardLockedWithLeafContextProbed(
+	ctx context.Context, requireFile bool, createdTarget *os.File, stageOnly bool,
+	beforeCipherUnlink, beforeDirectoryUnlink func(),
+) error {
+	if c == nil || c.dir == nil || ctx == nil {
 		return ErrUnsafeInertRestoreCandidate
 	}
 	defer func() {
 		_ = c.dir.Close()
 		c.dir = nil
 	}()
+	if ctx.Err() != nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
 	file, err := inspectInertCandidateFile(c, !requireFile)
 	if err != nil {
 		return ErrUnsafeInertRestoreCandidate
@@ -1700,9 +1719,16 @@ func (c *InertRestoreCandidate) discardLockedWithLeafProbe(
 		return ErrUnsafeInertRestoreCandidate
 	}
 	defer parent.Close()
+	// This is the last read-only admission step before any deletion.
+	if ctx.Err() != nil {
+		return ErrUnsafeInertRestoreCandidate
+	}
 	if file != nil {
 		if beforeCipherUnlink != nil {
 			beforeCipherUnlink()
+		}
+		if ctx.Err() != nil {
+			return ErrUnsafeInertRestoreCandidate
 		}
 		// Re-evaluate exact file custody immediately before irreversible
 		// fd-relative unlink. Explicit Discard uses the inode inspected on
@@ -1713,6 +1739,11 @@ func (c *InertRestoreCandidate) discardLockedWithLeafProbe(
 				return ErrUnsafeInertRestoreCandidate
 			}
 		} else if !sameInspectedInertCipherForDiscard(c, inspected, file) {
+			return ErrUnsafeInertRestoreCandidate
+		}
+		// Cancellation and unlinkat are not atomic, but do not knowingly
+		// delete a valid candidate after the operator cancels Discard.
+		if ctx.Err() != nil {
 			return ErrUnsafeInertRestoreCandidate
 		}
 		// Never remove unknown sibling files or follow a ciphertext symlink.
