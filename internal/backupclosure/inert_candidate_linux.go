@@ -922,7 +922,7 @@ func stageInertRestoreCandidate(
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*sealedArchiveTimeout)
 	defer cancel()
-	if !checkpoint("source_preflight") {
+	if !checkpoint("source_preflight") || ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	// Pin the source's ORIGINAL private parent and exact archive inode
@@ -947,7 +947,7 @@ func stageInertRestoreCandidate(
 	}
 	// Test-only checkpoint after the ORIGINAL source parent and child are
 	// pinned, before any complete Preflight read may begin.
-	if !checkpoint("source_inode_pinned") {
+	if !checkpoint("source_inode_pinned") || ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	report, err := preflightInertArchiveAtParentExpectedFile(
@@ -959,13 +959,13 @@ func stageInertRestoreCandidate(
 			sourceIdentity, report.ArchiveBytes) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("disk_reserve") ||
+	if !checkpoint("disk_reserve") || ctx.Err() != nil ||
 		requireSealedArchiveSpace(candidateParent, report.ArchiveBytes) != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	// Parent flock serializes slot reservations with other stage operations,
 	// and closes the new-dir -> child-lock gap against other adopters.
-	if !checkpoint("parent_lock") {
+	if !checkpoint("parent_lock") || ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	parentLock, err := lockSealedArchiveParent(ctx, candidateParent)
@@ -984,7 +984,7 @@ func stageInertRestoreCandidate(
 	}()
 	func() {
 		defer parentLock.Close()
-		if !checkpoint("parent_inventory") {
+		if !checkpoint("parent_inventory") || ctx.Err() != nil {
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
