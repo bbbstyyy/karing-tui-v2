@@ -71,7 +71,9 @@ func TestProfileDeclarationPreviewHasNoWritesOrCredentialDisclosure(t *testing.T
 	}
 	if result.ProfileID != "profile-a" || result.SnapshotID != snapshotID || result.BaseDeclarationRevision != rev ||
 		result.SnapshotNodeCount != 1 || result.EffectiveNodeCount != 1 || result.AddedNodeCount != 1 ||
-		result.RemovedNodeCount != 0 || result.RetainedNodeCount != 0 || len(result.CandidateSHA256) != 64 ||
+		result.RemovedNodeCount != 0 || result.RetainedNodeCount != 0 || len(result.AddedNodeIDs) != 1 || result.AddedNodeIDs[0] != nodeID ||
+		len(result.RemovedNodeIDs) != 0 || len(result.RetainedNodeIDs) != 0 ||
+		result.AddedIDsTruncated || result.RemovedIDsTruncated || result.RetainedIDsTruncated || len(result.CandidateSHA256) != 64 ||
 		len(result.RuntimeOverlaySHA256) != 64 || result.CoreValidated || result.Applied {
 		t.Fatalf("unexpected preview result: %+v", result)
 	}
@@ -143,5 +145,23 @@ func TestProfileDeclarationPreviewRejectsDisabledRequiredNode(t *testing.T) {
 	current, err := store.CurrentDeclaration(context.Background())
 	if err != nil || current.Revision != rev {
 		t.Fatalf("failed preview advanced declaration: %+v %v", current, err)
+	}
+}
+
+func TestLimitedPreviewNodeIDsBoundedAndIndependent(t *testing.T) {
+	ids := make([]string, previewNodeIDLimit+4)
+	for i := range ids {
+		ids[i] = "node-" + strings.Repeat("a", i+1)
+	}
+	limited := limitedPreviewNodeIDs(ids)
+	if len(limited) != previewNodeIDLimit {
+		t.Fatalf("limited node ids = %d, want %d", len(limited), previewNodeIDLimit)
+	}
+	limited[0] = "mutated"
+	if ids[0] == limited[0] {
+		t.Fatal("preview node IDs alias stored input")
+	}
+	if got := limitedPreviewNodeIDs(nil); got == nil || len(got) != 0 {
+		t.Fatalf("empty diff should serialize as a safe empty array: %#v", got)
 	}
 }
