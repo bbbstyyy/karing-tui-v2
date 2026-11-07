@@ -15,7 +15,20 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
-const profilePreviewTimeout = 20 * time.Second
+const (
+	profilePreviewTimeout = 20 * time.Second
+	previewNodeIDLimit = 32
+)
+
+// Node IDs are stable, non-secret project identifiers; never expose imported
+// labels, source keys, locations, credentials, or the candidate document.
+// The complete counts remain available even when the diff is truncated.
+func limitedPreviewNodeIDs(ids []string) []string {
+	if len(ids) > previewNodeIDLimit {
+		ids = ids[:previewNodeIDLimit]
+	}
+	return append([]string{}, ids...)
+}
 
 func registerProfileSnapshotPreviewRoutes(mux *http.ServeMux, store *storage.Store, gate *profileOperationGate) {
 	if mux == nil || store == nil || gate == nil {
