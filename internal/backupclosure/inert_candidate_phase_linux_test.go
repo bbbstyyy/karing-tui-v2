@@ -51,6 +51,8 @@ func TestInertRestoreStageProbeFailClosedAtEveryBoundary(t *testing.T) {
 		"scope_sync",
 		"parent_sync",
 		"candidate_revalidation",
+		"candidate_authenticated",
+		"candidate_receipt",
 	} {
 		t.Run(rejectedAt, func(t *testing.T) {
 			var lastPhase string
@@ -89,7 +91,7 @@ func TestInertRestoreStageProbeFailClosedAtEveryBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unmodified admission failed at %q: %v", lastOrEmptyStage(seen), err)
 	}
-	if lastOrEmptyStage(seen) != "candidate_revalidation" {
+	if lastOrEmptyStage(seen) != "candidate_receipt" {
 		t.Fatalf("successful admission skipped final preflight: %q", lastOrEmptyStage(seen))
 	}
 	if _, err := candidate.Verify(context.Background(), key); err != nil {
