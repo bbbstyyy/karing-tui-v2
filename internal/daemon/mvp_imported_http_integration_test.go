@@ -71,6 +71,9 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	defer sourceServer.Close()
 
 	stateDir := t.TempDir()
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	store, err := storage.Open(ctx, filepath.Join(stateDir, "state.db"))
 	if err != nil {
