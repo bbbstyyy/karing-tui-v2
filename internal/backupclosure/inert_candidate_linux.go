@@ -1111,7 +1111,7 @@ func stageInertRestoreCandidate(
 		&ownedTarget); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("scope_sync") {
+	if !checkpoint("scope_sync") || ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	// Fsync the same directory inode used for the ciphertext openat, not
@@ -1119,7 +1119,7 @@ func stageInertRestoreCandidate(
 	if err = candidate.dir.Sync(); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("parent_sync") {
+	if !checkpoint("parent_sync") || ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	// Do not reopen candidateParent by name: its inode may have been
@@ -1127,7 +1127,7 @@ func stageInertRestoreCandidate(
 	if err = syncPinnedInertCandidateParent(candidateParent, parentSync); err != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
-	if !checkpoint("candidate_revalidation") {
+	if !checkpoint("candidate_revalidation") || ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	var checked InertArchivePreflight
@@ -1136,11 +1136,22 @@ func stageInertRestoreCandidate(
 	if err != nil || !sameInertPreflightEvidence(report, checked) {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
+	// Read-only authentication may have completed after cancellation.
+	// Do not publish a validated candidate on a stale request; failed
+	// Stage still cleans up only the original O_EXCL-created target inode.
+	if !checkpoint("candidate_authenticated") || ctx.Err() != nil {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
 	// The final authenticated path still has to refer to the original
 	// locked inode, not merely contain matching ciphertext.
 	locked, lockErr := verifyCandidateDirLock(candidate.directory, candidate.dir)
 	if lockErr != nil || !os.SameFile(candidate.directoryIdentity, locked) ||
 		!sameInertCandidateParentLease(candidateParent, parentSync) {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	// Final successful receipt publication is not an atomic cancellation
+	// boundary. Check immediately before ownership can leave Stage.
+	if !checkpoint("candidate_receipt") || ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	candidate.receipt = checked
