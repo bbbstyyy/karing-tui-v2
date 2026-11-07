@@ -197,6 +197,17 @@ func (r *serverRuntime) CheckedApplyConfirm(
 			return err
 		}
 
+		// A coordinator success is not yet a user-facing success receipt.
+		// Read the durable journal, applied/LKG pointers and persisted SHA
+		// provenance back before asserting Applied=true. The apply may have
+		// committed if this readback fails: return an uncertain outcome, never
+		// start a second apply or a speculative rollback.
+		readbackCtx, readbackCancel := context.WithTimeout(context.WithoutCancel(inner), 5*time.Second)
+		defer readbackCancel()
+		if err := verifyCheckedApplyReadback(readbackCtx, store, receipt, attempt); err != nil {
+			return err
+		}
+
 		result = apiv1.CheckedApplyResponse{
 			DeclarationApplyResponse: apiv1.DeclarationApplyResponse{
 				DeclarationRevision:  artifact.Manifest.DeclarationRevision,
