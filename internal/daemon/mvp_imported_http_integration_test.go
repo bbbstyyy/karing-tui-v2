@@ -4,9 +4,9 @@ package daemon
 
 import (
 	"bufio"
-	"encoding/base64"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,7 +43,7 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	const (
 		profileID = "mvp-http-profile"
 		sourceKey = "edge-http"
-		secret = "MVP_HTTP_SECRET_NEVER_IN_API"
+		secret    = "MVP_HTTP_SECRET_NEVER_IN_API"
 	)
 	target, targetHits, closeTarget := startRouteOutcomeTarget(t)
 	defer closeTarget()
@@ -79,7 +79,7 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	defer store.Close()
 	ports := reserveLoopbackPorts(t, 4)
 	inbounds := domain.InboundSet{
-		Listen: netip.MustParseAddr("127.0.0.1"),
+		Listen:   netip.MustParseAddr("127.0.0.1"),
 		RulePort: ports[0], DirectPort: ports[1], SelectedPort: ports[2],
 	}
 	const controlSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -91,15 +91,15 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	managed, err := NewManagedCore(store, ManagedCoreOptions{
 		Executable: corePath, StateRoot: filepath.Join(stateDir, "core"),
 		ControlEndpoint: fmt.Sprintf("http://127.0.0.1:%d", ports[3]),
-		ControlSecret: controlSecret, Inbounds: inbounds, Policy: policy,
+		ControlSecret:   controlSecret, Inbounds: inbounds, Policy: policy,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	compiler, err := declaration.NewNativeCompiler(declaration.NativeCompilerOptions{
-		Inbounds: inbounds,
+		Inbounds:       inbounds,
 		ControlAddress: netip.AddrPortFrom(inbounds.Listen, ports[3]),
-		ControlSecret: controlSecret,
+		ControlSecret:  controlSecret,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -199,11 +199,11 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 		t.Fatalf("unsafe profile snapshot preview: %+v", preview)
 	}
 	stageReceipt := apiv1.ProfileDeclarationStageRequest{
-		SnapshotID: *refreshed.CurrentSnapshotID,
-		ExpectedSourceRevision: preview.SourceRevision,
+		SnapshotID:                  *refreshed.CurrentSnapshotID,
+		ExpectedSourceRevision:      preview.SourceRevision,
 		ExpectedDeclarationRevision: base.Revision,
-		CandidateSHA256: preview.CandidateSHA256,
-		RuntimeOverlaySHA256: preview.RuntimeOverlaySHA256,
+		CandidateSHA256:             preview.CandidateSHA256,
+		RuntimeOverlaySHA256:        preview.RuntimeOverlaySHA256,
 	}
 	status, response = mvpJSONRequest(t, api.URL, http.MethodPost, "/v1/profiles/"+profileID+"/declaration/stage", stageReceipt)
 	if status != http.StatusCreated || bytes.Contains(response, []byte(secret)) {
@@ -281,12 +281,12 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	selectedTarget := domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: profileID, NodeID: nodeID}
 	status, response = mvpJSONRequest(t, api.URL, http.MethodPut, "/v1/selection/current/checked",
 		apiv1.CurrentSelectionCheckedRequest{
-			Target: selectedTarget,
-			ExpectedSelectionRevision: selection.SelectionRevision,
-			ExpectedConfigRevision: selection.ConfigRevision,
-			ExpectedGenerationID: selection.AppliedGenerationID,
+			Target:                      selectedTarget,
+			ExpectedSelectionRevision:   selection.SelectionRevision,
+			ExpectedConfigRevision:      selection.ConfigRevision,
+			ExpectedGenerationID:        selection.AppliedGenerationID,
 			ExpectedDeclarationRevision: selection.DeclarationRevision,
-			ExpectedDeclarationSHA256: selection.DeclarationSHA256,
+			ExpectedDeclarationSHA256:   selection.DeclarationSHA256,
 		})
 	if status != http.StatusOK || bytes.Contains(response, []byte(secret)) {
 		t.Fatalf("checked selection status=%d or leaked credentials", status)
