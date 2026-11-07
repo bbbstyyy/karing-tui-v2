@@ -17,7 +17,7 @@ import (
 
 const (
 	profilePreviewTimeout = 20 * time.Second
-	previewNodeIDLimit = 32
+	previewNodeIDLimit    = 32
 )
 
 // Node IDs are stable, non-secret project identifiers; never expose imported
