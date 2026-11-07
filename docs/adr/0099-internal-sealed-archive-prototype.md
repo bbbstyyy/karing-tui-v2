@@ -1,0 +1,21 @@
+# ADR 0099 — Internal encrypted, authenticated, atomic snapshot archive
+
+- Status: **M4 internal-only prototype**, not an export, import, restore, scheduled backup, or activation API.
+- Builds on ADR 0094–0098 and the invariant that storage declarations, generation manifests, rule resources and core identity fail closed.
+- Linux normal user, no TUN, unchanged CN 28 groups / five routing layers; subscription and ISP routing remain excluded.
+
+## Confidentiality and durability boundary
+
+Add two internal functions in `backupclosure`: `Closure.SealInertArchive` writes ciphertext to a new private `.ktbackup` file, and `VerifyInertArchive` performs read-only offline authentication and SHA-256 verification. Both v1 (database + rules only) and v2 (adds the approved non-executable core copy) retain their explicit format identity and `restore_ready=false`. Neither is an authorized product backup.
+
+The writer must be given an existing UID-owned 0700 directory **separate from the SQLite snapshot staging directory**, an absent filename, and an externally generated high-entropy 32-byte symmetric key. No shell argument, HTTP, CLI, TUI, automatic key creation/persistence or password-based KDF is exposed. Losing the key makes the file unrecoverable. This experimental encrypted format must not be presented as the finalized interoperable backup specification.
+
+The binary envelope uses a versioned 16-byte magic, random 128-bit AES-CTR IV, and HMAC-SHA-256 Encrypt-then-MAC over the complete header plus ciphertext. Encryption and authentication keys are independently domain-separated using HMAC-SHA-256 from the supplied symmetric key and IV. Ciphertext contains a bounded canonical inventory length/JSON and the exact database/rule/core file bytes in inventory order. Per-file SHA-256 and lengths are rechecked against the previously verified closure, and a second verification of all pinned source and independent copy files is required before publication. The verifier hashes every decrypted record **into discard only**, verifies exact total length and the final HMAC in constant time, rejects trailing/truncated/modified data and never writes plaintext or opens an activation path. Plaintext parsed before MAC success is never returned or otherwise acted upon.
+
+Archive writes are bounded to the existing 768 MiB database + 128 MiB rules + 256 MiB core closure, 128 KiB canonical inventory and framing overhead, with a 90-second context deadline. A best-effort Linux `statfs` check requires enough currently available blocks to write the ciphertext and leave a 64 MiB safety margin; this cannot reserve disk space against concurrent writers. An exclusively created 0600 ciphertext temporary file is SHA and mode checked, fsynced and published via no-overwrite hard link to the absent destination, then its temporary name is removed and the parent directory synced. Existing files or symlinks are never overwritten. A failure during publication/fsync is an **uncertain outcome**, never a reason for an automatic retry. Crash leftovers remain encrypted/private, and require a future explicitly bounded lease-aware scavenger rather than recursive deletion.
+
+## Threat model and remaining work
+
+This is an **internal prototype**, not an approved long-term cryptographic archive contract. The caller is responsible for supplying a unique high-entropy key per archive. Authenticated data is never considered valid before the full HMAC passes. Same-UID adversarial inode ABA, disk-full races and malicious process memory access remain outside the achieved boundary. A future import path must authenticate *before* writing or interpreting extracted resources, use private staging and strict versioned migration, and never trust `restore_ready` fields.
+
+No end-user backup button, key management, passphrase KDF, signatures, key rotation, export transport, retained archive index/garbage collector, durable cross-restart leases or transactional restore/rollback-of-rollback exists. Tests exercise round-trip, ciphertext privacy, wrong key, corruption/truncation/trailing bytes, symlinks, unsafe permissions and path refusal. Managed-core CI also seals/verifies a real locked v2 core bundle. T15/T23 and M4/M5 release gates remain open.

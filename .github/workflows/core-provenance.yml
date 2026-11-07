@@ -1,0 +1,246 @@
+name: core-provenance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/core-provenance.yml'
+      - 'scripts/verify-core-build.sh'
+      - 'scripts/smoke-core-runtime.sh'
+      - 'scripts/offline_lab/**'
+      - 'resources/core-entry/main.go.txt'
+      - 'resources/core.lock.json'
+      - 'cmd/karing-tui/**'
+      - 'internal/app/**'
+      - 'internal/runtimepath/**'
+      - 'internal/daemon/**'
+      - 'internal/backupclosure/**'
+      - 'internal/compiler/**'
+      - 'go.mod'
+      - 'go.sum'
+  push:
+    paths:
+      - '.github/workflows/core-provenance.yml'
+      - 'scripts/verify-core-build.sh'
+      - 'scripts/smoke-core-runtime.sh'
+      - 'scripts/offline_lab/**'
+      - 'resources/core-entry/main.go.txt'
+      - 'resources/core.lock.json'
+      - 'cmd/karing-tui/**'
+      - 'internal/app/**'
+      - 'internal/runtimepath/**'
+      - 'internal/daemon/**'
+      - 'internal/backupclosure/**'
+      - 'internal/compiler/**'
+      - 'go.mod'
+      - 'go.sum'
+
+concurrency:
+  group: core-provenance-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  # Pinned multi-platform OCI index observed on both native runners.
+  T24_IMAGE: docker.io/library/python@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
+
+jobs:
+  build:
+    name: linux-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.12'
+          cache: false
+      - name: Verify locked core build and retain native binary
+        env:
+          CORE_OUTPUT: ${{ runner.temp }}/t24-approved-core
+        run: bash scripts/verify-core-build.sh "${{ matrix.arch }}"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Build native project management binary
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -trimpath -o "${{ runner.temp }}/t24-management" ./cmd/karing-tui
+          test -x "${{ runner.temp }}/t24-management"
+
+      - name: Native offline bootstrap and loopback Core traffic (T24 partial)
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/t24-airgap-${{ matrix.arch }}"
+          mkdir -p "$stage"
+          install -m 0555 "${RUNNER_TEMP}/t24-management" "$stage/app"
+          install -m 0555 "${RUNNER_TEMP}/t24-approved-core" "$stage/core"
+          install -m 0444 scripts/offline_lab/t24_airgap_bootstrap.py "$stage/t24_airgap_bootstrap.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_loopback_core.py "$stage/t24_airgap_loopback_core.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_cold_guard.py "$stage/t24_airgap_managed_cold_guard.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_applied.py "$stage/t24_airgap_managed_applied.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_dns.py "$stage/t24_airgap_managed_dns.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_direct_dns.py "$stage/t24_airgap_managed_direct_dns.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_proxy_dns.py "$stage/t24_airgap_managed_proxy_dns.py"
+          install -m 0444 scripts/offline_lab/t24_airgap_managed_group_dns.py "$stage/t24_airgap_managed_group_dns.py"
+          # Host-only staging: root-own the approved Core artifact so the
+          # non-root Daemon artifact verifier accepts it in a read-only bind.
+          sudo chown 0:0 "$stage/core"
+          # Stage an OCI test environment while runner network remains enabled.
+          # The isolated test container below explicitly has NO network.
+          docker pull "$T24_IMAGE"
+          docker image inspect --format '{{index .RepoDigests 0}}' "$T24_IMAGE"
+          version="$(jq -r '.reference_linux_cli_build.version_value' resources/core.lock.json)"
+          expected_core_sha="$(jq -er --arg arch "${{ matrix.arch }}" '.build_verification[$arch + "_sha256"]' resources/core.lock.json)"
+          test "$(sha256sum "$stage/core" | awk '{print $1}')" = "$expected_core_sha"
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_bootstrap.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-version "$version"
+
+          # Separate network-none namespace, real approved Core, local echo
+          # service, three real SOCKS5 CONNECT data paths, and authenticated
+          # Clash API. No TUN, DNS, external IPs or licensed CN rule files.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_loopback_core.py \
+            --arch "${{ matrix.arch }}" \
+            --core /opt/t24/core \
+            --core-version "$version"
+
+          # Third isolated namespace: a configured verified Core path with NO
+          # committed generation must refuse activation and reject a symlink
+          # or modified Core artifact before creating a secret or live socket.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_cold_guard.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
+
+          # Fourth network-none namespace: actual production Daemon receives
+          # and commits a synthetic V1 declaration through the Unix API,
+          # applies the compiled generation, supervises the approved Core,
+          # forwards localhost SOCKS through direct AND synthetic selected
+          # local node, then durably stops and restarts from same SQLite.
+          # All data stays in 127.0.0.1; never stage CN resources or secrets.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_applied.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
+
+          # Fifth independent network-none namespace: a REAL managed Core
+          # resolves ONLY the test SOCKS node server's fixed .invalid name by
+          # sending a UDP DNS question to an ephemeral local responder. Both
+          # the DNS receipt and selected SOCKS TCP echo must be observed.
+          # This does not test destination DNS, UDP ASSOCIATE or CN assets.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_dns.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
+
+          # Sixth independent Linux native airgap: prove Rule/Direct DOMAIN
+          # destination resolution via ONLY the Direct DNS role's real UDP A
+          # question, not the separate Outbound/Node DNS port. Then a numeric
+          # Selected control must still reach its strict synthetic SOCKS node.
+          # Same verified Core, no remote endpoint, privileged port or TUN.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_direct_dns.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
+
+          # Seventh independent network-none native Core. Exact Proxy DNS
+          # TCP queries must traverse synthetic Selected SOCKS (audit DNS
+          # port + raw DNS question), while Direct UDP DNS and Outbound/Node
+          # DNS stay isolated. No DNS through WAN or local direct fallback.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_proxy_dns.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"
+
+          # Eighth independent network-none native managed Core. A single
+          # custom domain-matched Rule group binds an explicit Group TCP DNS
+          # profile with Selected detour. Separate raw DNS A question and
+          # Selected SOCKS destination-port receipts are required, and the
+          # global Proxy TCP resolver must remain isolated from Group DNS.
+          docker run --rm --pull never \
+            --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user 10001:10001 --read-only \
+            --tmpfs /work:rw,nosuid,nodev,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=$stage,target=/opt/t24,readonly" \
+            --env DISPLAY= --env WAYLAND_DISPLAY= \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            "$T24_IMAGE" python3 /opt/t24/t24_airgap_managed_group_dns.py \
+            --arch "${{ matrix.arch }}" \
+            --app /opt/t24/app \
+            --core /opt/t24/core \
+            --core-sha256 "$expected_core_sha"

@@ -1,0 +1,22 @@
+# ADR 0135 — Bind inert restore journal metadata in read-only disposable guest replay
+
+- **Status:** M4 internal test-only audit. No T23 completion, restore permission, Core start, VM shutdown, electrical interruption, real-guest boot attestation, or deletion authority.
+- **Dependency:** ADR 0128–0134, Go v18 `inert_restore_preparations` / `PrepareInertRestoreRecord` and `InspectInertRestoreRecords`, and the original read-only `guest_reboot_audit.py`.
+- **Environment:** Linux ordinary user; no TUN; preserve CN's original 28 groups, Custom → GeoSite → GeoIP → ACL → FINAL, and exclude subscription/ISP-provided routing.
+
+## Previously invisible change
+
+Earlier guest audit only inspected `COUNT(*) WHERE phase='prepared'` in the independent inert-restoration journal. Two databases could have the same pending-record count while a candidate `archive_sha256`, `inventory_sha256`, scope, archive size, baseline fence, or archived abandoned metadata had changed. This is a useful T23 **detection** gap, not evidence that any encrypted archive is authentic or safe to import.
+
+## Decision
+
+1. Advance guest witness format **v3 → v4** (the actual SQLite schema remains v18). A previously externally pinned v3 witness never silently upgrades: use a fresh disposable guest and nonce rather than overwriting a baseline.
+2. Replace pending count-only check with `inert_restore_journal_ledger` in the same WAL-aware SQLite `mode=ro` transaction as all other guest checks. Inspect at most **32** rows, matching production's inert record inventory limit; request 33 and refuse if exceeded. Validate increasing positive record IDs, single-component `.ktui-restore-v1-[A-Za-z0-9]{6,32}` scope, lowercase SHA-256 archive/inventory/fence digests, archive size `1..2 GiB`, canonical phase-to-active-slot relation (`prepared` occupies slot 1, `abandoned` occupies none), and at most one pending record.
+3. For every row, require a BLOB baseline of **1..4096 bytes**, verify its SHA-256 against the stored `baseline_sha256`, and require a nonempty JSON object. Check owner-bounded timezone-aware timestamps and `updated_at >= created_at`. This is intentionally **not** production `InertRestoreFence` CAS or authenticity verification; it does not read, import, decrypt or even locate a candidate archive.
+4. Hash an ordered canonical field-array representation of all retained inert rows, including complete *private* scope, both archive/inventory SHA values, archive size, fence SHA, phases and timestamps. Return only `inert_restore_record_count`, `prepared_inert_restore_count` and `inert_restore_ledger_sha256`; **never expose candidate scope or baseline JSON in stdout or witness**. Both strict `verify` and narrow `reconcile-verify` already compare the whole snapshot, so changing inert-restoration metadata invalidates the pinned baseline even if current Applied/LKG and the latest archived apply remain unchanged.
+5. Synthetic Python tests cover a healthy pending but non-authorizing record, changed inventory hash, replacement fence with a matching recalculated SHA, `prepared → abandoned` transition, malformed scope/hash/timestamps and overflow beyond 32 rows.
+6. Linux Go integration test creates a real v18 Store with a committed declaration, metadata-bearing Applied/LKG generation and selected node, obtains a real `ReadInertRestoreFence`, then calls production `PrepareInertRestoreRecord` against isolated synthetic ciphertext metadata **without** loading a credential or an archive. The original Python guest reader must accept the unchanged read-only subset, keep SQLite main bytes identical and report all recovery/restore flags false; test-only SQL changes inventory SHA with the **same prepared count**, and must be refused. A second test uses production `AbandonInertRestoreRecord`: pinned before-state is invalidated while original Applied/LKG remain intact.
+
+## Residual risks / release gate
+
+Neither a self-consistent ciphertext digest nor a matching `InertRestoreFence` snapshot proves any offline archive HMAC, actual signed reclaim provenance, released credential, persistent file inode closure, correct VM crash-and-reboot, live Core traffic, or safe restore. A change *before* baseline pinning can still be accepted as baseline data, and hashes are not secret-bound attestation. Never clear `RecoveryRequired`, activate Core, import credentials, perform file garbage collection, delete original metadata, or mark T15/T23/T25 as accepted from this result. Outer PR #1 stays Draft; no production endpoints or stable `main` change.

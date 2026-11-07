@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# Both push and PR events may target the same head. Cancel stale duplicate
+# suites and superseded commits instead of running costly race suites twice.
+concurrency:
+  group: ci-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Dependency lock check
+        run: |
+          go mod tidy
+          if ! git diff --quiet -- go.mod go.sum || test -n "$(git ls-files --others --exclude-standard -- go.sum)"; then
+            git diff -- go.mod go.sum
+            if test -f go.sum; then
+              echo "--- generated go.sum ---"
+              cat go.sum
+            fi
+            exit 1
+          fi
+      - name: Verify modules
+        run: go mod verify
+      - name: Format check
+        run: make fmt-check
+      - name: Vet
+        run: make vet
+      - name: Guarded T15/T23 VM host tool unit tests (mock libvirt only)
+        run: python3 -m unittest discover -s scripts/recovery_lab -p 'test_*.py' -v
+      - name: T24 airgap bootstrap fail-closed policy tests (no Docker)
+        run: python3 -m unittest discover -s scripts/offline_lab -p 'test_*.py' -v
+      - name: Test
+        run: make test
+      - name: Integration compile check
+        run: go test -tags=integration ./internal/daemon -run 'a^'
+      - name: Build
+        run: make build
+
+  # Enumerate every test dynamically, split the expensive Linux
+  # backupclosure suite into four disjoint shards and run all other
+  # packages once. This is full -race coverage, not a skip list.
+  race:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Race test (shard ${{ matrix.shard }} of 4)
+        run: make test-race-shard RACE_SHARD=${{ matrix.shard }} RACE_SHARDS=4

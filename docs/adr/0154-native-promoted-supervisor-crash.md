@@ -1,0 +1,24 @@
+# ADR 0154 — Native managed Core: one supervised crash after a durable generation promotion
+
+- **Status:** bounded synthetic T24 preflight; **not** a recovery SLA, real host power-loss experiment, long soak or release authorization.
+- **Depends on:** ADR 0149–0153: real production management Unix API, pinned approved Core, localhost-only Rule/Direct/Selected and Selected failure isolation, staged revision 2, valid CAS promotion to Applied/LKG generation 2 and durable stop/restart.
+- **Strict envelope unchanged:** two native Linux architectures, four separate `--network none` containers each, UID 10001, no capabilities/new privileges, read-only root, owner-only ephemeral state, 127.0.0.1 echo and synthetic SOCKS5 node only. No TUN, third-party DNS/rule sets/remote IP, subscription/ISP routing layer, network system changes or release artifacts.
+
+## Gap
+
+ADR 0153 proves deliberate live activation and a *clean* Daemon restart of an applied promoted generation. It does not show what happens if the approved Core child unexpectedly exits **after** that promotion: the supervisor might lose the current generation or LKG, leave an open restart circuit, replay stale revision 1, fail to restore the Selected route, or ignore an explicit stop while a retry remains queued. Prior managed Go integration tests exercise process crash on a separate fixture; this decision adds a bounded run with the *actual* Daemon + Linux native approved Core + persisted generation 2 + real three-inbound localhost data plane inside the no-network namespace.
+
+## Decision
+
+Extend only the pre-existing **fourth** native container:
+
+1. Preserve all ADR 0153 tests unchanged, including initial commit/compile/apply, stale-CAS 409, non-disruptive rejected candidate, deliberate valid CAS revision 1→2, new Approved Core child PID, Selected-node refusal/recovery and a **third** Daemon session on the same private SQLite.
+2. After the third Daemon explicitly starts generation 2 and all three real local SOCKS5 inbounds pass, inject **exactly one** abnormal `SIGKILL` against the verified **same-UID, pinned executable, direct child of that Daemon**. Never signal the daemon, user processes, arbitrary PIDs or a process group. Use Linux `pidfd_open` **before** rechecking process identity and `pidfd_send_signal` for PID-reuse safety; if the kernel/Python lacks pidfd, the test **refuses** instead of falling back to unsafe PID kill. Always close the pidfd.
+3. Poll the *real* Unix status with an absolute monotonic deadline (up to 25s), rejecting any circuit opening or recovery-required state, changed desired-running intent, declaration/config revision, Applied or LKG generation. Intermediate backoff/starting/old PID snapshots are **never** treated as recovery. Require a **new** positive Core PID with a positive supervised-failure counter; reverify its executable/UID/PPID.
+4. Reprobe Rule 2080, Direct 2081 and Selected 2082 with distinct real localhost SOCKS5 CONNECT payloads. Rule/Direct must not cross the selected synthetic upstream. Deny one Selected upstream CONNECT while other entries remain healthy, and require Selected to fail closed without direct fallback; then clear refusal and require success, **same recovered PID**, same Applied/LKG generation.
+5. Explicitly stop Core; verify stopped desired state, zero Core PID and proxy listeners immediately and after a bounded wait longer than the first automatic retry backoff. Close the Daemon cleanly, then open **the same disposable SQLite a fourth time** and prove generation 2 and stopped intent persisted without unintended restart, no listeners, and same declaration SHA.
+6. Add stdlib tests that simulate intermediate old-PID snapshots, missing or incorrect failure counters, circuit/recovery/intent/revision/LKG drift, invalid PIDs, pidfd failure, verification failure before any SIGKILL, single-signal ordering, positive new-child verification, route/refusal sequence and post-kill cleanup. Only exact-head ordinary Go/Python/format/build, 4/4 Race, managed Core and **both** native Core Provenance runs can authorize merge into the dev branch.
+
+## Deliberate limitations
+
+This is **one controlled kill inside a disposable per-architecture container** with real Core and real localhost TCP, not a verified VM reboot or electrical power loss, no production network cut, concurrent active user sessions, unexpected disk corruption, prolonged restarts, dynamic CN rule matching, license/legal permissions, offline tar installation, double rollback, full archive/HMAC/credentials restore or T25 72h/7d/30d soak. It does not prove uptime SLA. T15/T23/T24/T25 release gates remain **OPEN**; `core_distribution=false`, `cn_preset_offline_bundle=false`, Restore/GC disabled, stable `main` untouched and outer Draft PR #1 unchanged. Never run this crash injection on real users' processes.

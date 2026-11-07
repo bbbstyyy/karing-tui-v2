@@ -1,0 +1,17 @@
+# ADR 0176 — native Rule/Direct destination-domain lookup through real Direct UDP DNS
+
+- **Status:** proposed M5/T22 scoped experiment; not full T22 or release.
+- **Base:** merged ADR 0175: a real Core queried its **Outbound/Node** UDP resolver for a synthetic SOCKS node server hostname. We now test the distinct **Direct destination** DNS role.
+- **Runtime:** sixth independent native network-none Linux amd64/arm64 Docker sandbox; SHA-pinned approved Core, real production Daemon and Unix management API, nonroot UID 10001, zero capabilities, read-only root with isolated ephemeral `/work`. All earlier containers and lifetime ledgers unchanged.
+
+## Decision
+
+1. Construct an **exact V1 declaration** with the existing three mixed inbounds `Rule:2080`, `Direct:2081`, `Selected:2082`, one IP-literal local synthetic SOCKS node, empty five routing layers with explicit `final=direct`. The only additional DNS configuration is **two explicitly distinct** UDP profiles: Outbound/Node vs Direct destination DNS, each bound to its own ephemeral 127.0.0.1 port, with `direct_profile_id` selecting the latter. No fallback, Group/Proxy DNS, remote resolver or TUN.
+2. The existing strict DNS wire responder is parameterized only by **two compile-time allowed test fixture names**: `t24-node.invalid` for the Outbound/Node server and `t24-direct.invalid` for the Direct destination server. The listener checks expected name before responding A=127.0.0.1 (1s TTL), AAAA/HTTPS NODATA; no recursion, internet, arbitrary name or privileged port.
+3. Compile and commit the actual declaration, start the approved Core via the production Daemon and verify its current PID/Applied generation/decl/config/LKG. Real SOCKS5 ATYP=3 clients for Rule and Direct each connect by **numeric 127.0.0.1 transport** and request `t24-direct.invalid:<local echo port>`; both application echoes must exactly match. The independently recorded **Direct-role UDP** query receipt must contain at least one A question for this hostname, and **Outbound/Node DNS receives zero questions**. Because the Core may cache the DNS response, the second stream need not trigger a second DNS question.
+4. The Selected numeric-only control must instead traverse the strict synthetic Selected SOCKS upstream exactly once with an exact TCP echo, never touching either DNS responder. Require zero synthetic refusals, no route bypass/foreign name/fixture failure, unchanged PID/revisions/Applied/LKG. Explicit Core stop in `finally`, check port release and original approved executable hash.
+5. Add offline no-Core negative tests for malformed fixture, unapproved resolver/port/route/fallback/TUN, actual original SOCKS5 DOMAIN request bytes, false/absent/wrong A receipts, DNS role crossing, Selected fallback or DNS leakage, proxy node fault and Core PID/LKG drift. Only exact-head ordinary CI with four Go Race jobs, Managed Core Integration and both native architectures passing can emit `T22_AIRGAP_DIRECT_DESTINATION_DNS_UDP=ok`.
+
+## Not claimed
+
+No actual user/public DNS or remote resolver, Proxy/Group DNS detour, GeoIP pre-resolution, SOCKS UDP ASSOCIATE, full CN five-layer/28-group resource licensing, T20 1000 reconnects, T25 72h/7d/30d, real power loss, Restore/GC or stable release. Keep `T22_HOSTNAME_AND_UDP_VERIFIED=false`, `T24_CN_RULESETS_OR_REMOTE_DNS_VERIFIED=false`, `T20_1000_RECONNECTS_VERIFIED=false`, `T25_72H_7D_30D_SOAK_VERIFIED=false`, `core_distribution=false` and `cn_preset_offline_bundle=false`. Stable `main` and release Draft PR #1 untouched; no TUN or subscription/ISP routing.

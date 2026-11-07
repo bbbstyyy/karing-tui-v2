@@ -1,0 +1,25 @@
+# ADR 0102 — In-memory SQLite logical verification of authenticated archives
+
+- Status: **M4 internal-only, read-only verification prerequisite**. Not a restore, migration, export, apply or activation API.
+- Predecessors: ADR 0094–0101, `docs/plan.md` §18.3, T15 and T23.
+- Runtime contract unchanged: Linux unprivileged, no TUN; CN preset 28 groups, Custom → GeoSite → GeoIP → ACL → FINAL, and no subscription/ISP routing layer.
+
+## Decision: no plaintext database on disk
+
+`PreflightInertArchive` first authenticates the entire AES-CTR/HMAC-SHA-256 envelope and SHA-256 of the SQLite, all rules and approved core (ADR 0101); it performs a separate complete ciphertext SHA replay for the canonical inventory. It then makes one more bounded streaming pass, decrypting only the SQLite record into memory, verifying its SHA-256 against the authenticated inventory and hashing the *entire* archived file again against the authenticated receipt **before running SQL**. Inode identity, no-follow, UID/permissions, length, mtime, parent privacy and context deadline are checked as for earlier readers. No resource is unpacked or copied to a file, and the already running SQLite/database or daemon is never opened for writing.
+
+For this conservative first implementation, the independently inspected SQLite payload may be at most **64 MiB** (`MaxInMemoryArchiveSQLiteBytes`). Deserializing the database through the already pinned `modernc.org/sqlite` driver's `database/sql.Conn.Raw` hook can duplicate the buffer internally; a 768 MiB archive DB could otherwise create unacceptable transient memory pressure. Larger, even otherwise valid, archives fail closed and receive **no preflight report**. The 768 MiB encrypted transport/snapshot budget has not changed. The code attempts to zero its temporary input buffer; Go and driver-internal memory copies do not provide a guaranteed secure-erase property. Only the private, in-process `:memory:` SQLite connection is used, with one connection, `trusted_schema=OFF`, `temp_store=MEMORY` and `query_only=ON` before inspection.
+
+## Independent checks
+
+After `PRAGMA integrity_check` returns exactly `ok`, the validator requires an empty `PRAGMA foreign_key_check` result. All 17 schema migrations must be present exactly once in ascending order. The complete bounded declaration history (up to 4096 revisions) must have consecutive revision/parent linkage, valid bounded JSON and individually verified SHA-256; the current declaration singleton must point to the latest entry. Daemon and selection singleton snapshots are checked for expected rows and basic valid counters.
+
+The existing compiler-owned `enumerateSnapshot` strict generation validator is reused through a tiny read-only SQL query interface, not through a reopened disk path. The required historical `stateRoot` is derived only from manifest local rule-path structure **in memory**; no archived absolute path is ever stat'ed or opened. The normal parser verifies generation configuration, manifest, source-map digests and declaration binding; native local rules must match their compiler manifests and deterministic tags and share the single derived root. The resulting *ordered* generations and exact deduplicated rule SHA/format/path set must match the independently authenticated archive inventory. The rule and core bytes have already been authenticated by `VerifyInertArchive`. No content strings, file paths, declaration bodies, secrets or SQL error text are returned to the caller.
+
+On success, `InertArchivePreflight.SQLiteLogicalVerified=true` and `DeclarationCount` is a nonsecret bounded count. The former blocker `sqlite_logical_restore_validation_not_implemented` is removed; the hard blockers `transactional_restore_not_implemented` and `durable_restore_resource_lease_not_implemented` remain. `RestoreSupported=false`, `RestoreReady=false`, and `TargetMetadataCompatible` still mean precisely what ADR 0101 specified; they do **not** authorize SQL import, migration, routing/DNS behavior, or activation.
+
+## Threat boundary and release gates
+
+`integrity_check`, foreign keys and strict generation/manifest/reference checks are stronger than transport hashes, but this is **not** yet an independent byte-for-byte canonical schema DDL attestation, a complete semantic validation of unrelated profile/subscription tables, a cross-version migration framework, or recovery under fault injection. An authenticated archive crafted with inconsistent declaration, generation, migration or FK data is rejected by this new stage even when its manifest, archive MAC and resource SHA-256 values all match. The bounded buffer, non-secret result, post-authentication inode mutation check and existing cross-process safety tests remain mandatory.
+
+No plaintext staging folder, user-facing backup CLI/API/TUI, durable restore lease, database import, rollback-of-rollback or T15/T23 restore fault-injection is added. A future stage must address large snapshots without OOM, exact schema DDL contracts, and independently checked profile/synchronization state before enabling any restorable artifact. M4/M5 and long-running stability acceptance remain open.
