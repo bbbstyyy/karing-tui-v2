@@ -10,6 +10,9 @@ on:
       - 'internal/preset/cn.go'
       - 'internal/preset/cn_resources.go'
       - 'internal/preset/cn_resources_test.go'
+      - 'internal/preset/cn_all_groups_evidence_test.go'
+      - 'internal/daemon/cn_readiness*.go'
+      - 'internal/apiv1/cn_readiness.go'
       - 'go.mod'
       - 'go.sum'
   push:
@@ -20,6 +23,9 @@ on:
       - 'internal/preset/cn.go'
       - 'internal/preset/cn_resources.go'
       - 'internal/preset/cn_resources_test.go'
+      - 'internal/preset/cn_all_groups_evidence_test.go'
+      - 'internal/daemon/cn_readiness*.go'
+      - 'internal/apiv1/cn_readiness.go'
       - 'go.mod'
       - 'go.sum'
 

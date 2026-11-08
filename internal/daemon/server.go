@@ -197,6 +197,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	registerRouteEditRoutes(mux, store, runtime)
 	registerCheckedApplyRoutes(mux, store, runtime)
 	registerRecoveryAuditRoutes(mux, store, s.paths.State)
+	registerCNResourceReadinessRoute(mux)
 	var selectionCore currentSelectionCore
 	if runtime != nil && runtime.CurrentSelectionReady() {
 		// The HTTP handlers hold runtime.gate for the entire read/validate/
