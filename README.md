@@ -161,16 +161,23 @@ Example source specification (placeholder URI, **not** an operational subscripti
 }
 ```
 
-Use `uri-list`, `uri-list-base64`, or strict `clash-yaml` (SS aes-256-gcm TCP, Trojan verified TLS/TCP, VLESS verified TLS/TCP only) for their documented compatible subsets; unsupported protocol/transport fields reject the complete imported update. `--allow-empty` must be explicitly supplied before an empty accepted snapshot can replace a nonempty one. Refresh output omits imported credentials and raw untrusted diagnostic text. Refresh **does not** compile/apply a core config or change the active routing generation. See [ADR 0069](docs/adr/0069-profile-source-cli.md) and [compatibility matrix](docs/compatibility.md).
+Use `uri-list` or `uri-list-base64` only for the implemented compatible subsets; unsupported protocol/transport fields reject the complete imported update. `--allow-empty` must be explicitly supplied before an empty accepted snapshot can replace a nonempty one. Refresh output omits imported credentials and raw untrusted diagnostic text. Refresh **does not** compile/apply a core config or change the active routing generation. See [ADR 0069](docs/adr/0069-profile-source-cli.md) and [compatibility matrix](docs/compatibility.md).
 
-To import a Clash/YAML subscription instead of a sing-box JSON source,
-set `"format": "clash-yaml"` in the private stdin source specification.
-Source `proxy-groups`, `rules` and `dns` are explicitly reported as
-ignored and **never** modify local CN or five-layer routing. Any unknown
-proxy attributes, insecure TLS, UDP/advanced transport, YAML aliases/anchors
-or provider definitions block the entire refresh. No rule resources,
-subscriptions or CN presets are bundled by this format. See
-[ADR 0232](docs/adr/0232-mvp-clash-yaml-strict-source.md).
+## CN preset resource readiness (read-only MVP-2 evidence)
+
+The Daemon's `GET /v1/cn/resources/readiness` endpoint provides a
+credential-free, read-only inventory of the pinned 28 CN groups, six default
+enabled groups, their source condition families and the required 68 logical
+rule-set resources. It explicitly reports `geoip:bing` as upstream-absent
+and records that upstream data licensing is **unresolved**.
+
+This endpoint reports **pinned source metadata only**. It does **not** check
+local asset installation or verify runtime DNS/Core traffic and it cannot
+authorize an Apply, turn on CN routing, or assert a redistributable package.
+CN 28-group parity, real five-layer ordering, licensed offline resources,
+DNS and 72-hour stability remain MVP blockers. See
+[ADR 0233](docs/adr/0233-mvp-cn-source-readiness-evidence.md) and
+[the MVP plan](docs/mvp-plan.md).
 
 ## First-run imported profile initialization (internal proxy-only preview)
 
