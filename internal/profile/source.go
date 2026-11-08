@@ -14,6 +14,7 @@ type SourceFormat string
 
 const (
 	SourceFormatSingBox       SourceFormat = "sing-box"
+	SourceFormatClashYAML     SourceFormat = "clash-yaml"
 	SourceFormatURIList       SourceFormat = "uri-list"
 	SourceFormatBase64URIList SourceFormat = "uri-list-base64"
 
@@ -62,7 +63,7 @@ func (s SourceSpec) Validate() error {
 		return fmt.Errorf("%w: %v", ErrInvalidProfileSource, err)
 	}
 	switch s.Format {
-	case SourceFormatSingBox, SourceFormatURIList, SourceFormatBase64URIList:
+	case SourceFormatSingBox, SourceFormatClashYAML, SourceFormatURIList, SourceFormatBase64URIList:
 	default:
 		return fmt.Errorf("%w: unsupported source format %q", ErrInvalidProfileSource, s.Format)
 	}

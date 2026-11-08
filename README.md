@@ -161,7 +161,16 @@ Example source specification (placeholder URI, **not** an operational subscripti
 }
 ```
 
-Use `uri-list` or `uri-list-base64` only for the implemented compatible subsets; unsupported protocol/transport fields reject the complete imported update. `--allow-empty` must be explicitly supplied before an empty accepted snapshot can replace a nonempty one. Refresh output omits imported credentials and raw untrusted diagnostic text. Refresh **does not** compile/apply a core config or change the active routing generation. See [ADR 0069](docs/adr/0069-profile-source-cli.md) and [compatibility matrix](docs/compatibility.md).
+Use `uri-list`, `uri-list-base64`, or strict `clash-yaml` (SS aes-256-gcm TCP, Trojan verified TLS/TCP, VLESS verified TLS/TCP only) for their documented compatible subsets; unsupported protocol/transport fields reject the complete imported update. `--allow-empty` must be explicitly supplied before an empty accepted snapshot can replace a nonempty one. Refresh output omits imported credentials and raw untrusted diagnostic text. Refresh **does not** compile/apply a core config or change the active routing generation. See [ADR 0069](docs/adr/0069-profile-source-cli.md) and [compatibility matrix](docs/compatibility.md).
+
+To import a Clash/YAML subscription instead of a sing-box JSON source,
+set `"format": "clash-yaml"` in the private stdin source specification.
+Source `proxy-groups`, `rules` and `dns` are explicitly reported as
+ignored and **never** modify local CN or five-layer routing. Any unknown
+proxy attributes, insecure TLS, UDP/advanced transport, YAML aliases/anchors
+or provider definitions block the entire refresh. No rule resources,
+subscriptions or CN presets are bundled by this format. See
+[ADR 0232](docs/adr/0232-mvp-clash-yaml-strict-source.md).
 
 ## First-run imported profile initialization (internal proxy-only preview)
 

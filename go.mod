@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.60.1
 )
