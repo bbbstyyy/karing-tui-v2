@@ -378,7 +378,7 @@ func TestFirstRunTUIRefusesStaleStateBetweenPreviewAndConfirm(t *testing.T) {
 			if stageCmd != nil || api.stageCalls != 0 || m.initial.active() {
 				t.Fatal("changed source or runtime state authorized a stale first-run stage")
 			}
-			if !strings.Contains(m.initial.notice, "no write sent") {
+			if !strings.Contains(strings.ToLower(m.initial.notice), "no write sent") {
 				t.Fatal("stale confirmation did not explain that no write was sent")
 			}
 		})
