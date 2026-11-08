@@ -163,6 +163,52 @@ Example source specification (placeholder URI, **not** an operational subscripti
 
 Use `uri-list` or `uri-list-base64` only for the implemented compatible subsets; unsupported protocol/transport fields reject the complete imported update. `--allow-empty` must be explicitly supplied before an empty accepted snapshot can replace a nonempty one. Refresh output omits imported credentials and raw untrusted diagnostic text. Refresh **does not** compile/apply a core config or change the active routing generation. See [ADR 0069](docs/adr/0069-profile-source-cli.md) and [compatibility matrix](docs/compatibility.md).
 
+## First-run imported profile initialization (internal proxy-only preview)
+
+When the database has **no declaration or applied generation**, a Linux user can
+now progress beyond a successful profile refresh **without hand-writing native
+Core JSON**. Obtain the accepted `snapshot_id` from `profiles refresh` and
+the stable `node_id` from `profiles nodes --json`:
+
+```sh
+karing-tui profiles init-preview my-profile \
+  --snapshot-id=123 \
+  --selected-node-id=node-EXACT-STABLE-ID \
+  --resolver=127.0.0.1:5300
+```
+
+The resolver is an **operator-selected IP:port** (example only); choose an
+actually reachable resolver appropriate for your environment. Preview returns
+`source_revision`, `candidate_sha256`, and `runtime_overlay_sha256`, without
+printing node credentials or source URLs. Inspect the exact values, then
+**explicitly acknowledge the limited mode**:
+
+```sh
+karing-tui profiles init-stage my-profile \
+  --snapshot-id=123 \
+  --expected-source-revision=SOURCE_REVISION_FROM_PREVIEW \
+  --selected-node-id=node-EXACT-STABLE-ID \
+  --resolver=127.0.0.1:5300 \
+  --candidate-sha256=64_CHAR_SHA256_FROM_PREVIEW \
+  --runtime-overlay-sha256=64_CHAR_OVERLAY_SHA256_FROM_PREVIEW \
+  --acknowledge-proxy-only-no-cn
+```
+
+This stages revision 1 only: **no Core Check, Apply or restart**. After verifying
+the stage response, use the separate `config apply-preview --out=PRIVATE_NEW_FILE`
+and `config apply --receipt=PRIVATE_FILE --confirm` commands described below.
+If a stage request times out or disconnects, inspect the current declaration
+and status before acting; **never blindly repeat a potentially committed stage**.
+
+**Not a complete CN/Karing configuration:** the initial builder explicitly
+sets `routing_mode=proxy-only-no-cn`, `cn_rules_ready=false`, and routes
+Rule/Selected to CurrentSelected without a hidden DIRECT fallback. CN 28-group
+preset routing, complete licensed rule resources, five-layer CN DNS evidence
+and real restore are still blocking the MVP. Do not use this technical preview
+as a claim of CN parity. See [ADR 0225](docs/adr/0225-first-run-proxy-only-initial-declaration.md),
+[ADR 0226](docs/adr/0226-guarded-first-run-cli.md) and
+[the MVP plan](docs/mvp-plan.md).
+
 ## Read-only snapshot-to-declaration preview (M3)
 
 After a profile refresh produces an accepted snapshot, the Unix-socket daemon can examine how it would change an **existing** declaration:
