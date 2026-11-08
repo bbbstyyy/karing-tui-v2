@@ -48,6 +48,9 @@ func runProfiles(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "put" || args[0] == "refresh" {
 		return runProfileSourceCommand(context.Background(), api, args, os.Stdin, stdout, stderr)
 	}
+	if args[0] == "init-preview" || args[0] == "init-stage" {
+		return runProfileInitialCommand(context.Background(), api, args, stdout, stderr)
+	}
 	if args[0] == "preview" {
 		return runProfilePreviewCommand(context.Background(), api, args, stdout, stderr)
 	}
@@ -199,6 +202,8 @@ func printProfilesUsage(w io.Writer) {
   karing-tui profiles replace-overlay <profile-id> <node-id> --expected-revision=N --disabled=true|false --favorite=true|false --alias=NAME --sort-rank=N|none
   karing-tui profiles put <profile-id> --expected-revision=N --stdin
   karing-tui profiles refresh <profile-id> --expected-revision=N [--allow-empty]
+  karing-tui profiles init-preview <profile-id> --snapshot-id=N --selected-node-id=ID --resolver=IP:PORT
+  karing-tui profiles init-stage <profile-id> --snapshot-id=N --expected-source-revision=N --selected-node-id=ID --resolver=IP:PORT --candidate-sha256=HASH --runtime-overlay-sha256=HASH --acknowledge-proxy-only-no-cn
   karing-tui profiles preview <profile-id> --snapshot-id=N --expected-declaration-revision=N
   karing-tui profiles stage <profile-id> --snapshot-id=N --expected-source-revision=N --expected-declaration-revision=N --candidate-sha256=HASH --runtime-overlay-sha256=HASH --confirm
 
@@ -208,6 +213,8 @@ Profile lists and node pages exclude source locations, source keys, and proxy cr
 Profile put consumes one strict, bounded JSON object from stdin; do not place token-bearing URLs in shell arguments.
 Refresh accepts and snapshots supported nodes only; it never implicitly applies a core configuration.
 Preview verifies a candidate declaration without committing it, core-checking it or changing any applied generation.
+Initial preview/stage works ONLY with an accepted enabled source on a fresh, empty installation. It creates a proxy-only declaration WITHOUT CN preset rules. Choose the DNS resolver explicitly, inspect both SHA-256 digests, and consciously acknowledge --acknowledge-proxy-only-no-cn. It never checks or applies Core.
+After init-stage, the separate 'config apply-preview' and 'config apply --receipt=PRIVATE_FILE --confirm' steps remain mandatory. On a timeout inspect current declaration; do NOT replay the stage blindly.
 Stage requires both preview digests and explicit --confirm. It commits only a declaration revision; it does not check, apply, or restart the core.`)
 }
 

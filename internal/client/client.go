@@ -560,6 +560,39 @@ func (c *Client) PreviewProfileDeclaration(
 	return response, nil
 }
 
+// First-run preview is read-only; it does not run native Core Check or
+// modify the current declaration or applied generation.
+func (c *Client) PreviewInitialProfileDeclaration(
+	ctx context.Context,
+	profileID string,
+	request apiv1.InitialProfileDeclarationPreviewRequest,
+) (apiv1.InitialProfileDeclarationPreviewResponse, error) {
+	var response apiv1.InitialProfileDeclarationPreviewResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID) + "/declaration/initial/preview"
+	if err := c.sendJSON(ctx, c.refreshClient, http.MethodPost, path, request, &response); err != nil {
+		return apiv1.InitialProfileDeclarationPreviewResponse{}, err
+	}
+	return response, nil
+}
+
+// Stage initial is one bounded, explicitly acknowledged CAS attempt.
+// After an uncertain timeout the caller MUST inspect current declaration;
+// silently replaying a stage receipt is forbidden.
+func (c *Client) StageInitialProfileDeclaration(
+	ctx context.Context,
+	profileID string,
+	request apiv1.InitialProfileDeclarationStageRequest,
+) (apiv1.InitialProfileDeclarationStageResponse, error) {
+	var response apiv1.InitialProfileDeclarationStageResponse
+	path := "/v1/profiles/" + url.PathEscape(profileID) + "/declaration/initial/stage"
+	if err := c.sendJSONWithStatus(
+		ctx, c.refreshClient, http.MethodPost, path, request, &response, http.StatusCreated,
+	); err != nil {
+		return apiv1.InitialProfileDeclarationStageResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) StageProfileDeclaration(
 	ctx context.Context,
 	profileID string,
