@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
+	clashimport "github.com/bbbstyyy/karing-tui-v2/internal/importer/clash"
 	singboximport "github.com/bbbstyyy/karing-tui-v2/internal/importer/singbox"
 	urilistimport "github.com/bbbstyyy/karing-tui-v2/internal/importer/urilist"
 	"github.com/bbbstyyy/karing-tui-v2/internal/profile"
@@ -120,6 +121,8 @@ func RefreshProfileSource(
 	switch source.Spec.Format {
 	case profile.SourceFormatSingBox:
 		analysis, err = singboximport.AnalyzeBasicProfile(fetched.Body, profileID)
+	case profile.SourceFormatClashYAML:
+		analysis, err = clashimport.AnalyzeBasicProfile(fetched.Body, profileID)
 	case profile.SourceFormatURIList:
 		analysis, err = urilistimport.AnalyzeBasicProfile(fetched.Body, profileID)
 	case profile.SourceFormatBase64URIList:

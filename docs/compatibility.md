@@ -40,6 +40,36 @@ Current implementation: `internal/importer/singbox.AnalyzeBasicProfile`.
 
 Accepted node payloads are stored immutably in the profile snapshot with their SHA-256. The current and immediately previous successful profile snapshots are retained; older profile snapshots are pruned.
 
+## Clash YAML strict basic-proxy import (MVP-1D preview)
+
+Source format: `clash-yaml` through the existing File/URL Profile Source
+API, protected `profiles put --stdin` and manual `profiles refresh`.
+The parser is the security-maintained YAML organization v3 module pinned
+by Go module checksum. The importer is limited to one bounded YAML document,
+2 MiB, at most 4,096 proxies and a constrained syntax tree. Duplicate keys,
+YAML aliases/anchors, explicit tags, hostile syntax, multiple documents,
+unsupported top-level content and incomplete/invalid proxy records block
+the entire snapshot refresh. Error messages and diagnostic codes do **not**
+include input scalar values, passwords or token-bearing URLs.
+
+| Clash YAML `proxies` item | Admitted subset | Rejected / intentional behavior |
+| --- | --- | --- |
+| `type: ss` | `name`, `server`, decimal `port`, `cipher: aes-256-gcm`, `password`, `udp: false` (optional), `network: tcp` (optional) | Unknown ciphers, plugins, UDP, unknown fields; no silent fallback |
+| `type: trojan` | Required password/server/port/name, optional `sni` or `servername`, `tls: true`, `skip-cert-verify: false`, TCP-only | Insecure TLS, Reality, WS/gRPC, simultaneous SNI aliases, UDP, unknown fields |
+| `type: vless` | Required UUID/server/port/name, **explicit** `tls: true`, optional `encryption: none`, `servername` or `sni`, verified TCP | Plaintext, Reality, Vision, advanced TLS/fingerprint, WS/gRPC, UDP, unknown fields |
+| `proxy-groups`, `rules`, `dns` | Ignored with explicit `ignored_by_product_policy` diagnostic | Never imported into project five-layer routing, CN groups or DNS |
+| Local listen/runtime context | `port`, `socks-port`, `mixed-port`, `mode`, `allow-lan`, `log-level`, `ipv6`, `external-controller` are explicitly **not imported** | Root `tun`, provider definitions, script, unsupported root fields fail closed |
+
+Identical proxy semantics with renamed `name`, reordered YAML keys or a
+redundant `udp: false` retain their stable `clash-<sha256>` SourceKey.
+Duplicate names or semantic identities are blocking errors. All admitted
+items are converted into the already validated sing-box basic-node payload;
+the same source snapshot CAS, first-run preview/stage and checked Apply
+path is used. This is a **strict useful subset**, not every Clash/Mihomo
+format or provider-extension mode. In particular `proxy-providers` URL
+import and subscription-side rules are not authorized or downloaded.
+CN 28-group rule/DNS behavior remains separately release-blocked.
+
 ## URI-list profile conversion
 
 Current implementation: `internal/importer/urilist.AnalyzeBasicProfile`.

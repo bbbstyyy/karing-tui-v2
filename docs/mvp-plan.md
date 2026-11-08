@@ -208,8 +208,13 @@ MVP Beta 是**能力受限但诚实可用**的发行候选：支持字段子集�
 | --- | --- | --- | --- |
 | MVP-1A / 1C：首次来源→声明 API | [#107](https://github.com/bbbstyyy/karing-tui-v2/pull/107) 已合并，`cc465334` | [最终 Go CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42440870008)，真实 Core、双架构 Provenance 与 Race 4/4 已检查通过 | 受控 HTTP/Core 流量不等于 CN、常见订阅格式与 MV-02 全通过 |
 | MVP-3：首次初始化 CLI | [#108](https://github.com/bbbstyyy/karing-tui-v2/pull/108) 已合并，`bec875c8` | [最终 Go CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42443434490)，Race 4/4、真实 Core 与双架构 Provenance 通过 | 仅显式 `proxy-only-no-cn`，无完整 TUI/CN 用户故事验收 |
-| MVP-3：首次初始化 TUI | [#109](https://github.com/bbbstyyy/karing-tui-v2/pull/109) Draft（最终基线 CI 待验） | 已提交 Nodes 编辑、确认及持久回读测试；不得沿用堆叠基线的历史 CI | 完成最终提交 CI/Race/双架构后方可合并 |
-| MVP-1D：VLESS URI TCP/TLS | [#110](https://github.com/bbbstyyy/karing-tui-v2/pull/110) Draft（本次候选） | 严格 URI/Base64 导入、字段拒绝和坏更新保留快照测试；只登记新代码不预填通过结果 | 仍缺 VLESS 真实 TLS/UUID 代理流量、Clash/YAML 等常见来源完整覆盖 |
+| MVP-3：首次初始化 TUI | [#109](https://github.com/bbbstyyy/karing-tui-v2/pull/109) 已合并，`867194fa` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42454855889)；最终换基 Go、Race 4/4、真实 Core/双架构已通过 | CN 28 组与 DNS/TUI 完整操作仍未通过 |
+| MVP-1D：VLESS URI TCP/TLS | [#110](https://github.com/bbbstyyy/karing-tui-v2/pull/110) 已合并，`e2493b4c` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42460378751)，Go/Race 4/4/Core/双架构通过 | 只覆盖经明确承认的 VLESS TCP/TLS 严格 URI 字段 |
+
+| MVP-1C：VLESS 真实 TLS/UUID | [#111](https://github.com/bbbstyyy/karing-tui-v2/pull/111) 已合并，`8846e21f` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42465312976)，Go/Race 4/4、真实 TLS Core 与双架构通过 | 只证明本地受控 TCP/TLS 子集，不代表所有运营商/传输层 |
+| MVP-1C：Trojan 真实 TLS/密码 | [#112](https://github.com/bbbstyyy/karing-tui-v2/pull/112) 已合并，`6b551e08` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42467976308)，Go/Race 4/4、真实 Trojan Core 与双架构通过 | 不覆盖 WS/gRPC/Reality/UDP |
+| MVP-1C：Shadowsocks AEAD TCP | [#113](https://github.com/bbbstyyy/karing-tui-v2/pull/113) Draft（最终换基复验） | 经典 AES-256-GCM 严格本地服务端测试；不得沿用旧基线绿色 CI | 未合并，其他 SS 算法/UDP/插件仍缺 |
+| MVP-1D：Clash YAML | 开发候选（本 PR，待独立 CI） | 严格 YAML SS/Trojan/VLESS/快照隔离、Source API 与真实 Core 集成测试 | 未通过完整 CI，不覆盖所有 Clash 扩展或订阅提供商 |
 
 **关键阻断不变**：CN 28 组完整五层真实流量、受许可离线规则集（含
 `geoip:bing` 缺口）、CN DNS 路径、真实备份恢复与 #59 根因、
