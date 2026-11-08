@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -27,7 +28,9 @@ func (c *Client) CNReadiness(ctx context.Context) (apiv1.CNResourceReadinessResp
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return apiv1.CNResourceReadinessResponse{}, responseError(res)
+		// Error bodies are untrusted and may contain raw source URLs,
+		// credentials, or arbitrary server-controlled text.
+		return apiv1.CNResourceReadinessResponse{}, fmt.Errorf("CN readiness returned HTTP %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, maxCNReadinessResponseBytes+1))
 	if err != nil {
