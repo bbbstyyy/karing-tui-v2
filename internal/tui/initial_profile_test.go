@@ -352,3 +352,35 @@ func TestFirstRunTUIDurableReadbackMismatchNeverReportsStageSuccess(t *testing.T
 		t.Fatalf("stale durable status was accepted: %s", m.View())
 	}
 }
+
+func TestFirstRunTUIRefusesStaleStateBetweenPreviewAndConfirm(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Model)
+	}{
+		{"recovery", func(m *Model) { m.status.RecoveryRequired = true }},
+		{"declaration", func(m *Model) { m.status.DeclarationRevision = 1 }},
+		{"active operation", func(m *Model) { m.status.ActiveOperation = "apply" }},
+		{"source revision", func(m *Model) { m.profiles[0].Revision++ }},
+		{"disabled selected node", func(m *Model) { m.nodes.Nodes[0].Disabled = true }},
+		{"changed node response", func(m *Model) { m.nodesRequest++ }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newInitialTUIFake()
+			m := initNodesPage(t, api)
+			m, previewCmd := previewInitialTUI(t, m)
+			m, _ = updated(t, m, previewCmd())
+			if m.initial.pending == nil {
+				t.Fatal("baseline first-run preview missing")
+			}
+			tc.mutate(&m)
+			m, stageCmd := updated(t, m, initialKey("y"))
+			if stageCmd != nil || api.stageCalls != 0 || m.initial.active() {
+				t.Fatal("changed source or runtime state authorized a stale first-run stage")
+			}
+			if !strings.Contains(m.initial.notice, "no write sent") {
+				t.Fatal("stale confirmation did not explain that no write was sent")
+			}
+		})
+	}
+}
