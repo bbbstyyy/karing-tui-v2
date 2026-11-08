@@ -49,10 +49,12 @@ Current implementation: `internal/importer/urilist.AnalyzeBasicProfile`.
 | decoded newline-delimited URI list | Supported source format | Blank lines and `#` comment lines are ignored; source bytes remain hash-bound to the snapshot |
 | Shadowsocks SIP002 `ss://BASE64(method:password)@host:port` | Supported basic subset | Converts to the already validated native Shadowsocks node model |
 | SIP002 `plugin` query | Supported | First semicolon separates plugin name from `plugin_opts`; unknown or repeated query keys block import |
+| Trojan `trojan://PASSWORD@host:port` | Supported strict TCP/TLS subset | TLS is always enabled; optional `type=tcp`, `security=tls`, `sni` and `allowInsecure=0/false`; query order does not affect identity |
+| Trojan non-TCP transports, Reality, insecure TLS, other fields | Blocked | `type=ws/grpc`, `allowInsecure=1`, `alpn`, Reality, unknown or repeated query keys refuse the **whole snapshot**, without losing fields or exposing password |
 | URI fragment display name | Supported metadata | Excluded from semantic SourceKey, so renaming the fragment preserves stable NodeID |
 | duplicate semantic URI | Blocked | Prevents two display names from aliasing one stable source identity |
 | legacy base64-whole Shadowsocks URI | Not yet supported | Blocks complete update rather than guessing legacy parsing |
-| VMess/VLESS/Trojan/Hysteria/TUIC share URI | Not yet supported | Blocks complete update until URI transport/TLS defaults have explicit verified mappings |
+| VMess/VLESS/Hysteria/TUIC share URI | Not yet supported | Blocks complete update until URI transport/TLS defaults have explicit verified mappings |
 | oversized URI line / more than 10,000 nodes | Blocked | Parser is bounded; one line is limited to 16 KiB |
 
 The URI-list converter emits canonical sing-box basic-node payloads and then reuses the same strict sing-box importer/domain validation. Converted profiles therefore do not create a second runtime interpretation path.
@@ -172,7 +174,7 @@ Implemented refresh/scheduling foundation:
 
 Still not implemented:
 
-- additional URI-list schemes beyond Shadowsocks SIP002, base64-wrapped V2Ray subscriptions and Clash/YAML conversion;
+- additional URI-list schemes beyond Shadowsocks SIP002 and Trojan TLS/TCP, further V2Ray share-URI compatibility and Clash/YAML conversion;
 - Specific Node network fetch execution;
 - automatic snapshot -> declaration -> compile/apply policy after a refresh;
 - source node filter execution semantics (Karing UI state is persisted, but exact vpn-service matching behavior is not yet verified);

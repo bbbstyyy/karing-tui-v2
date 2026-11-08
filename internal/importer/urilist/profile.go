@@ -149,16 +149,17 @@ func AnalyzeBasicProfile(
 func parseURI(raw string) (json.RawMessage, string, string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("parse URI: %w", err)
+		// net/url parse errors can include the full URI (including userinfo).
+		// The source URL and credentials must never appear in diagnostics.
+		return nil, "", "", errors.New("invalid URI syntax")
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "ss":
 		return parseShadowsocksSIP002(parsed)
+	case "trojan":
+		return parseTrojanTLSURI(parsed)
 	default:
-		return nil, "", "", fmt.Errorf(
-			"unsupported URI scheme %q; current URI-list subset supports ss:// only",
-			parsed.Scheme,
-		)
+		return nil, "", "", errors.New("unsupported URI scheme; only ss:// and Trojan TCP/TLS are supported")
 	}
 }
 
@@ -201,7 +202,12 @@ func parseShadowsocksSIP002(
 		return nil, "", "", fmt.Errorf("invalid Shadowsocks server port %q", parsed.Port())
 	}
 
-	query := parsed.Query()
+	// URL.Query silently drops malformed percent escapes. Reject the whole
+	// source instead of accepting a partially parsed proxy configuration.
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return nil, "", "", errors.New("malformed Shadowsocks URI query")
+	}
 	for key, values := range query {
 		if key != "plugin" {
 			return nil, "", "", fmt.Errorf(

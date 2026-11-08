@@ -131,3 +131,18 @@ func TestAnalyzeBasicProfileRejectsOversizedLine(t *testing.T) {
 		t.Fatal("oversized URI line was accepted")
 	}
 }
+
+func TestShadowsocksSIP002MalformedQueryNeverSilentlyDropsFields(t *testing.T) {
+	const prefix = "ss://YWVzLTI1Ni1nY206c2VjcmV0@ss.example.com:8388"
+	for _, query := range []string{"?plugin=%ZZ", "?%ZZ=value", "?plugin=valid%ZZ"} {
+		analysis, err := AnalyzeBasicProfile([]byte(prefix+query+"#Safe"), "profile-uri")
+		if err != nil || analysis.CanCommit() || len(analysis.Nodes) != 0 ||
+			len(analysis.Diagnostics) != 1 ||
+			analysis.Diagnostics[0].Code != "unsupported_or_invalid_uri" {
+			t.Fatalf("malformed SIP002 query accepted: diagnostics=%+v err=%v", analysis.Diagnostics, err)
+		}
+		if strings.Contains(analysis.Diagnostics[0].Message, "c2VjcmV0") {
+			t.Fatal("URI failure exposed encoded credential")
+		}
+	}
+}
