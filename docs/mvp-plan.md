@@ -199,6 +199,23 @@ MVP Beta 是**能力受限但诚实可用**的发行候选：支持字段子集�
 
 **下次审查所需资料**：每一 MV 编号对应的 issue/PR、合并 commit、最终 head CI、独立真实 Core 测试记录、测试环境/架构和遗留风险。证据不足保持原状态，不凭补充 ADR 数量或 PR 数量计算进度。
 
+### 7.2 增量实现证据登记（2026-11-08；非 MVP 验收）
+
+本表仅记录已发生的代码整合和待验证工作。原第 5 节 MV-01–09
+验收门槛与第 7.1 节 **未完成** 的结论保持不变。
+
+| 工作包 | 状态及确定的提交 | 可追溯证据 | 尚未完成的判定 |
+| --- | --- | --- | --- |
+| MVP-1A / 1C：首次来源→声明 API | [#107](https://github.com/bbbstyyy/karing-tui-v2/pull/107) 已合并，`cc465334` | [最终 Go CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42440870008)，真实 Core、双架构 Provenance 与 Race 4/4 已检查通过 | 受控 HTTP/Core 流量不等于 CN、常见订阅格式与 MV-02 全通过 |
+| MVP-3：首次初始化 CLI | [#108](https://github.com/bbbstyyy/karing-tui-v2/pull/108) 已合并，`bec875c8` | [最终 Go CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42443434490)，Race 4/4、真实 Core 与双架构 Provenance 通过 | 仅显式 `proxy-only-no-cn`，无完整 TUI/CN 用户故事验收 |
+| MVP-3：首次初始化 TUI | [#109](https://github.com/bbbstyyy/karing-tui-v2/pull/109) Draft（最终基线 CI 待验） | 已提交 Nodes 编辑、确认及持久回读测试；不得沿用堆叠基线的历史 CI | 完成最终提交 CI/Race/双架构后方可合并 |
+| MVP-1D：VLESS URI TCP/TLS | [#110](https://github.com/bbbstyyy/karing-tui-v2/pull/110) Draft（本次候选） | 严格 URI/Base64 导入、字段拒绝和坏更新保留快照测试；只登记新代码不预填通过结果 | 仍缺 VLESS 真实 TLS/UUID 代理流量、Clash/YAML 等常见来源完整覆盖 |
+
+**关键阻断不变**：CN 28 组完整五层真实流量、受许可离线规则集（含
+`geoip:bing` 缺口）、CN DNS 路径、真实备份恢复与 #59 根因、
+72 小时混合耐久以及双架构无特权交付包，尚未达到 MVP Beta 标准。
+不得将上述局部合并或 GitHub Actions 绿色结果自动换算为 MV-02–09 通过。
+
 ---
 
 **一句话目标：让一个普通 Linux 用户真正能够安全地导入订阅、按原样使用 CN 五层分流与 DNS、经 TUI/CLI 选节点并应用到 Core、在重启和故障后保持/恢复有效状态；做到并验证这些，才叫 MVP。**

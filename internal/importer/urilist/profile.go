@@ -158,8 +158,10 @@ func parseURI(raw string) (json.RawMessage, string, string, error) {
 		return parseShadowsocksSIP002(parsed)
 	case "trojan":
 		return parseTrojanTLSURI(parsed)
+	case "vless":
+		return parseVLESSTLSURI(parsed)
 	default:
-		return nil, "", "", errors.New("unsupported URI scheme; only ss:// and Trojan TCP/TLS are supported")
+		return nil, "", "", errors.New("unsupported URI scheme; only ss://, Trojan TCP/TLS and VLESS TCP/TLS are supported")
 	}
 }
 
