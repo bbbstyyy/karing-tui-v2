@@ -76,7 +76,7 @@ func TestFirstRunCLIRejectsIncompleteOrUnsafePreviewWithoutRPC(t *testing.T) {
 	}
 	for _, replacement := range []string{
 		"--snapshot-id=0", "--snapshot-id=-1",
-		"--selected-node-id=bad/node", "--selected-node-id=",
+		"--selected-node-id=bad\nnode", "--selected-node-id=",
 		"--resolver=example.com:53", "--resolver=0.0.0.0:53",
 		"--resolver=224.0.0.1:53", "--resolver=127.0.0.1:0",
 		"--resolver=[fe80::1%eth0]:53",
@@ -119,7 +119,7 @@ func TestFirstRunCLIRequiresExplicitProxyOnlyAcknowledgement(t *testing.T) {
 	}
 	for _, replacement := range []string{
 		"--snapshot-id=0", "--expected-source-revision=0",
-		"--selected-node-id=bad/node", "--resolver=dns.example.com:53",
+		"--selected-node-id=bad\nnode", "--resolver=dns.example.com:53",
 		"--resolver=0.0.0.0:53", "--candidate-sha256=" + strings.Repeat("A", 64),
 		"--runtime-overlay-sha256=invalid",
 		"--acknowledge-proxy-only-no-cn=false",
