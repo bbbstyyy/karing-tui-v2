@@ -30,7 +30,7 @@ func (s *Store) CommitProfileDeclarationGuarded(
 	if err := profile.ValidateProfileID(profileID); err != nil {
 		return DeclarationRevision{}, err
 	}
-	if snapshotID <= 0 || expectedSourceRevision == 0 || expectedDeclarationRevision == 0 {
+	if snapshotID <= 0 || expectedSourceRevision == 0 {
 		return DeclarationRevision{}, ErrProfileDeclarationGuardConflict
 	}
 	if err := validateDeclarationCommit(document, source); err != nil {
@@ -94,6 +94,31 @@ func (s *Store) CommitProfileDeclarationGuarded(
 	}
 	if index != len(expectedOverlays) {
 		return DeclarationRevision{}, ErrProfileDeclarationGuardConflict
+	}
+
+	// A first-run CAS must also prove the runtime has never committed an
+	// applied generation. Check under the SAME SQLite transaction rather
+	// than trusting an earlier API preview or snapshot read.
+	if expectedDeclarationRevision == 0 {
+		var revision int64
+		var applied, lastGood sql.NullInt64
+		var recoveryRequired int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT config_revision, applied_generation_id,
+			last_known_good_generation_id, recovery_required
+			FROM daemon_state WHERE singleton = 1
+		`).Scan(&revision, &applied, &lastGood, &recoveryRequired); err != nil {
+			return DeclarationRevision{}, fmt.Errorf("read initial runtime stage guard: %w", err)
+		}
+		var active int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM apply_journal WHERE active_slot = 1
+		`).Scan(&active); err != nil {
+			return DeclarationRevision{}, fmt.Errorf("read initial apply journal guard: %w", err)
+		}
+		if revision != 0 || applied.Valid || lastGood.Valid || recoveryRequired != 0 || active != 0 {
+			return DeclarationRevision{}, ErrProfileDeclarationGuardConflict
+		}
 	}
 
 	revision, err := commitDeclarationTx(ctx, tx, expectedDeclarationRevision, document, source)

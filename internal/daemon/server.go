@@ -193,6 +193,7 @@ func (s *Server) handler(store *storage.Store, runtime *serverRuntime) http.Hand
 	registerProfileNodeRoutes(mux, store, profileOperations)
 	registerProfileSnapshotPreviewRoutes(mux, store, profileOperations)
 	registerProfileDeclarationStageRoutes(mux, store, profileOperations)
+	registerInitialProfileDeclarationRoutes(mux, store, profileOperations)
 	registerRouteEditRoutes(mux, store, runtime)
 	registerCheckedApplyRoutes(mux, store, runtime)
 	registerRecoveryAuditRoutes(mux, store, s.paths.State)
