@@ -31,9 +31,9 @@ import (
 )
 
 // MVP-1C: real pinned core, all network services confined to 127.0.0.1.
-// A fixture seeds the initial V1 routing/selection declaration because the
-// first-run user-facing declaration constructor is not yet implemented. This
-// is an end-to-end imported-node proof, NOT MV-02 user acceptance or CN proof.
+// Uses guarded public first-run preview/stage rather than test-only
+// declaration seeding. This is a real imported-node proof, NOT CN or MVP
+// acceptance: the explicitly acknowledged mode is proxy-only without CN.
 func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	assertOrdinaryUserCoreEnvironment(t)
 	corePath := os.Getenv("KARING_TUI_TEST_CORE")
@@ -176,49 +176,52 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 		t.Fatalf("imported stable node not listed: %d %+v", status, page)
 	}
 
-	// The base is a test-only V1 declaration. The source payload must
-	// replace its intentionally stale HTTP port and missing authentication.
-	base, err := store.CommitDeclaration(ctx, 0, mvpHTTPBaseDeclaration(profileID, nodeID), "integration:mvp-base")
-	if err != nil {
-		t.Fatal(err)
+	// The first-run source is initialized through the guarded public API,
+	// not by writing a synthetic V1 declaration directly into SQLite.
+	initRequest := apiv1.InitialProfileDeclarationPreviewRequest{
+		SnapshotID:      *refreshed.CurrentSnapshotID,
+		SelectedNodeID:  nodeID,
+		ResolverAddress: "127.0.0.1:9",
 	}
 	status, response = mvpJSONRequest(t, api.URL, http.MethodPost,
-		"/v1/profiles/"+profileID+"/declaration/preview",
-		apiv1.ProfileDeclarationPreviewRequest{
-			SnapshotID: *refreshed.CurrentSnapshotID, ExpectedDeclarationRevision: base.Revision,
-		})
+		"/v1/profiles/"+profileID+"/declaration/initial/preview", initRequest)
 	if status != http.StatusOK || bytes.Contains(response, []byte(secret)) {
-		t.Fatalf("profile preview status=%d or leaked credentials", status)
+		t.Fatalf("initial declaration preview status=%d or leaked credentials", status)
 	}
-	var preview apiv1.ProfileDeclarationPreviewResponse
+	var preview apiv1.InitialProfileDeclarationPreviewResponse
 	if err := json.Unmarshal(response, &preview); err != nil {
 		t.Fatal(err)
 	}
-	if preview.RetainedNodeCount != 1 || len(preview.RetainedNodeIDs) != 1 ||
-		preview.RetainedNodeIDs[0] != nodeID ||
-		preview.AddedNodeCount != 0 || preview.RemovedNodeCount != 0 ||
-		preview.SourceRevision != created.Revision || preview.CandidateSHA256 == base.SHA256 ||
-		preview.CoreValidated || preview.Applied {
-		t.Fatalf("unsafe profile snapshot preview: %+v", preview)
+	if preview.SourceRevision != created.Revision ||
+		preview.BaseDeclarationRevision != 0 ||
+		preview.SelectedNodeID != nodeID ||
+		preview.EffectiveNodeCount != 1 ||
+		preview.CNRulesReady || preview.CoreValidated || preview.Applied ||
+		len(preview.CandidateSHA256) != 64 || len(preview.RuntimeOverlaySHA256) != 64 {
+		t.Fatalf("unsafe first-run source preview: %+v", preview)
 	}
-	stageReceipt := apiv1.ProfileDeclarationStageRequest{
-		SnapshotID:                  *refreshed.CurrentSnapshotID,
-		ExpectedSourceRevision:      preview.SourceRevision,
-		ExpectedDeclarationRevision: base.Revision,
-		CandidateSHA256:             preview.CandidateSHA256,
-		RuntimeOverlaySHA256:        preview.RuntimeOverlaySHA256,
+	stageReceipt := apiv1.InitialProfileDeclarationStageRequest{
+		SnapshotID:               *refreshed.CurrentSnapshotID,
+		ExpectedSourceRevision:   preview.SourceRevision,
+		SelectedNodeID:           nodeID,
+		ResolverAddress:          initRequest.ResolverAddress,
+		CandidateSHA256:          preview.CandidateSHA256,
+		RuntimeOverlaySHA256:     preview.RuntimeOverlaySHA256,
+		AcknowledgeProxyOnlyNoCN: true,
 	}
-	status, response = mvpJSONRequest(t, api.URL, http.MethodPost, "/v1/profiles/"+profileID+"/declaration/stage", stageReceipt)
+	status, response = mvpJSONRequest(t, api.URL, http.MethodPost,
+		"/v1/profiles/"+profileID+"/declaration/initial/stage", stageReceipt)
 	if status != http.StatusCreated || bytes.Contains(response, []byte(secret)) {
-		t.Fatalf("stage status=%d or exposed source credentials", status)
+		t.Fatalf("initial declaration stage status=%d or leaked credentials", status)
 	}
-	var staged apiv1.ProfileDeclarationStageResponse
+	var staged apiv1.InitialProfileDeclarationStageResponse
 	if err := json.Unmarshal(response, &staged); err != nil {
 		t.Fatal(err)
 	}
-	if staged.DeclarationRevision != base.Revision+1 ||
-		staged.DeclarationSHA256 != preview.CandidateSHA256 || staged.Applied {
-		t.Fatalf("staged revision not bound to imported node: %+v", staged)
+	if staged.DeclarationRevision != 1 ||
+		staged.DeclarationSHA256 != preview.CandidateSHA256 ||
+		staged.Applied || staged.CoreValidated || staged.CNRulesReady {
+		t.Fatalf("imported source not bound to initial declaration: %+v", staged)
 	}
 	status, response = mvpJSONRequest(t, api.URL, http.MethodGet, "/v1/config/apply/preview", nil)
 	if status != http.StatusOK || bytes.Contains(response, []byte(secret)) {
@@ -352,7 +355,7 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 		after.RecoveryRequired || after.ActiveAttemptID != nil || managed.Snapshot().PID != running.PID {
 		t.Fatalf("invalid subscription disturbed running LKG: %+v %v", after, err)
 	}
-	staleStatus, _ := mvpJSONRequest(t, api.URL, http.MethodPost, "/v1/profiles/"+profileID+"/declaration/stage", stageReceipt)
+	staleStatus, _ := mvpJSONRequest(t, api.URL, http.MethodPost, "/v1/profiles/"+profileID+"/declaration/initial/stage", stageReceipt)
 	if staleStatus != http.StatusConflict {
 		t.Fatalf("stale stage unexpectedly committed after apply: %d", staleStatus)
 	}
@@ -398,18 +401,6 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 		finalState.LastKnownGoodGenerationID == nil || *finalState.LastKnownGoodGenerationID != applied.GenerationID {
 		t.Fatalf("restart changed LKG generation: %+v %v", finalState, err)
 	}
-}
-
-func mvpHTTPBaseDeclaration(profileID, nodeID string) []byte {
-	return []byte(fmt.Sprintf(`{
-		"schema_version":1,"log_level":"warn",
-		"nodes":[{"profile_id":%q,"node_id":%q,"type":"http","server":"127.0.0.1","port":1,"http":{}}],
-		"selection":{"current":{"members":[{"kind":"specific_node","profile_id":%q,"node_id":%q}],
-			"default":{"kind":"specific_node","profile_id":%q,"node_id":%q}},"custom":[]},
-		"routing":{"custom":[],"geosite":[],"geoip":[],"acl":[],"final":{"kind":"current_selected"}},
-		"dns":{"profiles":[{"id":"mvp-dns","role":"outbound","transport":"udp",
-			"server":"127.0.0.1","port":9}],"outbound_profile_id":"mvp-dns"}
-	}`, profileID, nodeID, profileID, nodeID, profileID, nodeID))
 }
 
 func mvpJSONRequest(t *testing.T, baseURL, method, path string, payload any) (int, []byte) {

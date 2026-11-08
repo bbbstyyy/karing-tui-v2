@@ -577,6 +577,53 @@ type ProfileNodeOverlayResponse struct {
 	Overlay   ProfileNodeOverlaySpec `json:"overlay"`
 }
 
+// First-run initialization is a distinct proxy-only technical-preview mode.
+// It does not claim that CN 28-group policy or its offline resources exist.
+// Both requests refer to the already accepted immutable source snapshot.
+type InitialProfileDeclarationPreviewRequest struct {
+	SnapshotID      int64  `json:"snapshot_id"`
+	SelectedNodeID  string `json:"selected_node_id"`
+	ResolverAddress string `json:"resolver_address"`
+}
+
+type InitialProfileDeclarationPreviewResponse struct {
+	ProfileID               string `json:"profile_id"`
+	SnapshotID              int64  `json:"snapshot_id"`
+	SourceRevision          uint64 `json:"source_revision"`
+	BaseDeclarationRevision uint64 `json:"base_declaration_revision"`
+	EffectiveNodeCount      int    `json:"effective_node_count"`
+	SelectedNodeID          string `json:"selected_node_id"`
+	ResolverAddress         string `json:"resolver_address"`
+	RuntimeOverlaySHA256    string `json:"runtime_overlay_sha256"`
+	CandidateSHA256         string `json:"candidate_sha256"`
+	RoutingMode             string `json:"routing_mode"`
+	CNRulesReady            bool   `json:"cn_rules_ready"`
+	CoreValidated           bool   `json:"core_validated"`
+	Applied                 bool   `json:"applied"`
+}
+
+type InitialProfileDeclarationStageRequest struct {
+	SnapshotID               int64  `json:"snapshot_id"`
+	ExpectedSourceRevision   uint64 `json:"expected_source_revision"`
+	SelectedNodeID           string `json:"selected_node_id"`
+	ResolverAddress          string `json:"resolver_address"`
+	CandidateSHA256          string `json:"candidate_sha256"`
+	RuntimeOverlaySHA256     string `json:"runtime_overlay_sha256"`
+	AcknowledgeProxyOnlyNoCN bool   `json:"acknowledge_proxy_only_no_cn"`
+}
+
+type InitialProfileDeclarationStageResponse struct {
+	ProfileID           string `json:"profile_id"`
+	SnapshotID          int64  `json:"snapshot_id"`
+	SourceRevision      uint64 `json:"source_revision"`
+	DeclarationRevision uint64 `json:"declaration_revision"`
+	DeclarationSHA256   string `json:"declaration_sha256"`
+	RoutingMode         string `json:"routing_mode"`
+	CNRulesReady        bool   `json:"cn_rules_ready"`
+	CoreValidated       bool   `json:"core_validated"`
+	Applied             bool   `json:"applied"`
+}
+
 type ProfileDeclarationPreviewRequest struct {
 	SnapshotID                  int64  `json:"snapshot_id"`
 	ExpectedDeclarationRevision uint64 `json:"expected_declaration_revision"`
