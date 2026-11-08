@@ -35,8 +35,11 @@ func TestCNReadinessClientReadOnlyBoundedAndNoRawErrorEcho(t *testing.T) {
 			})
 		case 2:
 			_, _ = w.Write([]byte(strings.Repeat("z", maxCNReadinessResponseBytes+1)))
-		default:
+		case 3:
 			_, _ = w.Write([]byte(`{"bad": SECRET_TOKEN_HIDDEN_IN_SOURCE}`))
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("secret external URL https://internal.invalid/?token=SECRET_HTTP_BODY"))
 		}
 	}))
 	if err := server.Listener.Close(); err != nil {
@@ -60,7 +63,13 @@ func TestCNReadinessClientReadOnlyBoundedAndNoRawErrorEcho(t *testing.T) {
 		!strings.Contains(err.Error(), "invalid") {
 		t.Fatalf("malformed source readiness response echoed raw input: %v", err)
 	}
-	if calls.Load() != 3 {
+	_, err = api.CNReadiness(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "HTTP 502") ||
+		strings.Contains(err.Error(), "SECRET_HTTP_BODY") ||
+		strings.Contains(err.Error(), "internal.invalid") {
+		t.Fatalf("CN readiness HTTP error leaked an untrusted body: %v", err)
+	}
+	if calls.Load() != 4 {
 		t.Fatalf("client retried read-only audit unexpectedly: %d", calls.Load())
 	}
 }
