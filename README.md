@@ -209,6 +209,27 @@ as a claim of CN parity. See [ADR 0225](docs/adr/0225-first-run-proxy-only-initi
 [ADR 0226](docs/adr/0226-guarded-first-run-cli.md) and
 [the MVP plan](docs/mvp-plan.md).
 
+### TUI first-run shortcut (still proxy-only, without CN presets)
+
+After adding and manually refreshing a source (the token-bearing URL is entered
+through `profiles put --stdin`, never an argv flag), open `karing-tui tui`.
+Load the Profiles page with `2`, select the imported profile, press Enter to
+open Nodes, and choose an enabled accepted node. Press `i`; type an explicit
+reachable DNS IP:port, then Enter to request the **read-only** initial
+declaration preview. Check the source revision, snapshot, SHA-256 prefixes and
+the prominent warning that the CN 28-group routing rules are **not** present.
+Press `y` to stage exactly that proxy-only declaration once, or Esc to cancel
+without writing. A narrow terminal, stale node/snapshot or active/previous
+configuration disables the action. No TUI stage automatically applies Core.
+
+After staging, use Dashboard `1` then `a` to preview the separate checked
+Core Apply and `y` to explicitly confirm the potentially disruptive
+application. If the TUI exits, disconnects or reports an uncertain stage,
+read status and declaration first; never blindly replay. All node names and
+external data are sanitized for terminal rendering. This is a **technical
+preview**, not CN parity or full MVP onboarding. See
+[ADR 0227](docs/adr/0227-guarded-first-run-tui.md).
+
 ## Read-only snapshot-to-declaration preview (M3)
 
 After a profile refresh produces an accepted snapshot, the Unix-socket daemon can examine how it would change an **existing** declaration:

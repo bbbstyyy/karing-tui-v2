@@ -101,6 +101,7 @@ type Model struct {
 	connections  connectionsObservation
 	inspection   configInspectionState
 	checkedApply checkedApplyState
+	initial      initialProfileState
 	history      historyState
 
 	quitting bool
@@ -186,6 +187,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if (m.initial.editing || m.initial.previewing || m.initial.pending != nil) &&
+			(m.width < minInitialWidth || m.height < minInitialHeight) {
+			m.initial.discard()
+			m.initial.notice = "First-run confirmation discarded after resize; no write sent."
+		}
 		if (m.checkedApply.pending != nil || m.checkedApply.previewing) &&
 			(m.width < minApplyConfirmWidth || m.height < minApplyConfirmHeight) {
 			m.checkedApply.discard()
@@ -202,6 +208,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.hasCoreError = msg.value.CoreLastError != ""
 			msg.value.CoreLastError = "" // The raw error can contain credentials.
 			m.status = msg.value
+		}
+		if m.initial.awaitingReadback {
+			m.initial.awaitingReadback = false
+			if m.statusReady && msg.value.APIVersion == apiv1.Version &&
+				msg.value.DeclarationRevision == 1 && msg.value.ConfigRevision == 0 &&
+				msg.value.AppliedGenerationID == nil &&
+				msg.value.LastKnownGoodGenerationID == nil &&
+				!msg.value.RecoveryRequired {
+				m.initial.notice = "Verified proxy-only declaration rev 1; CN NOT ready. Dashboard [1], a: SEPARATE checked Apply."
+			} else {
+				m.initial.notice = "Stage readback uncertain; inspect declaration and recovery. NEVER auto-retry."
+			}
 		}
 		return m, nil
 	case profilesLoaded:
@@ -311,7 +329,44 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case checkedApplyWriteLoaded:
 		m.acceptCheckedApplyWrite(msg)
 		return m, nil
+	case initialProfilePreviewLoaded:
+		m.acceptInitialPreview(msg)
+		return m, nil
+	case initialProfileStageLoaded:
+		return m, m.acceptInitialStage(msg)
 	case tea.KeyMsg:
+		if m.initial.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.initial.pending != nil {
+			switch msg.String() {
+			case "y":
+				return m, m.confirmInitialStage()
+			case "esc":
+				m.initial.discard()
+				m.initial.notice = "First-run stage cancelled; no write sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Quit always discards unconfirmed stage.
+			default:
+				return m, nil
+			}
+		}
+		if m.initial.previewing {
+			switch msg.String() {
+			case "esc":
+				m.initial.discard()
+				m.initial.notice = "First-run preview cancelled; no write sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Quit TUI, not daemon.
+			default:
+				return m, nil
+			}
+		}
+		if m.initial.editing && msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, m.initialResolverKey(msg)
+		}
 		if m.checkedApply.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
 			return m, nil
 		}
@@ -532,6 +587,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.page == profilesPage && m.selectedProfileID() != "" {
 				return m, m.switchPage(nodesPage)
 			}
+		case "i":
+			if m.page == nodesPage {
+				m.beginInitialProfile()
+			}
 		case "f":
 			m.proposeOverlay(true)
 		case "d":
@@ -562,6 +621,10 @@ func (m *Model) selectedProfileID() string {
 }
 
 func (m *Model) switchPage(to page) tea.Cmd {
+	if m.page == nodesPage && to != nodesPage {
+		m.initial.discard()
+		m.initial.notice = ""
+	}
 	m.overlayConfirm = nil
 	m.overlayNotice = ""
 	if m.page != to {
@@ -620,6 +683,8 @@ func (m *Model) switchPage(to page) tea.Cmd {
 }
 
 func (m *Model) requestNodes(offset int) tea.Cmd {
+	m.initial.discard()
+	m.initial.notice = ""
 	m.nodesRequest++
 	m.nodesReady, m.nodesError = false, false
 	m.nodes = apiv1.ProfileNodeListResponse{}
@@ -664,7 +729,9 @@ func (m Model) View() string {
 				body = body[:limit]
 			}
 		case nodesPage:
-			if m.nodesReady && limit > 1 && len(body) > 1 {
+			if m.initial.active() {
+				body = body[:limit]
+			} else if m.nodesReady && limit > 1 && len(body) > 1 {
 				start := min(m.nodesScroll, len(body)-2)
 				body = append([]string{body[0]}, body[1+start:min(len(body), 1+start+limit-1)]...)
 			} else {
@@ -717,8 +784,27 @@ func (m Model) View() string {
 		case m.checkedApply.notice != "":
 			help = m.checkedApply.notice
 		}
+	} else if m.page == nodesPage && m.initial.active() {
+		switch {
+		case m.initial.writing:
+			help = "Staging: q quits UI; daemon stage may still complete. NEVER auto-retry."
+		case m.initial.pending != nil:
+			help = "y: CONFIRM proxy-only stage (CN NOT ready)  Esc: cancel  q: quit"
+		case m.initial.previewing:
+			help = "Read-only first-run preview; Esc: cancel  q: quit"
+		default:
+			help = "Enter: preview  Backspace: edit DNS  Ctrl+U: clear  Esc: cancel  q: quit"
+		}
 	} else if m.overlayConfirm != nil {
 		help = "y: CONFIRM " + m.overlayConfirm.action + "  Esc: cancel  (daemon only; no core apply)"
+	} else if m.page == nodesPage && m.overlayInFlight {
+		help = "Saving node overlay; q quits UI but an accepted write may finish."
+	} else if m.page == nodesPage && m.overlayNotice != "" {
+		help = m.overlayNotice
+	} else if m.page == nodesPage && m.initial.notice != "" {
+		help = m.initial.notice
+	} else if m.page == nodesPage {
+		help = "j/k: choose node  i: FIRST-RUN setup  f/d: node overlay  n/p: page  Esc: profiles"
 	} else if m.page == selectionPage {
 		help = "j/k: choose  Enter: propose  r: reload  Tab: page  q: quit"
 		if m.selection.pending != nil {
@@ -774,6 +860,11 @@ func (m Model) View() string {
 }
 
 func (m Model) pageLines() []string {
+	if m.page == nodesPage {
+		if lines := m.initialProfileLines(); len(lines) > 0 {
+			return lines
+		}
+	}
 	switch m.page {
 	case routePage:
 		return m.routeProbeLines()
