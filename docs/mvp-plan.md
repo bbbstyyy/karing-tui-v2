@@ -210,11 +210,13 @@ MVP Beta 是**能力受限但诚实可用**的发行候选：支持字段子集�
 | MVP-3：首次初始化 CLI | [#108](https://github.com/bbbstyyy/karing-tui-v2/pull/108) 已合并，`bec875c8` | [最终 Go CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42443434490)，Race 4/4、真实 Core 与双架构 Provenance 通过 | 仅显式 `proxy-only-no-cn`，无完整 TUI/CN 用户故事验收 |
 | MVP-3：首次初始化 TUI | [#109](https://github.com/bbbstyyy/karing-tui-v2/pull/109) 已合并，`867194fa` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42454855889)；最终换基 Go、Race 4/4、真实 Core/双架构已通过 | CN 28 组与 DNS/TUI 完整操作仍未通过 |
 | MVP-1D：VLESS URI TCP/TLS | [#110](https://github.com/bbbstyyy/karing-tui-v2/pull/110) 已合并，`e2493b4c` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42460378751)，Go/Race 4/4/Core/双架构通过 | 只覆盖经明确承认的 VLESS TCP/TLS 严格 URI 字段 |
-
 | MVP-1C：VLESS 真实 TLS/UUID | [#111](https://github.com/bbbstyyy/karing-tui-v2/pull/111) 已合并，`8846e21f` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42465312976)，Go/Race 4/4、真实 TLS Core 与双架构通过 | 只证明本地受控 TCP/TLS 子集，不代表所有运营商/传输层 |
 | MVP-1C：Trojan 真实 TLS/密码 | [#112](https://github.com/bbbstyyy/karing-tui-v2/pull/112) 已合并，`6b551e08` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42467976308)，Go/Race 4/4、真实 Trojan Core 与双架构通过 | 不覆盖 WS/gRPC/Reality/UDP |
-| MVP-1C：Shadowsocks AEAD TCP | [#113](https://github.com/bbbstyyy/karing-tui-v2/pull/113) Draft（最终换基复验） | 经典 AES-256-GCM 严格本地服务端测试；不得沿用旧基线绿色 CI | 未合并，其他 SS 算法/UDP/插件仍缺 |
-| MVP-1D：Clash YAML | 开发候选（本 PR，待独立 CI） | 严格 YAML SS/Trojan/VLESS/快照隔离、Source API 与真实 Core 集成测试 | 未通过完整 CI，不覆盖所有 Clash 扩展或订阅提供商 |
+| MVP-1C：Shadowsocks AEAD TCP | [#113](https://github.com/bbbstyyy/karing-tui-v2/pull/113) 已合并，`1c0bf500` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42476700482)，Go/Race 4/4/真实 Core/双架构全通过 | 其他 SS 算法/UDP/插件仍缺 |
+| MVP-1D：Clash YAML | [#114](https://github.com/bbbstyyy/karing-tui-v2/pull/114) 已合并，`29cd29d6` | [CI](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42479491268)，Go/Race 4/4/真实 Core/双架构/CN 审计全通过 | 仅严格兼容字段子集，不覆盖所有 Clash 扩展或提供商 |
+
+| MVP-2：CN 28 组来源就绪检查 | [#115](https://github.com/bbbstyyy/karing-tui-v2/pull/115) Draft（新基线 CI 待最终验收） | 28 组字段级证据、资源缺口及许可阻断只读 API；不提前认定 CN 运行可用 | `geoip:bing`、规则许可/离线安装、真实五层 DNS/路由尚缺 |
+| MVP-2/3：CN 操作员只读 CLI | [#116](https://github.com/bbbstyyy/karing-tui-v2/pull/116) Draft（本 PR，堆叠在 #115） | 固定来源核验、受限读取、完整列表和伪造就绪拒绝测试；待 CI | 不提供 CN 应用/编辑或授权、不能作为 MV-03/07 完成证据 |
 
 **关键阻断不变**：CN 28 组完整五层真实流量、受许可离线规则集（含
 `geoip:bing` 缺口）、CN DNS 路径、真实备份恢复与 #59 根因、
