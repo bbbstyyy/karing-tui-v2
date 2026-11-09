@@ -248,7 +248,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.profilesError = true
 			m.profilesReady = false
 			m.acceptProfileRefreshReadback()
-			m.acceptLocalSourceListReadback()
+			m.acceptLocalSourceListReadback(nil)
 			return m, nil
 		}
 		oldID := m.selectedProfileID()
@@ -279,7 +279,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		m.acceptLocalSourceListReadback()
+		m.acceptLocalSourceListReadback(msg.value.Profiles)
 		if m.page == nodesPage && m.nodesProfile != m.selectedProfileID() {
 			return m, m.requestNodes(0)
 		}
@@ -605,6 +605,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.page == profilesPage {
 				m.beginLocalSource()
 			}
+		case "s":
+			if m.page == profilesPage {
+				m.beginRemoteSource()
+			}
 		case "u":
 			if m.page == profilesPage {
 				m.localSource.notice = ""
@@ -914,7 +918,7 @@ func (m Model) View() string {
 		case m.profileRefresh.notice != "":
 			help = m.profileRefresh.notice
 		default:
-			help = "c: create local file source  u: refresh  Enter: nodes  j/k: select  r: reload"
+			help = "c: local file  s: HTTPS source  u: refresh  Enter: nodes  r: reload"
 		}
 	} else if m.page == nodesPage && m.initial.active() {
 		switch {
@@ -1055,7 +1059,7 @@ func (m Model) pageLines() []string {
 			}
 			return []string{"Profiles: loading..."}
 		}
-		result := []string{fmt.Sprintf("Profiles (%d shown; c: local create, u: refresh; no auto-apply)", len(m.profiles))}
+		result := []string{fmt.Sprintf("Profiles (%d shown; c: file, s: HTTPS, u: refresh; no auto-apply)", len(m.profiles))}
 		if len(m.profiles) == 0 {
 			return append(result, "No configured profiles.")
 		}

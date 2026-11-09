@@ -285,3 +285,55 @@ func TestLocalSourceWizardStaleResultCannotClaimCreation(t *testing.T) {
 		t.Fatal("replayed completion was accepted")
 	}
 }
+
+func TestLocalSourceWizardRejectsTamperedListAtSameRevision(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*localSourceFake)
+	}{
+		{"different path", func(f *localSourceFake) {
+			f.profiles[0].Source.Location = "/tmp/other-PRIVATE_TOKEN.json"
+		}},
+		{"different format", func(f *localSourceFake) {
+			f.profiles[0].Source.Format = "clash-yaml"
+		}},
+		{"different fetch", func(f *localSourceFake) {
+			f.profiles[0].Source.Fetch.Mode = "selected"
+		}},
+		{"different filter", func(f *localSourceFake) {
+			f.profiles[0].Source.Filter.KeywordOrRegex = "hostile"
+		}},
+		{"unexpected automatic refresh", func(f *localSourceFake) {
+			id := int64(77)
+			f.profiles[0].CurrentSnapshotID = &id
+		}},
+		{"duplicate ID", func(f *localSourceFake) {
+			f.profiles = append(f.profiles, f.profiles[0])
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &localSourceFake{fakeAPI: &fakeAPI{}}
+			m := localSourceEmptyPage(t, fake)
+			m = localSourceProposed(t, m, "new-profile", "/tmp/PRIVATE_TOKEN.json")
+			m, write := updated(t, m, localSourceKey('y'))
+			m, read := updated(t, m, write())
+			if read == nil || !m.localSource.awaitingReadback ||
+				m.localSource.sourceFingerprint == ([32]byte{}) {
+				t.Fatal("creation did not reach committed fingerprint readback")
+			}
+			tc.mutate(fake)
+			m, _ = updated(t, m, read())
+			if !strings.Contains(m.localSource.notice, "mismatched") ||
+				strings.Contains(m.localSource.notice, "Created") ||
+				strings.Contains(m.View(), "PRIVATE_TOKEN") ||
+				m.localSource.sourceFingerprint != ([32]byte{}) ||
+				m.localSource.createdID != "" {
+				t.Fatalf("unsafe source list accepted or private token leaked: %+v", m.localSource)
+			}
+			if fake.putCalls != 1 {
+				t.Fatal("readback mismatch caused automatic retry")
+			}
+		})
+	}
+}
