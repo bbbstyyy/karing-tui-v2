@@ -171,6 +171,22 @@ enabled groups, their source condition families and the required 68 logical
 rule-set resources. It explicitly reports `geoip:bing` as upstream-absent
 and records that upstream data licensing is **unresolved**.
 
+Query the inventory as an ordinary user through the daemon's protected
+Unix socket:
+
+```sh
+karing-tui config cn-readiness
+karing-tui config cn-readiness --json
+```
+
+The default output lists all 28 original groups in pinned order, shows
+on/off defaults and typed targets, and prints both blocking conditions.
+The machine-readable output carries `distribution_ready: false` and
+`evidence: pinned_source_inventory_only`. If the daemon reports a
+different pinned revision, hides a missing asset, or claims licenses have
+been resolved, the CLI rejects that inconsistent report. There is no
+`--apply`, `--enable` or resource installation subcommand.
+
 This endpoint reports **pinned source metadata only**. It does **not** check
 local asset installation or verify runtime DNS/Core traffic and it cannot
 authorize an Apply, turn on CN routing, or assert a redistributable package.
