@@ -223,6 +223,38 @@ MVP Beta 是**能力受限但诚实可用**的发行候选：支持字段子集�
 72 小时混合耐久以及双架构无特权交付包，尚未达到 MVP Beta 标准。
 不得将上述局部合并或 GitHub Actions 绿色结果自动换算为 MV-02–09 通过。
 
+
+### 7.3 2026-11-10 增量证据与下一步（非 MVP Beta 验收）
+
+本节更新第 7.2 节的历史工作快照。所有合并均指向开发集成分支
+`feat/m0-m1-foundation`，**不是**稳定 `main`；每个打开的 Draft PR
+只代表在研工作。原 MV-01–MV-09 验收状态不随本表自动升级。
+
+| MVP 工作包 | 代码/合并状态 | 可核查证据和仍需满足的边界 |
+| --- | --- | --- |
+| CN 28 组只读操作入口 | [#116](https://github.com/bbbstyyy/karing-tui-v2/pull/116) 已合并 `ad49b065`；[#119](https://github.com/bbbstyyy/karing-tui-v2/pull/119) 已合并 `017abacb` | CLI/TUI 均复核固定源 28 组、6 默认开启与缺失资源；严格只读，**不表示**资源已获许可或规则已启用 |
+| MVP-1D Base64 URI/真实 Core | [#118](https://github.com/bbbstyyy/karing-tui-v2/pull/118) 已合并 `146f8582` | 最终 PR head `e88d081a` 的 [Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42591737666)、Managed Core 和双架构 Provenance 已通过；仅严格支持的 SIP002 AEAD 子集与受控流量 |
+| MVP-3 订阅手动刷新 | [#120](https://github.com/bbbstyyy/karing-tui-v2/pull/120) 已合并 `dfa65e5b` | [Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42588238231) 与真实 Core/双架构通过；来源 CAS、单次刷新及独立快照读回，不自动声明或 Core Apply |
+| MVP-3 TUI 本地文件来源 | [#121](https://github.com/bbbstyyy/karing-tui-v2/pull/121) 已合并 `670de2c2` | 最终 PR head `c9c42367` 的 [Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42606184194)、Managed Core、双架构已通过；只注册来源，后续刷新/暂存/应用均需明确操作 |
+| MVP-2 CN 五层真实流量 | [#117](https://github.com/bbbstyyy/karing-tui-v2/pull/117) 已合并 `7ca2b150` | [最终 head Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42625367333)、真实 Core 和双架构已通过；28 组仍依赖合成规则文件，非 MV-03/07 生产验收 |
+| MVP-3 远程 HTTPS 来源 | [#122](https://github.com/bbbstyyy/karing-tui-v2/pull/122) 已合并 `b3e0638a` | 最终 head `5e3add89` 的 [Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42637849590)、Managed Core 与双架构已通过；仅隐私保护的 HTTPS 来源注册，不自动导入或应用，不等于 MV-05 全流程 |
+| MVP-2/3 CN/Group DNS/地区追加 | [#123](https://github.com/bbbstyyy/karing-tui-v2/pull/123) 已合并 `c5437f86` | 最终 head `275f6086` 的 [Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42633668307)、Managed Core、双架构均通过；**不能**认为原生 CN 组 DNS 匹配或许可证已完成 |
+| MVP-2 CN 规则来源证据门槛 | [#125](https://github.com/bbbstyyy/karing-tui-v2/pull/125) 已合并 `66f107d4` | 最终 head `f073eb71` 的 [Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42643786602)、Managed Core、双架构及 [CN Resource Audit](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42643786535) 全通过；仅校验来源报告结构，资源和许可未闭环 |
+| MVP-4 候选恢复阶段故障定位 | [#126](https://github.com/bbbstyyy/karing-tui-v2/pull/126) Draft；换基 head `62b4b96b` | 真实 Core 与双架构通过，新的 Go/Race 验收进行中；在 `create_scope` 前区分上下文截止、取消、测试拒绝；Issue #59 根因仍未确定，MV-06 不通过 |
+| MVP-2/3 CN 地区追加独立开关 | [#127](https://github.com/bbbstyyy/karing-tui-v2/pull/127) Draft；head `5c692e95` | 已编码受保护预览/确认/CAS 下的 GeoSite 与 GeoIP 独立开关、单字段声明补丁和真实 Core 关/开流量测试；最终 SHA CI 未完成，不代表已验收或已获 CN 规则许可 |
+
+**新增已证实的语义阻断（MV-04）**：当前当路由组含目标 IP
+条件或不透明规则集条件时，编译器拒绝先于目标选择执行 Group/Proxy
+DNS resolve。这保持了原条件和失败关闭，却意味着大量 CN 预设组
+尚无法安全地使用组 DNS 绑定。必须单独实现并验证不丢失匹配语义的
+处理方式，不能删掉 IP/rule-set 条件、默认 DIRECT，或把安全拒绝
+记成支持。[#123](https://github.com/bbbstyyy/karing-tui-v2/pull/123)
+仅提供联合测试与拒绝证据。
+
+**后续顺序**：先对 [#126](https://github.com/bbbstyyy/karing-tui-v2/pull/126) 和 [#127](https://github.com/bbbstyyy/karing-tui-v2/pull/127) 的各自最终 SHA 完成四类 CI（路由行为变更另需真实流量）；按依赖逐个合并、重新验收；继续推进 CN 原生组 DNS 语义与合法离线资源闭包；
+并行保持 [#59](https://github.com/bbbstyyy/karing-tui-v2/issues/59)
+根因和真实恢复、72h 耐久、两架构无特权离线安装为发布阻断。
+
 ---
 
 **一句话目标：让一个普通 Linux 用户真正能够安全地导入订阅、按原样使用 CN 五层分流与 DNS、经 TUI/CLI 选节点并应用到 Core、在重启和故障后保持/恢复有效状态；做到并验证这些，才叫 MVP。**
