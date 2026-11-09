@@ -16,10 +16,10 @@ import (
 
 type cnReadinessFakeAPI struct {
 	*fakeAPI
-	report       apiv1.CNResourceReadinessResponse
-	err          error
-	calls        int
-	hasDeadline  bool
+	report      apiv1.CNResourceReadinessResponse
+	err         error
+	calls       int
+	hasDeadline bool
 }
 
 func (f *cnReadinessFakeAPI) CNReadiness(ctx context.Context) (apiv1.CNResourceReadinessResponse, error) {
@@ -45,30 +45,30 @@ func cnReadinessFixture(t *testing.T) apiv1.CNResourceReadinessResponse {
 		t.Fatal(err)
 	}
 	raw := apiv1.CNResourceReadinessResponse{
-		Evidence: "pinned_source_inventory_only",
-		SourceRepository: snapshot.SourceRepository,
-		SourceCommit: snapshot.SourceCommit,
-		SourcePath: snapshot.SourcePath,
-		DistributionReady: false,
-		LicenseStatus: "blocked_unresolved_upstream_data_licenses",
-		BlockingCodes: []string{"unresolved_upstream_data_licenses", "upstream_resource_absent"},
-		KnownUpstreamAbsent: []string{"geoip:bing"},
-		LogicalResourceRefs: len(plan),
+		Evidence:             "pinned_source_inventory_only",
+		SourceRepository:     snapshot.SourceRepository,
+		SourceCommit:         snapshot.SourceCommit,
+		SourcePath:           snapshot.SourcePath,
+		DistributionReady:    false,
+		LicenseStatus:        "blocked_unresolved_upstream_data_licenses",
+		BlockingCodes:        []string{"unresolved_upstream_data_licenses", "upstream_resource_absent"},
+		KnownUpstreamAbsent:  []string{"geoip:bing"},
+		LogicalResourceRefs:  len(plan),
 		FileBackedCandidates: preset.CNResourceExpectedFiles,
-		TotalGroupCount: preset.CNExpectedGroups,
-		DefaultEnabledCount: preset.CNExpectedEnabled,
-		RegionAppendRefs: region,
+		TotalGroupCount:      preset.CNExpectedGroups,
+		DefaultEnabledCount:  preset.CNExpectedEnabled,
+		RegionAppendRefs:     region,
 	}
 	for _, group := range snapshot.Groups {
 		raw.Groups = append(raw.Groups, apiv1.CNPresetReadinessGroup{
 			ID: group.ID, Order: group.Order, Name: group.DisplayName,
-			EnabledByDefault: group.Enabled,
-			TargetKind: string(group.Target.Kind),
-			RuleSetRefs: append([]string(nil), group.Source.RuleSetBuildIn...),
-			DomainSuffixCount: len(group.Source.DomainSuffix),
-			DomainKeywordCount: len(group.Source.DomainKeyword),
-			IPCIDRCount: len(group.Source.IPCIDR),
-			ProcessNameCount: len(group.Source.ProcessName),
+			EnabledByDefault:        group.Enabled,
+			TargetKind:              string(group.Target.Kind),
+			RuleSetRefs:             append([]string(nil), group.Source.RuleSetBuildIn...),
+			DomainSuffixCount:       len(group.Source.DomainSuffix),
+			DomainKeywordCount:      len(group.Source.DomainKeyword),
+			IPCIDRCount:             len(group.Source.IPCIDR),
+			ProcessNameCount:        len(group.Source.ProcessName),
 			AndroidOnlyPackageCount: len(group.Source.Package),
 		})
 	}

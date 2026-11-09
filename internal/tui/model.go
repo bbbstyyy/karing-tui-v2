@@ -105,7 +105,7 @@ type Model struct {
 	checkedApply checkedApplyState
 	initial      initialProfileState
 	history      historyState
-	cnReadiness   cnReadinessState
+	cnReadiness  cnReadinessState
 
 	quitting bool
 }
