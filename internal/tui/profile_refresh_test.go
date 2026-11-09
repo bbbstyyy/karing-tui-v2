@@ -45,7 +45,7 @@ func manualRefreshFixture() *manualRefreshFake {
 					Location: "https://private.invalid/sub?token=PRIVATE_TOKEN",
 				},
 				CurrentSnapshotID: &id,
-				LastError: "PRIVATE_TOKEN",
+				LastError:         "PRIVATE_TOKEN",
 			}},
 		},
 		response: apiv1.ProfileRefreshResponse{
@@ -154,8 +154,8 @@ func TestManualTUIRefreshCancelResizeAndRejectUntrustedSourceList(t *testing.T) 
 
 func TestManualTUIRefreshTimeoutOrMalformedReplyNeverRetriesOrLeaks(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		mutate   func(*manualRefreshFake)
+		name   string
+		mutate func(*manualRefreshFake)
 	}{
 		{"timeout with secret", func(f *manualRefreshFake) {
 			f.err = errors.New("secret from URL https://private.invalid/?token=LEAK")
