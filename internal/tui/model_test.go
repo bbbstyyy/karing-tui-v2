@@ -39,6 +39,14 @@ func (f *fakeAPI) CNReadiness(context.Context) (apiv1.CNResourceReadinessRespons
 	return apiv1.CNResourceReadinessResponse{}, errors.New("CN readiness unavailable")
 }
 
+func (f *fakeAPI) PutProfileSource(context.Context, string, apiv1.ProfileSourcePutRequest) (apiv1.ProfileSourceResponse, error) {
+	return apiv1.ProfileSourceResponse{}, errors.New("TUI profile creation unavailable")
+}
+
+func (f *fakeAPI) ProfileSource(context.Context, string) (apiv1.ProfileSourceResponse, error) {
+	return apiv1.ProfileSourceResponse{}, errors.New("TUI source detail unavailable")
+}
+
 func (f *fakeAPI) RefreshProfileSource(context.Context, string, apiv1.ProfileRefreshRequest) (apiv1.ProfileRefreshResponse, error) {
 	return apiv1.ProfileRefreshResponse{}, errors.New("manual profile refresh unavailable")
 }
