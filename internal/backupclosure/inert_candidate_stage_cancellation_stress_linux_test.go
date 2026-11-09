@@ -46,8 +46,10 @@ func TestStageCancellationBeforeAndAfterCreatedDirectoryClosesLeases(t *testing.
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			injected := false
+			var phases []string
 			candidate, stageErr := stageInertRestoreCandidate(
 				ctx, source, parent, key, func(at string) bool {
+					phases = append(phases, at)
 					if at == phase {
 						injected = true
 						cancel()
@@ -61,6 +63,10 @@ func TestStageCancellationBeforeAndAfterCreatedDirectoryClosesLeases(t *testing.
 				!errors.Is(stageErr, ErrUnsafeInertRestoreCandidate) {
 				t.Fatalf("cancelled Stage allocated candidate: injected=%t err=%v",
 					injected, stageErr)
+			}
+			if (phase == "create_scope" || phase == "scope_before_mkdirat") &&
+				!hasInertPhase(phases, "scope_admission_context_cancelled") {
+				t.Fatalf("cancelled scope admission lost fixed diagnostic: phases=%v", phases)
 			}
 			entries, err := os.ReadDir(parent)
 			if err != nil || len(entries) != 0 {

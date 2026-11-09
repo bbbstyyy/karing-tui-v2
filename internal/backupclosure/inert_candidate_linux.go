@@ -996,11 +996,11 @@ func stageInertRestoreCandidate(
 		}
 		// A timed-out or cancelled Stage is not permitted to allocate a
 		// new persistent private scope after the parent reservation.
-		if !checkpoint("create_scope") || ctx.Err() != nil {
+		if !inertScopeAdmissionCheckpoint(ctx, "create_scope", probe) {
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
-		if !checkpoint("scope_before_mkdirat") || ctx.Err() != nil {
+		if !inertScopeAdmissionCheckpoint(ctx, "scope_before_mkdirat", probe) {
 			err = ErrUnsafeInertRestoreCandidate
 			return
 		}
