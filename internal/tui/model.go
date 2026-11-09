@@ -21,6 +21,7 @@ const (
 type API interface {
 	Status(context.Context) (apiv1.StatusResponse, error)
 	ProfileSources(context.Context) (apiv1.ProfileSourceListResponse, error)
+	RefreshProfileSource(context.Context, string, apiv1.ProfileRefreshRequest) (apiv1.ProfileRefreshResponse, error)
 	ProfileNodes(context.Context, string, int, int) (apiv1.ProfileNodeListResponse, error)
 	PutProfileNodeOverlay(context.Context, string, string, apiv1.ProfileNodeOverlayPutRequest) (apiv1.ProfileNodeOverlayResponse, error)
 	RouteExplain(context.Context, apiv1.RouteExplainRequest) (apiv1.RouteExplainResponse, error)
@@ -81,6 +82,7 @@ type Model struct {
 	profilesTruncated bool
 	profilesRequest   uint64
 	selected          int
+	profileRefresh    profileRefreshState
 
 	nodes          apiv1.ProfileNodeListResponse
 	nodesReady     bool
@@ -195,6 +197,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.initial.discard()
 			m.initial.notice = "First-run confirmation discarded after resize; no write sent."
 		}
+		if m.profileRefresh.pending != nil &&
+			(m.width < minProfileRefreshWidth || m.height < minProfileRefreshHeight) {
+			m.profileRefresh.pending = nil
+			m.profileRefresh.notice = "Refresh confirmation discarded after resize; no request sent."
+		}
 		if (m.checkedApply.pending != nil || m.checkedApply.previewing) &&
 			(m.width < minApplyConfirmWidth || m.height < minApplyConfirmHeight) {
 			m.checkedApply.discard()
@@ -232,6 +239,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.profilesError = true
 			m.profilesReady = false
+			m.acceptProfileRefreshReadback()
 			return m, nil
 		}
 		oldID := m.selectedProfileID()
@@ -254,6 +262,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 		m.profilesReady, m.profilesError = true, false
+		m.acceptProfileRefreshReadback()
 		m.selected = 0
 		for i, item := range m.profiles {
 			if item.ProfileID == oldID {
@@ -340,7 +349,27 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case initialProfileStageLoaded:
 		return m, m.acceptInitialStage(msg)
+	case profileRefreshLoaded:
+		return m, m.acceptProfileRefresh(msg)
 	case tea.KeyMsg:
+		if (m.profileRefresh.writing || m.profileRefresh.awaitingReadback) &&
+			msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.profileRefresh.pending != nil {
+			switch msg.String() {
+			case "y":
+				return m, m.confirmProfileRefresh()
+			case "esc":
+				m.profileRefresh.pending = nil
+				m.profileRefresh.notice = "Manual refresh cancelled; no network request sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Exiting the UI discards unconfirmed work.
+			default:
+				return m, nil
+			}
+		}
 		if m.initial.writing && msg.String() != "q" && msg.String() != "ctrl+c" {
 			return m, nil
 		}
@@ -479,6 +508,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "r":
+			if m.page == profilesPage {
+				m.profileRefresh.notice = ""
+			}
 			if m.page == dashboardPage {
 				m.checkedApply.discard()
 			}
@@ -530,6 +562,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchPage(historyPage)
 		case "0":
 			return m, m.switchPage(cnReadinessPage)
+		case "u":
+			if m.page == profilesPage {
+				m.proposeProfileRefresh()
+			}
 		case "a":
 			if m.page == dashboardPage {
 				return m, m.startCheckedApplyPreview()
@@ -635,6 +671,10 @@ func (m *Model) selectedProfileID() string {
 }
 
 func (m *Model) switchPage(to page) tea.Cmd {
+	if m.page == profilesPage && to != profilesPage {
+		m.profileRefresh.pending = nil
+		m.profileRefresh.notice = ""
+	}
 	if m.page == nodesPage && to != nodesPage {
 		m.initial.discard()
 		m.initial.notice = ""
@@ -806,6 +846,19 @@ func (m Model) View() string {
 		case m.checkedApply.notice != "":
 			help = m.checkedApply.notice
 		}
+	} else if m.page == profilesPage {
+		switch {
+		case m.profileRefresh.writing:
+			help = "Refreshing source; q exits UI; daemon may finish. NEVER auto-retry."
+		case m.profileRefresh.awaitingReadback:
+			help = "Readback pending; do not retry or assume refresh has applied."
+		case m.profileRefresh.pending != nil:
+			help = "y: CONFIRM source refresh (CAS rev; no stage/apply)  Esc: cancel  q: quit"
+		case m.profileRefresh.notice != "":
+			help = m.profileRefresh.notice
+		default:
+			help = "u: propose manual subscription refresh  Enter: nodes  j/k: select  r: reload"
+		}
 	} else if m.page == nodesPage && m.initial.active() {
 		switch {
 		case m.initial.writing:
@@ -942,7 +995,7 @@ func (m Model) pageLines() []string {
 			}
 			return []string{"Profiles: loading..."}
 		}
-		result := []string{fmt.Sprintf("Profiles (%d shown; read-only)", len(m.profiles))}
+		result := []string{fmt.Sprintf("Profiles (%d shown; u: confirmed refresh, never auto-apply)", len(m.profiles))}
 		if len(m.profiles) == 0 {
 			return append(result, "No configured profiles.")
 		}
