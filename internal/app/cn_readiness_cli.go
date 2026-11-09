@@ -4,14 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"reflect"
-	"slices"
 	"time"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
 	"github.com/bbbstyyy/karing-tui-v2/internal/client"
-	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
-	"github.com/bbbstyyy/karing-tui-v2/internal/preset"
+	"github.com/bbbstyyy/karing-tui-v2/internal/cnreadiness"
 )
 
 type cnReadinessClient interface {
@@ -70,56 +67,10 @@ func runCNReadinessCLI(ctx context.Context, api cnReadinessClient, args []string
 	return 0
 }
 
-// Compare every user-visible field with the embedded immutable preset. This
-// prevents an inconsistent or compromised daemon from presenting an
-// unsupported CN version as installed, complete or licensed.
+// Preserve this existing CLI validation entry point for its regression tests.
+// TUI and CLI now enforce precisely the same immutable CN source proof.
 func validPinnedCNReadinessReport(r apiv1.CNResourceReadinessResponse) bool {
-	snapshot, err := preset.LoadCN()
-	if err != nil {
-		return false
-	}
-	plan, err := preset.CNOfflineResourcePlan(snapshot)
-	if err != nil {
-		return false
-	}
-	appendPlan, err := domain.DefaultCNRegionAppendPlan().RuleSetRefs()
-	if err != nil {
-		return false
-	}
-	if r.Evidence != "pinned_source_inventory_only" ||
-		r.SourceRepository != snapshot.SourceRepository ||
-		r.SourceCommit != snapshot.SourceCommit ||
-		r.SourcePath != snapshot.SourcePath ||
-		r.DistributionReady ||
-		r.LicenseStatus != "blocked_unresolved_upstream_data_licenses" ||
-		!reflect.DeepEqual(r.BlockingCodes, []string{
-			"unresolved_upstream_data_licenses", "upstream_resource_absent",
-		}) ||
-		!reflect.DeepEqual(r.KnownUpstreamAbsent, []string{"geoip:bing"}) ||
-		!reflect.DeepEqual(r.RegionAppendRefs, appendPlan) ||
-		r.LogicalResourceRefs != len(plan) ||
-		r.FileBackedCandidates != preset.CNResourceExpectedFiles ||
-		r.TotalGroupCount != preset.CNExpectedGroups ||
-		r.DefaultEnabledCount != preset.CNExpectedEnabled ||
-		len(r.Groups) != len(snapshot.Groups) {
-		return false
-	}
-	for i, group := range r.Groups {
-		source := snapshot.Groups[i]
-		if group.ID != source.ID || group.Order != source.Order ||
-			group.Name != source.DisplayName ||
-			group.EnabledByDefault != source.Enabled ||
-			group.TargetKind != string(source.Target.Kind) ||
-			!slices.Equal(group.RuleSetRefs, source.Source.RuleSetBuildIn) ||
-			group.DomainSuffixCount != len(source.Source.DomainSuffix) ||
-			group.DomainKeywordCount != len(source.Source.DomainKeyword) ||
-			group.IPCIDRCount != len(source.Source.IPCIDR) ||
-			group.ProcessNameCount != len(source.Source.ProcessName) ||
-			group.AndroidOnlyPackageCount != len(source.Source.Package) {
-			return false
-		}
-	}
-	return true
+	return cnreadiness.ValidPinnedReport(r)
 }
 
 var _ cnReadinessClient = (*client.Client)(nil)
