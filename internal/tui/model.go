@@ -21,6 +21,8 @@ const (
 type API interface {
 	Status(context.Context) (apiv1.StatusResponse, error)
 	ProfileSources(context.Context) (apiv1.ProfileSourceListResponse, error)
+	ProfileSource(context.Context, string) (apiv1.ProfileSourceResponse, error)
+	PutProfileSource(context.Context, string, apiv1.ProfileSourcePutRequest) (apiv1.ProfileSourceResponse, error)
 	RefreshProfileSource(context.Context, string, apiv1.ProfileRefreshRequest) (apiv1.ProfileRefreshResponse, error)
 	ProfileNodes(context.Context, string, int, int) (apiv1.ProfileNodeListResponse, error)
 	PutProfileNodeOverlay(context.Context, string, string, apiv1.ProfileNodeOverlayPutRequest) (apiv1.ProfileNodeOverlayResponse, error)
@@ -83,6 +85,7 @@ type Model struct {
 	profilesRequest   uint64
 	selected          int
 	profileRefresh    profileRefreshState
+	localSource       localSourceState
 
 	nodes          apiv1.ProfileNodeListResponse
 	nodesReady     bool
@@ -192,6 +195,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if (m.localSource.editing || m.localSource.pending != nil) &&
+			(m.width < minLocalSourceWidth || m.height < minLocalSourceHeight) {
+			m.localSource.discard()
+			m.localSource.notice = "Local source input discarded after resize; no write sent."
+		}
 		if (m.initial.editing || m.initial.previewing || m.initial.pending != nil) &&
 			(m.width < minInitialWidth || m.height < minInitialHeight) {
 			m.initial.discard()
@@ -240,6 +248,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.profilesError = true
 			m.profilesReady = false
 			m.acceptProfileRefreshReadback()
+			m.acceptLocalSourceListReadback()
 			return m, nil
 		}
 		oldID := m.selectedProfileID()
@@ -270,6 +279,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		m.acceptLocalSourceListReadback()
 		if m.page == nodesPage && m.nodesProfile != m.selectedProfileID() {
 			return m, m.requestNodes(0)
 		}
@@ -351,7 +361,36 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.acceptInitialStage(msg)
 	case profileRefreshLoaded:
 		return m, m.acceptProfileRefresh(msg)
+	case localSourceSaved:
+		return m, m.acceptLocalSourceSaved(msg)
 	case tea.KeyMsg:
+		if m.localSource.editing {
+			if msg.String() == "ctrl+c" {
+				m.localSource.discard()
+				m.quitting = true
+				return m, tea.Quit
+			}
+			return m, m.localSourceKey(msg)
+		}
+		if (m.localSource.writing || m.localSource.awaitingReadback) &&
+			msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.localSource.pending != nil {
+			switch msg.String() {
+			case "y":
+				return m, m.confirmLocalSource()
+			case "esc":
+				m.localSource.discard()
+				m.localSource.notice = "Local source creation cancelled; no write sent."
+				return m, nil
+			case "q", "ctrl+c":
+				m.localSource.discard()
+				// Quit, no unconfirmed write.
+			default:
+				return m, nil
+			}
+		}
 		if (m.profileRefresh.writing || m.profileRefresh.awaitingReadback) &&
 			msg.String() != "q" && msg.String() != "ctrl+c" {
 			return m, nil
@@ -562,8 +601,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchPage(historyPage)
 		case "0":
 			return m, m.switchPage(cnReadinessPage)
+		case "c":
+			if m.page == profilesPage {
+				m.beginLocalSource()
+			}
 		case "u":
 			if m.page == profilesPage {
+				m.localSource.notice = ""
 				m.proposeProfileRefresh()
 			}
 		case "a":
@@ -672,6 +716,9 @@ func (m *Model) selectedProfileID() string {
 
 func (m *Model) switchPage(to page) tea.Cmd {
 	if m.page == profilesPage && to != profilesPage {
+		if m.localSource.editing || m.localSource.pending != nil {
+			m.localSource.discard()
+		}
 		m.profileRefresh.pending = nil
 		m.profileRefresh.notice = ""
 	}
@@ -848,6 +895,16 @@ func (m Model) View() string {
 		}
 	} else if m.page == profilesPage {
 		switch {
+		case m.localSource.writing:
+			help = "Creating local source; q exits UI. Daemon may have accepted write. NEVER retry blindly."
+		case m.localSource.awaitingReadback:
+			help = "Checking one source-list readback; no new write will be sent."
+		case m.localSource.pending != nil:
+			help = "y: CONFIRM new local file source (CAS=0)  Esc: cancel  q: quit"
+		case m.localSource.editing:
+			help = "Enter: next  Tab: cycle file format  Backspace/Ctrl+U: edit  Esc: cancel"
+		case m.localSource.notice != "":
+			help = m.localSource.notice
 		case m.profileRefresh.writing:
 			help = "Refreshing source; q exits UI; daemon may finish. NEVER auto-retry."
 		case m.profileRefresh.awaitingReadback:
@@ -857,7 +914,7 @@ func (m Model) View() string {
 		case m.profileRefresh.notice != "":
 			help = m.profileRefresh.notice
 		default:
-			help = "u: propose manual subscription refresh  Enter: nodes  j/k: select  r: reload"
+			help = "c: create local file source  u: refresh  Enter: nodes  j/k: select  r: reload"
 		}
 	} else if m.page == nodesPage && m.initial.active() {
 		switch {
@@ -989,13 +1046,16 @@ func (m Model) pageLines() []string {
 		}
 		return result
 	case profilesPage:
+		if m.localSource.editing || m.localSource.pending != nil {
+			return m.localSourceLines()
+		}
 		if !m.profilesReady {
 			if m.profilesError {
 				return []string{"Profiles: local daemon unavailable. Press r to retry."}
 			}
 			return []string{"Profiles: loading..."}
 		}
-		result := []string{fmt.Sprintf("Profiles (%d shown; u: confirmed refresh, never auto-apply)", len(m.profiles))}
+		result := []string{fmt.Sprintf("Profiles (%d shown; c: local create, u: refresh; no auto-apply)", len(m.profiles))}
 		if len(m.profiles) == 0 {
 			return append(result, "No configured profiles.")
 		}
