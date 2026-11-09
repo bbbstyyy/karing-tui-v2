@@ -53,12 +53,27 @@ type auditResource struct {
 func main() {
 	var assetRoot string
 	var compact bool
+	var verifyReport string
+	flag.StringVar(&verifyReport, "verify-report", "", "read-only source-only audit-report verification")
 	flag.StringVar(&assetRoot, "asset-root", "", "path to the pinned Karing assets/datas directory")
 	flag.BoolVar(&compact, "compact", false, "emit compact single-line JSON")
 	flag.Parse()
 
-	if assetRoot == "" {
-		fmt.Fprintln(os.Stderr, "cn-resource-audit: --asset-root is required")
+	if verifyReport != "" {
+		if assetRoot != "" || compact || flag.NArg() != 0 {
+			fmt.Fprintln(os.Stderr, "cn-resource-audit: --verify-report is exclusive")
+			os.Exit(2)
+		}
+		if err := verifyCNAuditReportFile(verifyReport); err != nil {
+			// Never echo the private report path or untrusted report body.
+			fmt.Fprintln(os.Stderr, "cn-resource-audit: invalid source-only audit; distribution BLOCKED")
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "CN source-only audit structure verified; distribution remains BLOCKED")
+		return
+	}
+	if assetRoot == "" || flag.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "cn-resource-audit: --asset-root is required; no positional arguments")
 		os.Exit(2)
 	}
 	document, err := buildAudit(assetRoot)
