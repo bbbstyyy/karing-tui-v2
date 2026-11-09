@@ -39,6 +39,10 @@ func (f *fakeAPI) CNReadiness(context.Context) (apiv1.CNResourceReadinessRespons
 	return apiv1.CNResourceReadinessResponse{}, errors.New("CN readiness unavailable")
 }
 
+func (f *fakeAPI) RefreshProfileSource(context.Context, string, apiv1.ProfileRefreshRequest) (apiv1.ProfileRefreshResponse, error) {
+	return apiv1.ProfileRefreshResponse{}, errors.New("manual profile refresh unavailable")
+}
+
 func (f *fakeAPI) ProfileSources(ctx context.Context) (apiv1.ProfileSourceListResponse, error) {
 	f.profileCalls++
 	f.checkDeadline(ctx)
