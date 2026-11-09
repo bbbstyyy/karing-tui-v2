@@ -2,7 +2,10 @@ package tui
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -30,27 +33,31 @@ type localSourceProposal struct {
 	id     string
 	path   string
 	format string
+	kind   profile.SourceLocationKind
 }
 
 type localSourceState struct {
-	sequence         uint64
-	editing          bool
-	pathStep         bool
-	pending          *localSourceProposal
-	writing          bool
-	awaitingReadback bool
-	putVerified      bool
-	id               string
-	path             string
-	formatIndex      int
-	createdID        string
-	notice           string
+	sequence          uint64
+	editing           bool
+	pathStep          bool
+	pending           *localSourceProposal
+	writing           bool
+	awaitingReadback  bool
+	putVerified       bool
+	sourceFingerprint [32]byte
+	id                string
+	path              string
+	formatIndex       int
+	kind              profile.SourceLocationKind
+	createdID         string
+	notice            string
 }
 
 type localSourceSaved struct {
-	sequence uint64
-	id       string
-	verified bool
+	sequence          uint64
+	id                string
+	verified          bool
+	sourceFingerprint [32]byte
 }
 
 func (s *localSourceState) discard() {
@@ -58,12 +65,29 @@ func (s *localSourceState) discard() {
 	s.editing, s.pathStep = false, false
 	s.pending = nil
 	s.id, s.path, s.createdID = "", "", ""
+	s.sourceFingerprint = [32]byte{}
+	s.putVerified = false
 	s.formatIndex = 0
+	s.kind = ""
 	s.notice = ""
 	// A previously accepted write cannot be undone on TUI cancellation.
 }
 
 func (m *Model) beginLocalSource() {
+	m.beginNewSource(profile.SourceLocationFile)
+}
+
+func (m *Model) beginRemoteSource() {
+	m.beginNewSource(profile.SourceLocationURL)
+}
+
+// Remote subscriptions default to explicit direct fetch with no background
+// schedule. Their URL (including query tokens) is private input; creation
+// only registers a source and never fetches it or applies Core.
+func (m *Model) beginNewSource(kind profile.SourceLocationKind) {
+	if kind != profile.SourceLocationFile && kind != profile.SourceLocationURL {
+		return
+	}
 	if m.page != profilesPage || m.localSource.editing ||
 		m.localSource.pending != nil || m.localSource.writing ||
 		m.localSource.awaitingReadback ||
@@ -74,13 +98,18 @@ func (m *Model) beginLocalSource() {
 	if m.api == nil || !m.profilesReady || m.profilesError ||
 		m.profilesTruncated || m.width < minLocalSourceWidth ||
 		m.height < minLocalSourceHeight {
-		m.localSource.notice = "Local create requires a complete list, local daemon and terminal >=68x16."
+		m.localSource.notice = "Source create requires a complete list, local daemon and terminal >=68x16."
 		return
 	}
 	m.localSource.discard()
 	m.profileRefresh.notice = ""
 	m.localSource.editing = true
-	m.localSource.notice = "Choose a new ID, then enter an absolute file path (never echoed)."
+	m.localSource.kind = kind
+	if kind == profile.SourceLocationURL {
+		m.localSource.notice = "Choose a new ID, then enter a private HTTPS subscription URL."
+	} else {
+		m.localSource.notice = "Choose a new ID, then enter an absolute file path (never echoed)."
+	}
 }
 
 func localSourceIDValid(id string) bool {
@@ -110,20 +139,33 @@ func localSourceRequest(proposal localSourceProposal) (apiv1.ProfileSourcePutReq
 	source := profile.SourceSpec{
 		ProfileID:    proposal.id,
 		Format:       profile.SourceFormat(proposal.format),
-		LocationKind: profile.SourceLocationFile,
+		LocationKind: proposal.kind,
 		Location:     proposal.path,
 		Fetch:        profile.FetchPolicy{Mode: profile.FetchDirect},
 		Enabled:      true,
 	}
-	if err := source.Validate(); err != nil || !filepath.IsAbs(proposal.path) ||
-		strings.Contains(proposal.path, "\x00") {
+	if err := source.Validate(); err != nil {
+		return apiv1.ProfileSourcePutRequest{}, false
+	}
+	switch proposal.kind {
+	case profile.SourceLocationFile:
+		if !filepath.IsAbs(proposal.path) || strings.Contains(proposal.path, "\x00") {
+			return apiv1.ProfileSourcePutRequest{}, false
+		}
+	case profile.SourceLocationURL:
+		parsed, err := url.Parse(proposal.path)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
+			parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" {
+			return apiv1.ProfileSourcePutRequest{}, false
+		}
+	default:
 		return apiv1.ProfileSourcePutRequest{}, false
 	}
 	return apiv1.ProfileSourcePutRequest{
 		ExpectedRevision: 0,
 		Source: apiv1.ProfileSourceSpec{
 			Format:                proposal.format,
-			LocationKind:          "file",
+			LocationKind:          string(proposal.kind),
 			Location:              proposal.path,
 			Fetch:                 apiv1.ProfileSourceFetchPolicy{Mode: "direct"},
 			UpdateIntervalSeconds: 0,
@@ -140,7 +182,7 @@ func (m *Model) localSourceKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc":
 		s.discard()
-		s.notice = "Local source wizard cancelled; no write sent."
+		s.notice = "Source creation cancelled; no write sent."
 		return nil
 	case "backspace":
 		if s.pathStep {
@@ -171,22 +213,26 @@ func (m *Model) localSourceKey(msg tea.KeyMsg) tea.Cmd {
 				return nil
 			}
 			s.pathStep = true
-			s.notice = "Enter the absolute file path on the DAEMON host. Path is hidden."
+			if s.kind == profile.SourceLocationURL {
+				s.notice = "Enter a complete HTTPS subscription URL. It will remain hidden."
+			} else {
+				s.notice = "Enter the absolute file path on the DAEMON host. Path is hidden."
+			}
 			return nil
 		}
 		candidate := localSourceProposal{
-			id: s.id, path: s.path, format: localSourceFormats[s.formatIndex],
+			id: s.id, path: s.path, format: localSourceFormats[s.formatIndex], kind: s.kind,
 		}
 		if _, ok := localSourceRequest(candidate); !ok ||
 			!m.profilesReady || m.profilesTruncated ||
 			m.localSourceIDExists(candidate.id) {
-			s.notice = "Invalid/unsafe local path or stale source list. Check path, then retry."
+			s.notice = "Invalid/unsafe source location or stale list. Inspect privately, then retry."
 			return nil
 		}
 		s.pending = &candidate
 		s.editing = false
 		s.id, s.path = "", ""
-		s.notice = "Review format and hidden path length; confirm explicitly to create."
+		s.notice = "Review source type, format and hidden location length before confirming."
 		return nil
 	}
 	if msg.Type != tea.KeyRunes {
@@ -199,7 +245,7 @@ func (m *Model) localSourceKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		if s.pathStep {
 			if len(s.path)+utf8.RuneLen(r) > maxLocalSourcePath {
-				s.notice = "Local source path exceeds private input limit."
+				s.notice = "Source location exceeds private input limit."
 				return nil
 			}
 			s.path += string(r)
@@ -268,6 +314,12 @@ func createLocalSource(ctx context.Context, api API, sequence uint64, proposal l
 		complete = readCtx.Err() == nil
 		stopRead()
 		message.verified = err == nil && complete && validLocalSourceResponse(readback, proposal, request)
+		if message.verified {
+			// Keep an immutable commitment to the complete source; the private
+			// URL/path itself must not survive into TUI state after the write.
+			message.sourceFingerprint, err = localSourceFingerprint(request.Source)
+			message.verified = err == nil
+		}
 		return message
 	}
 }
@@ -277,9 +329,20 @@ func validLocalSourceResponse(raw apiv1.ProfileSourceResponse, proposal localSou
 		return false
 	}
 	// Compare the complete source, not only the displayed format or ID.
-	// In particular, refuse daemon responses which change the file path,
+	// In particular, refuse daemon responses which change the source location,
 	// fetch route, update interval, or enabled status.
 	return raw.Source == request.Source
+}
+
+// The source spec consists of bounded strings, enums and integers only.
+// JSON's deterministic encoding of this concrete struct gives a safe
+// fingerprint without storing, showing or logging URL query credentials.
+func localSourceFingerprint(source apiv1.ProfileSourceSpec) ([32]byte, error) {
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(encoded), nil
 }
 
 func (m *Model) acceptLocalSourceSaved(msg localSourceSaved) tea.Cmd {
@@ -289,9 +352,10 @@ func (m *Model) acceptLocalSourceSaved(msg localSourceSaved) tea.Cmd {
 	}
 	s.writing = false
 	s.putVerified = msg.verified
+	s.sourceFingerprint = msg.sourceFingerprint
 	s.awaitingReadback = true
 	if msg.verified {
-		s.notice = "Source PUT and detail readback matched; checking profile inventory."
+		s.notice = "Source PUT and detail readback matched; checking full profile inventory."
 	} else {
 		s.notice = "Source creation uncertain/rejected; inspect before retry. No Core change."
 	}
@@ -300,48 +364,74 @@ func (m *Model) acceptLocalSourceSaved(msg localSourceSaved) tea.Cmd {
 	return loadProfiles(m.ctx, m.api, m.profilesRequest)
 }
 
-func (m *Model) acceptLocalSourceListReadback() {
+// Compare the complete source in the independent list readback against the
+// private commitment from the already verified PUT+GET. A matching ID and
+// revision alone cannot prove that the daemon retained the same location,
+// format, fetch route, filter or update interval. Reject any concurrent or
+// forged refresh snapshot rather than claiming source-only registration.
+func (m *Model) acceptLocalSourceListReadback(raw []apiv1.ProfileSourceResponse) {
 	s := &m.localSource
 	if !s.awaitingReadback {
 		return
 	}
 	s.awaitingReadback = false
+	defer func() {
+		s.createdID = ""
+		s.putVerified = false
+		s.sourceFingerprint = [32]byte{}
+	}()
 	if !s.putVerified || !m.profilesReady || m.profilesError || m.profilesTruncated {
 		s.notice = "Source create/readback uncertain; inspect source before retry. No Core apply."
-		s.createdID = ""
 		return
 	}
 	matches := 0
-	for i, p := range m.profiles {
-		if p.ProfileID == s.createdID {
-			matches++
-			if p.Revision == 1 && p.Enabled && p.Format != "" {
-				m.selected = i
-			}
+	fullMatch := false
+	for _, p := range raw {
+		if p.ProfileID != s.createdID {
+			continue
+		}
+		matches++
+		digest, err := localSourceFingerprint(p.Source)
+		if err == nil && digest == s.sourceFingerprint &&
+			p.Revision == 1 && p.CurrentSnapshotID == nil &&
+			p.LastSuccessAt == "" && p.ActiveUpdateID == "" {
+			fullMatch = true
 		}
 	}
-	if matches != 1 || m.selectedProfileID() != s.createdID ||
-		m.profiles[m.selected].Revision != 1 ||
-		!m.profiles[m.selected].Enabled {
-		s.notice = "Source list mismatched; inspect before retry. No Core apply."
-	} else {
-		s.notice = fmt.Sprintf("Created %s at rev 1. Press u to refresh; later stage/apply separately.", s.createdID)
+	selectedIndex := -1
+	for i, p := range m.profiles {
+		if p.ProfileID == s.createdID && p.Revision == 1 &&
+			p.Enabled && p.CurrentSnapshotID == nil {
+			selectedIndex = i
+		}
 	}
-	s.createdID = ""
-	s.putVerified = false
+	if matches != 1 || !fullMatch || selectedIndex < 0 {
+		s.notice = "Source list mismatched; inspect before retry. No Core apply."
+		return
+	}
+	m.selected = selectedIndex
+	s.notice = fmt.Sprintf("Created %s at rev 1. Press u to refresh; later stage/apply separately.", s.createdID)
 }
 
 func (m Model) localSourceLines() []string {
 	s := m.localSource
+	kindName := "local FILE"
+	locationLabel := "File path"
+	headline := "File must exist on daemon host and be readable by daemon UID."
+	if s.kind == profile.SourceLocationURL {
+		kindName = "remote HTTPS"
+		locationLabel = "HTTPS URL"
+		headline = "HTTPS only; credentials in query remain in private daemon state."
+	}
 	result := []string{
-		"New local FILE source (no URLs, secrets or automatic Core changes)",
-		"Source is only registered; use u afterward to explicitly refresh/import.",
-		"File must exist on daemon host and be readable by daemon UID.",
+		"New " + kindName + " source (private input; no automatic Core changes)",
+		"Source is only registered; press u later to explicitly refresh/import.",
+		headline,
 	}
 	if s.pending != nil {
 		return append(result,
 			fmt.Sprintf("ID: %s  format: %s", s.pending.id, s.pending.format),
-			fmt.Sprintf("File path: [private, %d bytes; never echoed]", len(s.pending.path)),
+			fmt.Sprintf("%s: [private, %d bytes; never echoed]", locationLabel, len(s.pending.path)),
 			"CONFIRM source creation at ExpectedRevision=0?",
 			"No nodes imported or applied on this screen. y: confirm / Esc: cancel",
 		)
@@ -350,13 +440,13 @@ func (m Model) localSourceLines() []string {
 		return append(result,
 			"ID: "+s.id,
 			"Format (Tab cycles): "+localSourceFormats[s.formatIndex],
-			fmt.Sprintf("File path: [private, %d bytes entered]", len(s.path)),
-			"Enter validates the complete absolute path and opens confirmation.",
+			fmt.Sprintf("%s: [private, %d bytes entered]", locationLabel, len(s.path)),
+			"Enter validates this location and opens confirmation.",
 		)
 	}
 	return append(result,
 		"Enter a unique ID: "+s.id,
 		"Allowed: ASCII letters/digits, then letters/digits/._- (up to 64).",
-		"Enter: next (file path is never shown).",
+		"Enter: next (source location is never shown).",
 	)
 }
