@@ -148,6 +148,8 @@ type RouteEditContext struct {
 }
 
 // RouteEditRequest changes precisely one field of an existing route group.
+// Only canonical CN auto-region identities also accept an Enabled-only toggle;
+// generated region target/DNS/match are never writable.
 // Missing pointers mean "no edit"; a DNS pointer to "" explicitly clears it.
 type RouteEditRequest struct {
 	ExpectedDeclarationRevision uint64              `json:"expected_declaration_revision"`

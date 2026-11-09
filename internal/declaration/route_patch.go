@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/domain"
 	"github.com/bbbstyyy/karing-tui-v2/internal/preset"
@@ -15,9 +16,11 @@ var (
 	ErrRoutePatchNoChange = errors.New("route edit has no effective change")
 )
 
-// RoutePatch changes exactly ONE binding field of an existing routing group.
-// It cannot alter match expressions, the CN-28 snapshot, order, layer switches,
-// region auto-append, full DNS resolvers, subscriptions or the core config.
+// RoutePatch changes exactly ONE field of an existing routing group.
+// Exception: the two canonical CN region auto-append identities accept only
+// an enabled toggle, changing their original independent L2/L3 switches.
+// It cannot alter match expressions, CN-28 source/order, layer switches,
+// auto-region targets, full DNS resolvers, subscriptions or Core config.
 type RoutePatch struct {
 	Layer        domain.RoutingLayer
 	GroupID      string
@@ -58,6 +61,9 @@ func PatchRouteGroupV1(document []byte, patch RoutePatch) (RoutePatchResult, err
 	model, err := ParseV1(document)
 	if err != nil {
 		return RoutePatchResult{}, fmt.Errorf("%w: invalid base declaration", ErrRoutePatchInvalid)
+	}
+	if strings.HasPrefix(patch.GroupID, "region:auto-") {
+		return patchCNRegionAppendToggleV1(document, model, patch)
 	}
 	effective, err := EffectiveRouting(model)
 	if err != nil {
