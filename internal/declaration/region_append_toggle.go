@@ -109,7 +109,7 @@ func patchCNRegionAppendToggleV1(document []byte, model Model, patch RoutePatch)
 	found := false
 	for _, group := range actual {
 		if group.ID == patch.GroupID {
-			if found || !*patch.Enabled || !group.Enabled ||
+			if found || !*patch.Enabled || !group.Binding.Enabled ||
 				group.Binding.Target.Kind != domain.TargetDirect ||
 				group.Binding.DNSProfileID != "" {
 				return RoutePatchResult{}, fmt.Errorf("%w: generated region group changed semantics", ErrRoutePatchInvalid)
