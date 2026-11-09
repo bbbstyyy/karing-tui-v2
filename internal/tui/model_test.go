@@ -35,6 +35,10 @@ func (f *fakeAPI) Status(ctx context.Context) (apiv1.StatusResponse, error) {
 	return f.status, f.statusErr
 }
 
+func (f *fakeAPI) CNReadiness(context.Context) (apiv1.CNResourceReadinessResponse, error) {
+	return apiv1.CNResourceReadinessResponse{}, errors.New("CN readiness unavailable")
+}
+
 func (f *fakeAPI) ProfileSources(ctx context.Context) (apiv1.ProfileSourceListResponse, error) {
 	f.profileCalls++
 	f.checkDeadline(ctx)

@@ -171,6 +171,13 @@ enabled groups, their source condition families and the required 68 logical
 rule-set resources. It explicitly reports `geoip:bing` as upstream-absent
 and records that upstream data licensing is **unresolved**.
 
+The TUI also has a read-only **[0]CN** page (press `0` or cycle with Tab).
+It displays the immutable original 28-group order and default switches,
+but explicitly warns that this is **source-only**: CN assets, licenses,
+real group DNS and routing have not been validated for end-user activation.
+Press `r` for one bounded refresh or `j/k` to scroll. It offers no CN
+activation, resource download or editing command, and cannot change the Core.
+
 Query the inventory as an ordinary user through the daemon's protected
 Unix socket:
 
