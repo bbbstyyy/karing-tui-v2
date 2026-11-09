@@ -72,6 +72,9 @@ jobs:
           test "$(git -C upstream-karing rev-parse HEAD)" = "9d28b22fbbcca5818d147629aae151d49d4dcb7b"
           test -z "$(git -C upstream-karing status --porcelain --untracked-files=all -- assets/datas)"
 
+      - name: Verify source-only CN report structure against pinned 68-ref plan
+        run: go run ./cmd/cn-resource-audit --verify-report cn-ruleset-audit.json
+
       - name: Guard unresolved distribution and license blockers
         run: |
           python3 - <<'PY'
