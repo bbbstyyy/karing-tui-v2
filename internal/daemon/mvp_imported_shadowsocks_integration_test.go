@@ -28,11 +28,27 @@ import (
 	"github.com/bbbstyyy/karing-tui-v2/internal/storage"
 )
 
-// MVP-1C: a real pinned Core client using a user-imported SIP002
-// Shadowsocks aes-256-gcm URI, guarded first-run stage, checked Core Apply,
-// authenticated AEAD TCP forwarding and a local echo. No external network,
-// TUN, subscription routing or CN claims.
+// MVP-1C/1D: real pinned Core for both decoded URI lists and standard V2Ray
+// base64-wrapped subscriptions containing a SIP002 Shadowsocks aes-256-gcm
+// node. Both must pass guarded first-run staging, checked Core Apply,
+// authenticated TCP forwarding, failed-update preservation and offline
+// restart. No external network, TUN, subscription routing or CN claims.
 func TestManagedCoreRealMVPImportedShadowsocksAEADFlow(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		format  string
+		encoded bool
+	}{
+		{name: "uri-list", format: "uri-list"},
+		{name: "base64-v2ray-subscription", format: "uri-list-base64", encoded: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testManagedCoreRealMVPImportedShadowsocksAEADFlow(t, tc.format, tc.encoded)
+		})
+	}
+}
+
+func testManagedCoreRealMVPImportedShadowsocksAEADFlow(t *testing.T, format string, encoded bool) {
 	assertOrdinaryUserCoreEnvironment(t)
 	corePath := os.Getenv("KARING_TUI_TEST_CORE")
 	if corePath == "" {
@@ -52,11 +68,14 @@ func TestManagedCoreRealMVPImportedShadowsocksAEADFlow(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		uriList := fmt.Sprintf("ss://%s@127.0.0.1:%d#Imported\n", userinfo, ss.Port())
 		if broken.Load() {
-			_, _ = fmt.Fprintf(w, "ss://%s@127.0.0.1:%d?transport=grpc#Rejected\n", userinfo, ss.Port())
-			return
+			uriList = fmt.Sprintf("ss://%s@127.0.0.1:%d?transport=grpc#Rejected\n", userinfo, ss.Port())
 		}
-		_, _ = fmt.Fprintf(w, "ss://%s@127.0.0.1:%d#Imported\n", userinfo, ss.Port())
+		if encoded {
+			uriList = base64.StdEncoding.EncodeToString([]byte(uriList)) + "\n"
+		}
+		_, _ = fmt.Fprint(w, uriList)
 	}))
 	defer sourceServer.Close()
 
@@ -123,7 +142,7 @@ func TestManagedCoreRealMVPImportedShadowsocksAEADFlow(t *testing.T) {
 	defer api.Close()
 	const sourcePath = "/v1/profiles/" + profileID
 	source := apiv1.ProfileSourceSpec{
-		Format: "uri-list", LocationKind: "url", Location: sourceServer.URL,
+		Format: format, LocationKind: "url", Location: sourceServer.URL,
 		Enabled: true, Fetch: apiv1.ProfileSourceFetchPolicy{Mode: "direct"},
 	}
 	status, reply := mvpJSONRequest(t, api.URL, http.MethodPut, sourcePath,
