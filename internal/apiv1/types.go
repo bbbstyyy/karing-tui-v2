@@ -636,26 +636,26 @@ type ProfileDeclarationPreviewRequest struct {
 }
 
 type ProfileDeclarationPreviewResponse struct {
-	ProfileID               string   `json:"profile_id"`
-	SnapshotID              int64    `json:"snapshot_id"`
-	BaseDeclarationRevision uint64   `json:"base_declaration_revision"`
-	SourceRevision          uint64   `json:"source_revision"`
-	SnapshotNodeCount       int      `json:"snapshot_node_count"`
-	EffectiveNodeCount      int      `json:"effective_node_count"`
-	AddedNodeCount          int      `json:"added_node_count"`
-	RemovedNodeCount        int      `json:"removed_node_count"`
-	RetainedNodeCount       int      `json:"retained_node_count"`
-	AddedNodeIDs            []string `json:"added_node_ids"`
-	RemovedNodeIDs          []string `json:"removed_node_ids"`
-	RetainedNodeIDs         []string `json:"retained_node_ids"`
-	AddedIDsTruncated       bool     `json:"added_ids_truncated"`
-	RemovedIDsTruncated     bool     `json:"removed_ids_truncated"`
-	RetainedIDsTruncated    bool     `json:"retained_ids_truncated"`
-	RuntimeOverlaySHA256    string   `json:"runtime_overlay_sha256"`
-	CandidateSHA256         string   `json:"candidate_sha256"`
-	ReplacementSelectedNodeID string `json:"replacement_selected_node_id,omitempty"`
-	CoreValidated           bool     `json:"core_validated"`
-	Applied                 bool     `json:"applied"`
+	ProfileID                 string   `json:"profile_id"`
+	SnapshotID                int64    `json:"snapshot_id"`
+	BaseDeclarationRevision   uint64   `json:"base_declaration_revision"`
+	SourceRevision            uint64   `json:"source_revision"`
+	SnapshotNodeCount         int      `json:"snapshot_node_count"`
+	EffectiveNodeCount        int      `json:"effective_node_count"`
+	AddedNodeCount            int      `json:"added_node_count"`
+	RemovedNodeCount          int      `json:"removed_node_count"`
+	RetainedNodeCount         int      `json:"retained_node_count"`
+	AddedNodeIDs              []string `json:"added_node_ids"`
+	RemovedNodeIDs            []string `json:"removed_node_ids"`
+	RetainedNodeIDs           []string `json:"retained_node_ids"`
+	AddedIDsTruncated         bool     `json:"added_ids_truncated"`
+	RemovedIDsTruncated       bool     `json:"removed_ids_truncated"`
+	RetainedIDsTruncated      bool     `json:"retained_ids_truncated"`
+	RuntimeOverlaySHA256      string   `json:"runtime_overlay_sha256"`
+	CandidateSHA256           string   `json:"candidate_sha256"`
+	ReplacementSelectedNodeID string   `json:"replacement_selected_node_id,omitempty"`
+	CoreValidated             bool     `json:"core_validated"`
+	Applied                   bool     `json:"applied"`
 }
 
 type ProfileDeclarationStageRequest struct {
@@ -667,12 +667,12 @@ type ProfileDeclarationStageRequest struct {
 	ReplacementSelectedNodeID   string `json:"replacement_selected_node_id,omitempty"`
 }
 type ProfileDeclarationStageResponse struct {
-	ProfileID           string `json:"profile_id"`
-	SourceRevision      uint64 `json:"source_revision"`
-	SnapshotID          int64  `json:"snapshot_id"`
-	DeclarationRevision uint64 `json:"declaration_revision"`
-	DeclarationSHA256   string `json:"declaration_sha256"`
+	ProfileID                 string `json:"profile_id"`
+	SourceRevision            uint64 `json:"source_revision"`
+	SnapshotID                int64  `json:"snapshot_id"`
+	DeclarationRevision       uint64 `json:"declaration_revision"`
+	DeclarationSHA256         string `json:"declaration_sha256"`
 	ReplacementSelectedNodeID string `json:"replacement_selected_node_id,omitempty"`
-	CoreValidated       bool   `json:"core_validated"`
-	Applied             bool   `json:"applied"`
+	CoreValidated             bool   `json:"core_validated"`
+	Applied                   bool   `json:"applied"`
 }
