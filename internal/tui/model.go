@@ -85,6 +85,7 @@ type Model struct {
 	profilesRequest   uint64
 	selected          int
 	profileRefresh    profileRefreshState
+	profileStage      profileStageState
 	localSource       localSourceState
 
 	nodes          apiv1.ProfileNodeListResponse
@@ -210,6 +211,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.profileRefresh.pending = nil
 			m.profileRefresh.notice = "Refresh confirmation discarded after resize; no request sent."
 		}
+		if (m.profileStage.previewing || m.profileStage.pending != nil) &&
+			(m.width < minProfileStageWidth || m.height < minProfileStageHeight) {
+			m.profileStage.discard()
+			m.profileStage.notice = "Snapshot stage preview discarded after resize; no write sent."
+		}
 		if (m.checkedApply.pending != nil || m.checkedApply.previewing) &&
 			(m.width < minApplyConfirmWidth || m.height < minApplyConfirmHeight) {
 			m.checkedApply.discard()
@@ -239,6 +245,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.initial.notice = "Stage readback uncertain; inspect declaration and recovery. NEVER auto-retry."
 			}
 		}
+		m.acceptProfileStageReadback()
 		return m, nil
 	case profilesLoaded:
 		if msg.request != m.profilesRequest {
@@ -359,6 +366,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case initialProfileStageLoaded:
 		return m, m.acceptInitialStage(msg)
+	case profileStagePreviewLoaded:
+		m.acceptProfileStagePreview(msg)
+		return m, nil
+	case profileStageWriteLoaded:
+		return m, m.acceptProfileStageWrite(msg)
 	case profileRefreshLoaded:
 		return m, m.acceptProfileRefresh(msg)
 	case localSourceSaved:
@@ -405,6 +417,36 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "q", "ctrl+c":
 				// Exiting the UI discards unconfirmed work.
+			default:
+				return m, nil
+			}
+		}
+		if (m.profileStage.writing || m.profileStage.awaitingReadback) &&
+			msg.String() != "q" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.profileStage.pending != nil {
+			switch msg.String() {
+			case "y":
+				return m, m.confirmProfileStage()
+			case "esc":
+				m.profileStage.discard()
+				m.profileStage.notice = "Snapshot stage cancelled; no write sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Exit without accepting the proposed declaration.
+			default:
+				return m, nil
+			}
+		}
+		if m.profileStage.previewing {
+			switch msg.String() {
+			case "esc":
+				m.profileStage.discard()
+				m.profileStage.notice = "Snapshot preview cancelled; no write sent."
+				return m, nil
+			case "q", "ctrl+c":
+				// Exit TUI without submitting a stage.
 			default:
 				return m, nil
 			}
@@ -603,16 +645,23 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchPage(cnReadinessPage)
 		case "c":
 			if m.page == profilesPage {
+				m.profileStage.notice = ""
 				m.beginLocalSource()
 			}
 		case "s":
 			if m.page == profilesPage {
+				m.profileStage.notice = ""
 				m.beginRemoteSource()
 			}
 		case "u":
 			if m.page == profilesPage {
+				m.profileStage.notice = ""
 				m.localSource.notice = ""
 				m.proposeProfileRefresh()
+			}
+		case "b":
+			if m.page == profilesPage {
+				return m, m.beginProfileStage()
 			}
 		case "a":
 			if m.page == dashboardPage {
@@ -725,6 +774,9 @@ func (m *Model) switchPage(to page) tea.Cmd {
 		}
 		m.profileRefresh.pending = nil
 		m.profileRefresh.notice = ""
+		if !m.profileStage.writing && !m.profileStage.awaitingReadback {
+			m.profileStage.discard()
+		}
 	}
 	if m.page == nodesPage && to != nodesPage {
 		m.initial.discard()
@@ -825,6 +877,10 @@ func (m Model) View() string {
 	if len(body) > limit {
 		switch m.page {
 		case profilesPage:
+			if m.profileStage.active() {
+				body = body[:limit]
+				break
+			}
 			headings := 1
 			if m.profilesTruncated {
 				headings = 2
@@ -917,8 +973,18 @@ func (m Model) View() string {
 			help = "y: CONFIRM source refresh (CAS rev; no stage/apply)  Esc: cancel  q: quit"
 		case m.profileRefresh.notice != "":
 			help = m.profileRefresh.notice
+		case m.profileStage.writing:
+			help = "Staging declaration once; q exits UI, daemon may finish. Never auto-retry."
+		case m.profileStage.awaitingReadback:
+			help = "Verifying durable staged revision; do not retry or assume Core apply."
+		case m.profileStage.pending != nil:
+			help = "y: CONFIRM snapshot stage ONLY (no Core apply)  Esc: cancel  q: quit"
+		case m.profileStage.previewing:
+			help = "Previewing snapshot delta; Esc: cancel  q: quit"
+		case m.profileStage.notice != "":
+			help = m.profileStage.notice
 		default:
-			help = "c: local file  s: HTTPS source  u: refresh  Enter: nodes  r: reload"
+			help = "c: local  s: HTTPS  u: refresh  b: stage snapshot  Enter: nodes  r: reload"
 		}
 	} else if m.page == nodesPage && m.initial.active() {
 		switch {
@@ -998,6 +1064,11 @@ func (m Model) View() string {
 }
 
 func (m Model) pageLines() []string {
+	if m.page == profilesPage {
+		if lines := m.profileStageLines(); len(lines) > 0 {
+			return lines
+		}
+	}
 	if m.page == nodesPage {
 		if lines := m.initialProfileLines(); len(lines) > 0 {
 			return lines
