@@ -49,24 +49,30 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	defer closeTarget()
 	proxy, proxyHits, closeProxy := startMVPForwardingHTTPProxy(t, target, "mvp-user", secret)
 	defer closeProxy()
+	updatedProxy, updatedProxyHits, closeUpdatedProxy := startMVPForwardingHTTPProxy(t, target, "mvp-user", secret)
+	defer closeUpdatedProxy()
 
-	var broken atomic.Bool
+	var switched, broken atomic.Bool
 	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		proxyPort := proxy.Port()
+		if switched.Load() {
+			proxyPort = updatedProxy.Port()
+		}
 		if broken.Load() {
 			// Existing HTTP node has no supported TLS field. A malformed
 			// refresh must never advance snapshot, declaration or LKG.
-			_, _ = io.WriteString(w, fmt.Sprintf(`{"outbounds":[{"type":"http","tag":%q,"server":"127.0.0.1","server_port":%d,"tls":{"enabled":true}}]}`, sourceKey, proxy.Port()))
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"outbounds":[{"type":"http","tag":%q,"server":"127.0.0.1","server_port":%d,"tls":{"enabled":true}}]}`, sourceKey, proxyPort))
 			return
 		}
 		_, _ = io.WriteString(w, fmt.Sprintf(`{
 			"outbounds":[{"type":"http","tag":%q,"server":"127.0.0.1","server_port":%d,"username":"mvp-user","password":%q}],
 			"route":{"rules":[{"domain_suffix":["untrusted-mvp-rule.invalid"],"outbound":"direct"}],"final":"direct"}
-		}`, sourceKey, proxy.Port(), secret))
+		}`, sourceKey, proxyPort, secret))
 	}))
 	defer sourceServer.Close()
 
@@ -336,6 +342,205 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "direct target")
 	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "DIRECT bypass should not call imported proxy")
 
+
+	// MVP-1C repeat-update proof: the same stable node identity is backed by
+	// an entirely different loopback proxy after an accepted subscription
+	// refresh. Until the user explicitly stages and applies that snapshot,
+	// the currently running Core MUST keep forwarding via the older proxy.
+	switched.Store(true)
+	status, response = mvpJSONRequest(t, api.URL, http.MethodPost,
+		"/v1/profiles/"+profileID+"/refresh",
+		apiv1.ProfileRefreshRequest{ExpectedSourceRevision: created.Revision})
+	if status != http.StatusOK || bytes.Contains(response, []byte(secret)) {
+		t.Fatalf("valid changed-source refresh rejected or leaked credentials: status=%d", status)
+	}
+	var updatedSnapshot apiv1.ProfileRefreshResponse
+	if err := json.Unmarshal(response, &updatedSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if updatedSnapshot.ProfileID != profileID || updatedSnapshot.SourceRevision != created.Revision ||
+		updatedSnapshot.NotModified || updatedSnapshot.NodeCount != 1 ||
+		updatedSnapshot.CurrentSnapshotID == nil ||
+		*updatedSnapshot.CurrentSnapshotID <= *refreshed.CurrentSnapshotID {
+		t.Fatalf("accepted changed source did not create a new snapshot: %+v", updatedSnapshot)
+	}
+	status, response = mvpJSONRequest(t, api.URL, http.MethodGet,
+		"/v1/profiles/"+profileID+"/nodes", nil)
+	var updatedPage apiv1.ProfileNodeListResponse
+	if err := json.Unmarshal(response, &updatedPage); err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK || updatedPage.Total != 1 ||
+		len(updatedPage.Nodes) != 1 || updatedPage.Nodes[0].NodeID != nodeID ||
+		updatedPage.SnapshotID == nil ||
+		*updatedPage.SnapshotID != *updatedSnapshot.CurrentSnapshotID {
+		t.Fatalf("refreshed snapshot changed stable NodeID: %+v", updatedPage)
+	}
+
+	status, response = mvpJSONRequest(t, api.URL, http.MethodPost,
+		"/v1/profiles/"+profileID+"/declaration/preview",
+		apiv1.ProfileDeclarationPreviewRequest{
+			SnapshotID: *updatedSnapshot.CurrentSnapshotID,
+			ExpectedDeclarationRevision: staged.DeclarationRevision,
+		})
+	if status != http.StatusOK || bytes.Contains(response, []byte(secret)) {
+		t.Fatalf("changed snapshot declaration preview failed or leaked credentials: status=%d", status)
+	}
+	var updatedPreview apiv1.ProfileDeclarationPreviewResponse
+	if err := json.Unmarshal(response, &updatedPreview); err != nil {
+		t.Fatal(err)
+	}
+	if updatedPreview.ProfileID != profileID ||
+		updatedPreview.SnapshotID != *updatedSnapshot.CurrentSnapshotID ||
+		updatedPreview.SourceRevision != created.Revision ||
+		updatedPreview.BaseDeclarationRevision != staged.DeclarationRevision ||
+		updatedPreview.SnapshotNodeCount != 1 || updatedPreview.EffectiveNodeCount != 1 ||
+		updatedPreview.AddedNodeCount != 0 || updatedPreview.RemovedNodeCount != 0 ||
+		updatedPreview.RetainedNodeCount != 1 ||
+		len(updatedPreview.RetainedNodeIDs) != 1 || updatedPreview.RetainedNodeIDs[0] != nodeID ||
+		updatedPreview.AddedIDsTruncated || updatedPreview.RemovedIDsTruncated ||
+		updatedPreview.RetainedIDsTruncated || updatedPreview.CoreValidated || updatedPreview.Applied ||
+		updatedPreview.CandidateSHA256 == staged.DeclarationSHA256 ||
+		len(updatedPreview.CandidateSHA256) != 64 || len(updatedPreview.RuntimeOverlaySHA256) != 64 {
+		t.Fatalf("changed snapshot preview did not describe a stable-node rebind: %+v", updatedPreview)
+	}
+	updatedReceipt := apiv1.ProfileDeclarationStageRequest{
+		SnapshotID: *updatedSnapshot.CurrentSnapshotID,
+		ExpectedSourceRevision: updatedPreview.SourceRevision,
+		ExpectedDeclarationRevision: updatedPreview.BaseDeclarationRevision,
+		CandidateSHA256: updatedPreview.CandidateSHA256,
+		RuntimeOverlaySHA256: updatedPreview.RuntimeOverlaySHA256,
+	}
+	wrongDigest := updatedReceipt
+	wrongDigest.CandidateSHA256 = strings.Repeat("0", 64)
+	status, _ = mvpJSONRequest(t, api.URL, http.MethodPost,
+		"/v1/profiles/"+profileID+"/declaration/stage", wrongDigest)
+	if status != http.StatusConflict {
+		t.Fatalf("changed-source stage accepted wrong preview digest: %d", status)
+	}
+	status, response = mvpJSONRequest(t, api.URL, http.MethodPost,
+		"/v1/profiles/"+profileID+"/declaration/stage", updatedReceipt)
+	if status != http.StatusCreated || bytes.Contains(response, []byte(secret)) {
+		t.Fatalf("new snapshot stage failed or disclosed credentials: %d", status)
+	}
+	var restaged apiv1.ProfileDeclarationStageResponse
+	if err := json.Unmarshal(response, &restaged); err != nil {
+		t.Fatal(err)
+	}
+	if restaged.DeclarationRevision != staged.DeclarationRevision+1 ||
+		restaged.DeclarationSHA256 != updatedPreview.CandidateSHA256 ||
+		restaged.SourceRevision != created.Revision ||
+		restaged.SnapshotID != *updatedSnapshot.CurrentSnapshotID ||
+		restaged.Applied || restaged.CoreValidated {
+		t.Fatalf("confirmed snapshot stage returned inconsistent receipt: %+v", restaged)
+	}
+	unapplied, err := store.Snapshot(ctx)
+	if err != nil || unapplied.Revision != appliedState.Revision ||
+		unapplied.AppliedGenerationID == nil ||
+		*unapplied.AppliedGenerationID != applied.GenerationID ||
+		unapplied.LastKnownGoodGenerationID == nil ||
+		*unapplied.LastKnownGoodGenerationID != applied.GenerationID {
+		t.Fatalf("stage modified active Core/LKG before explicit Apply: %+v %v", unapplied, err)
+	}
+	// Even an accepted staged declaration is NOT traffic activation.
+	holdCtx, holdCancel := context.WithTimeout(ctx, 5*time.Second)
+	holdConn, holdErr := socks5Connect(holdCtx, rule, target)
+	if holdErr != nil {
+		holdCancel()
+		t.Fatalf("running Core changed before checked Apply: %v", holdErr)
+	}
+	mvpAssertMarker(t, holdConn)
+	holdCancel()
+	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "old proxy retained after stage")
+	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "old proxy target after stage")
+	assertNoRouteOutcomeSignal(t, updatedProxyHits, 200*time.Millisecond, "unapplied new upstream")
+	status, _ = mvpJSONRequest(t, api.URL, http.MethodPost,
+		"/v1/profiles/"+profileID+"/declaration/stage", updatedReceipt)
+	if status != http.StatusConflict {
+		t.Fatalf("same accepted stage could be replayed: %d", status)
+	}
+
+	// The protected checked-apply receipt must now refer to the new staged
+	// declaration. The running Core's node detour is changed only by this
+	// separate explicit application, never by snapshot refresh/stage.
+	status, response = mvpJSONRequest(t, api.URL, http.MethodGet,
+		"/v1/config/apply/preview", nil)
+	if status != http.StatusOK || bytes.Contains(response, []byte(secret)) {
+		t.Fatalf("second checked-apply preview rejected or leaked credentials: %d", status)
+	}
+	var updatedApplyPreview apiv1.CheckedApplyPreviewResponse
+	if err := json.Unmarshal(response, &updatedApplyPreview); err != nil {
+		t.Fatal(err)
+	}
+	if updatedApplyPreview.Receipt.DeclarationRevision != restaged.DeclarationRevision ||
+		updatedApplyPreview.Receipt.DeclarationSHA256 != restaged.DeclarationSHA256 ||
+		updatedApplyPreview.Receipt.ExpectedConfigRevision != applied.TargetConfigRevision ||
+		!updatedApplyPreview.CompilerValidated || updatedApplyPreview.CoreValidated ||
+		updatedApplyPreview.Applied {
+		t.Fatalf("rebind preview not bound to staged/current Core generation: %+v", updatedApplyPreview)
+	}
+	status, response = mvpJSONRequest(t, api.URL, http.MethodPost,
+		"/v1/config/apply/confirm", updatedApplyPreview.Receipt)
+	if status != http.StatusOK || bytes.Contains(response, []byte(secret)) {
+		t.Fatalf("second real-Core apply failed or leaked credentials: status=%d stderr=%s",
+			status, managed.StderrTail())
+	}
+	var updatedApplied apiv1.CheckedApplyResponse
+	if err := json.Unmarshal(response, &updatedApplied); err != nil {
+		t.Fatal(err)
+	}
+	if !updatedApplied.CoreChecked || !updatedApplied.Verified || !updatedApplied.Applied ||
+		updatedApplied.DeclarationRevision != restaged.DeclarationRevision ||
+		updatedApplied.DeclarationSHA256 != restaged.DeclarationSHA256 ||
+		updatedApplied.ConfigSHA256 != updatedApplyPreview.Receipt.NativeConfigSHA256 ||
+		updatedApplied.GenerationID == applied.GenerationID ||
+		updatedApplied.TargetConfigRevision != applied.TargetConfigRevision+1 {
+		t.Fatalf("updated subscription was not checked/applied as a new generation: %+v", updatedApplied)
+	}
+	updatedArtifacts, err := store.GenerationArtifacts(ctx, updatedApplied.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(updatedArtifacts.ConfigJSON, []byte(secret)) ||
+		bytes.Contains(updatedArtifacts.ConfigJSON, []byte("untrusted-mvp-rule.invalid")) ||
+		bytes.Contains(updatedArtifacts.ConfigJSON, []byte(fmt.Sprintf("\"server_port\":%d", proxy.Port()))) {
+		t.Fatal("updated applied generation omitted authentication, kept old proxy or injected subscription rules")
+	}
+	updatedState, err := store.Snapshot(ctx)
+	if err != nil || updatedState.AppliedGenerationID == nil ||
+		*updatedState.AppliedGenerationID != updatedApplied.GenerationID ||
+		updatedState.LastKnownGoodGenerationID == nil ||
+		*updatedState.LastKnownGoodGenerationID != updatedApplied.GenerationID ||
+		updatedState.Revision != updatedApplied.TargetConfigRevision {
+		t.Fatalf("rebind not persisted as active/LKG: %+v %v", updatedState, err)
+	}
+	running = waitManagedCoreState(t, managed, 6*time.Second, func(s core.Snapshot) bool {
+		return s.State == core.StateRunning && s.PID > 0
+	})
+	for _, inbound := range []netip.AddrPort{rule, selectedInbound} {
+		reboundCtx, reboundCancel := context.WithTimeout(ctx, 5*time.Second)
+		rebound, reboundErr := socks5Connect(reboundCtx, inbound, target)
+		if reboundErr != nil {
+			reboundCancel()
+			t.Fatalf("updated imported stable node could not traverse real Core: %v", reboundErr)
+		}
+		mvpAssertMarker(t, rebound)
+		reboundCancel()
+		assertRouteOutcomeSignal(t, updatedProxyHits, 2*time.Second, "updated bound proxy")
+		assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "updated bound proxy target")
+		assertNoRouteOutcomeSignal(t, proxyHits, 200*time.Millisecond, "retired proxy after apply")
+	}
+	mvpHTTPConnectMarker(t, rule, target)
+	assertRouteOutcomeSignal(t, updatedProxyHits, 2*time.Second, "rebound HTTP CONNECT proxy")
+	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "rebound HTTP CONNECT target")
+	assertNoRouteOutcomeSignal(t, proxyHits, 200*time.Millisecond, "retired proxy HTTP CONNECT")
+
+	// From here the NEW generation (not the initial import) is the LKG that
+	// malformed source updates and process restarts are required to preserve.
+	refreshed = updatedSnapshot
+	applied = updatedApplied
+	appliedState = updatedState
+
 	broken.Store(true)
 	status, response = mvpJSONRequest(t, api.URL, http.MethodPost, "/v1/profiles/"+profileID+"/refresh",
 		apiv1.ProfileRefreshRequest{ExpectedSourceRevision: created.Revision})
@@ -367,7 +572,7 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	}
 	mvpAssertMarker(t, conn)
 	againCancel()
-	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "old upstream after bad refresh")
+	assertRouteOutcomeSignal(t, updatedProxyHits, 2*time.Second, "new LKG upstream after bad refresh")
 	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "old target after bad refresh")
 
 	stopCtx, stopCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -393,7 +598,7 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	}
 	mvpAssertMarker(t, conn)
 	restartTrafficCancel()
-	assertRouteOutcomeSignal(t, proxyHits, 2*time.Second, "old upstream after restart")
+	assertRouteOutcomeSignal(t, updatedProxyHits, 2*time.Second, "new LKG upstream after restart")
 	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "old target after restart")
 	finalState, err := store.Snapshot(ctx)
 	if err != nil || finalState.AppliedGenerationID == nil ||
