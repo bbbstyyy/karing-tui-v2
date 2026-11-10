@@ -70,3 +70,22 @@ func TestProfilePreviewCLIPropagatesRevisionAndSafeOutput(t *testing.T) {
 		t.Fatalf("preview error leaked source details: %d %s %s", code, out, stderr)
 	}
 }
+
+func TestProfilePreviewCLIExplicitReplacementChoice(t *testing.T) {
+	fake := &fakeProfilePreviewCLI{response: apiv1.ProfileDeclarationPreviewResponse{
+		ProfileID: "work", SnapshotID: 42, ReplacementSelectedNodeID: "new-node",
+	}}
+	args := []string{"preview", "work", "--snapshot-id=42", "--expected-declaration-revision=7", "--replacement-selected-node-id=new-node"}
+	code, out, stderr := runProfilePreviewTest(fake, args)
+	if code != 0 || stderr != "" || fake.calls != 1 ||
+		fake.request.ReplacementSelectedNodeID != "new-node" ||
+		!strings.Contains(out, "\"replacement_selected_node_id\": \"new-node\"") {
+		t.Fatalf("explicit replacement preview not bound: %d %q %q", code, out, stderr)
+	}
+	fake.calls = 0
+	args[len(args)-1] = "--replacement-selected-node-id=bad/node?token=HIDDEN"
+	code, out, _ = runProfilePreviewTest(fake, args)
+	if code != 2 || out != "" || fake.calls != 0 {
+		t.Fatal("unsafe node ID was sent to preview API")
+	}
+}

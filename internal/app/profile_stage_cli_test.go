@@ -108,3 +108,24 @@ func TestProfileStageCLIAcknowledgesDigestsAndRedactsErrors(t *testing.T) {
 		t.Fatalf("stage error leaked credentials: code=%d out=%q stderr=%q", code, out, stderr)
 	}
 }
+
+func TestProfileStageCLIExplicitReplacementChoice(t *testing.T) {
+	api := &fakeProfileStageCLI{response: apiv1.ProfileDeclarationStageResponse{
+		ProfileID: "work", SnapshotID: 42, SourceRevision: 3,
+		DeclarationRevision: 8, ReplacementSelectedNodeID: "new-node",
+		DeclarationSHA256: strings.Repeat("a", 64),
+	}}
+	args := append(validStageFlags(), "--replacement-selected-node-id=new-node")
+	code, out, stderr := runProfileStageTest(api, args)
+	if code != 0 || stderr != "" || api.calls != 1 ||
+		api.request.ReplacementSelectedNodeID != "new-node" ||
+		!strings.Contains(out, "\"replacement_selected_node_id\": \"new-node\"") {
+		t.Fatalf("explicit replacement stage not bound: %d %q %q", code, out, stderr)
+	}
+	api.calls = 0
+	args[len(args)-1] = "--replacement-selected-node-id=invalid/node?token=HIDDEN"
+	code, out, _ = runProfileStageTest(api, args)
+	if code != 2 || out != "" || api.calls != 0 {
+		t.Fatal("unsafe explicit node ID was sent to stage API")
+	}
+}
