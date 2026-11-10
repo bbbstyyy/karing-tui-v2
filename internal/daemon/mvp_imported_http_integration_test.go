@@ -342,7 +342,6 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "direct target")
 	assertNoRouteOutcomeSignal(t, proxyHits, 100*time.Millisecond, "DIRECT bypass should not call imported proxy")
 
-
 	// MVP-1C repeat-update proof: the same stable node identity is backed by
 	// an entirely different loopback proxy after an accepted subscription
 	// refresh. Until the user explicitly stages and applies that snapshot,
@@ -380,7 +379,7 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 	status, response = mvpJSONRequest(t, api.URL, http.MethodPost,
 		"/v1/profiles/"+profileID+"/declaration/preview",
 		apiv1.ProfileDeclarationPreviewRequest{
-			SnapshotID: *updatedSnapshot.CurrentSnapshotID,
+			SnapshotID:                  *updatedSnapshot.CurrentSnapshotID,
 			ExpectedDeclarationRevision: staged.DeclarationRevision,
 		})
 	if status != http.StatusOK || bytes.Contains(response, []byte(secret)) {
@@ -405,11 +404,11 @@ func TestManagedCoreRealMVPImportedHTTPFlow(t *testing.T) {
 		t.Fatalf("changed snapshot preview did not describe a stable-node rebind: %+v", updatedPreview)
 	}
 	updatedReceipt := apiv1.ProfileDeclarationStageRequest{
-		SnapshotID: *updatedSnapshot.CurrentSnapshotID,
-		ExpectedSourceRevision: updatedPreview.SourceRevision,
+		SnapshotID:                  *updatedSnapshot.CurrentSnapshotID,
+		ExpectedSourceRevision:      updatedPreview.SourceRevision,
 		ExpectedDeclarationRevision: updatedPreview.BaseDeclarationRevision,
-		CandidateSHA256: updatedPreview.CandidateSHA256,
-		RuntimeOverlaySHA256: updatedPreview.RuntimeOverlaySHA256,
+		CandidateSHA256:             updatedPreview.CandidateSHA256,
+		RuntimeOverlaySHA256:        updatedPreview.RuntimeOverlaySHA256,
 	}
 	wrongDigest := updatedReceipt
 	wrongDigest.CandidateSHA256 = strings.Repeat("0", 64)
