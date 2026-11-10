@@ -18,7 +18,9 @@ declaration revision, confirms source revision, validates bounded numeric
 added/removed/retained node counts and stable-ID sample structure, checks both
 SHA-256 digests, and projects only counts plus digest prefixes. No source URL,
 names, passwords, raw matches, diagnostics or node payloads are retained or
-shown.
+shown. Existing Profiles/Nodes identity labels are defensively redacted in
+rendering if they resemble credential-bearing URLs or keys; the original IDs
+remain intact only for daemon-side lookups and CAS.
 
 The user must explicitly press "y" after reviewing the node diff and the
 warning that removal/rebinding can make later Core Apply fail. A staged write

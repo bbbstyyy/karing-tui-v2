@@ -190,6 +190,8 @@ func TestSnapshotStageTUIRejectsForgedPreviewWithoutLeakingSecrets(t *testing.T)
 		{"wrong source rev", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.SourceRevision++ }},
 		{"stale base", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.BaseDeclarationRevision++ }},
 		{"incorrect counts", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.AddedNodeCount++ }},
+		{"more effective than source", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.SnapshotNodeCount = 2 }},
+		{"duplicate sampled node", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.RetainedNodeIDs[0] = "node-added" }},
 		{"missing sample", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.RemovedNodeIDs = nil }},
 		{"forged truncation", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.AddedIDsTruncated = true }},
 		{"unsafe stable ID", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.AddedNodeIDs[0] = "https://a?token=SUPER_SECRET" }},

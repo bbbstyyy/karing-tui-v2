@@ -177,6 +177,7 @@ func profileStagePreviewSafe(raw apiv1.ProfileDeclarationPreviewResponse, ctx pr
 		raw.CoreValidated || raw.Applied ||
 		raw.SnapshotNodeCount <= 0 || raw.SnapshotNodeCount > maxProfileStageNodes ||
 		raw.EffectiveNodeCount <= 0 || raw.EffectiveNodeCount > maxProfileStageNodes ||
+		raw.EffectiveNodeCount > raw.SnapshotNodeCount ||
 		raw.AddedNodeCount < 0 || raw.AddedNodeCount > maxProfileStageNodes ||
 		raw.RemovedNodeCount < 0 || raw.RemovedNodeCount > maxProfileStageNodes ||
 		raw.RetainedNodeCount < 0 || raw.RetainedNodeCount > maxProfileStageNodes ||
@@ -185,6 +186,7 @@ func profileStagePreviewSafe(raw apiv1.ProfileDeclarationPreviewResponse, ctx pr
 		!validRouteToggleDigest(raw.CandidateSHA256) {
 		return false
 	}
+	seen := make(map[string]bool, maxPreviewNodeSample*3)
 	for _, sample := range []struct {
 		ids       []string
 		count     int
@@ -199,9 +201,10 @@ func profileStagePreviewSafe(raw apiv1.ProfileDeclarationPreviewResponse, ctx pr
 			return false
 		}
 		for _, id := range sample.ids {
-			if profile.ValidateNodeID(id) != nil || inspectionSafeID(id) != id {
+			if profile.ValidateNodeID(id) != nil || inspectionSafeID(id) != id || seen[id] {
 				return false
 			}
+			seen[id] = true
 		}
 	}
 	return true
@@ -386,7 +389,7 @@ func (m *Model) acceptProfileStageReadback() {
 		sameApplyGeneration(m.status.AppliedGenerationID, base.appliedGeneration) &&
 		sameApplyGeneration(m.status.LastKnownGoodGenerationID, base.lastKnownGood) {
 		m.profileStage.notice = fmt.Sprintf(
-			"Verified staged declaration rev %d, Core UNCHANGED; [1] then a to preview/apply separately.",
+			"Verified staged declaration rev %d; config/Applied/LKG unchanged. [1] a to apply separately.",
 			m.status.DeclarationRevision)
 		return
 	}
