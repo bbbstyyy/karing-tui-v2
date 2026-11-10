@@ -245,8 +245,12 @@ func TestSnapshotStageTUICancelResizeStaleReplyAndSourceGuard(t *testing.T) {
 	m, cmd = previewSnapshotStageTUI(t, readySnapshotStageTUI(t, api))
 	m, _ = updated(t, m, cmd())
 	m, _ = updated(t, m, profileStageKey('1'))
+	if m.page != profilesPage || m.profileStage.pending == nil || api.stageCalls != 0 {
+		t.Fatal("modal stage confirmation unexpectedly allowed page navigation")
+	}
+	m, _ = updated(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.profileStage.pending != nil || api.stageCalls != 0 {
-		t.Fatal("page navigation staged or retained pending proposal")
+		t.Fatal("Esc failed to discard a pending stage")
 	}
 }
 
