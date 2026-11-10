@@ -22,54 +22,54 @@ type profileStageAPI interface {
 var _ profileStageAPI = (*client.Client)(nil)
 
 const (
-	minProfileStageWidth = 68
+	minProfileStageWidth  = 68
 	minProfileStageHeight = 16
-	maxPreviewNodeSample = 32
-	maxProfileStageNodes = 10000
+	maxPreviewNodeSample  = 32
+	maxProfileStageNodes  = 10000
 )
 
 type profileStageContext struct {
-	profileID string
-	snapshotID int64
-	sourceRevision uint64
+	profileID           string
+	snapshotID          int64
+	sourceRevision      uint64
 	declarationRevision uint64
-	configRevision uint64
-	appliedGeneration *int64
-	lastKnownGood *int64
-	statusRequest uint64
-	profilesRequest uint64
+	configRevision      uint64
+	appliedGeneration   *int64
+	lastKnownGood       *int64
+	statusRequest       uint64
+	profilesRequest     uint64
 }
 
 type profileStageReceipt struct {
-	context profileStageContext
+	context         profileStageContext
 	candidateSHA256 string
-	overlaySHA256 string
-	snapshotNodes int
-	effectiveNodes int
-	added int
-	removed int
-	retained int
+	overlaySHA256   string
+	snapshotNodes   int
+	effectiveNodes  int
+	added           int
+	removed         int
+	retained        int
 }
 
 type profileStageState struct {
-	sequence uint64
-	previewing bool
-	writing bool
+	sequence         uint64
+	previewing       bool
+	writing          bool
 	awaitingReadback bool
-	context profileStageContext
-	pending *profileStageReceipt
-	notice string
+	context          profileStageContext
+	pending          *profileStageReceipt
+	notice           string
 }
 
 type profileStagePreviewLoaded struct {
 	sequence uint64
-	receipt profileStageReceipt
-	ok bool
+	receipt  profileStageReceipt
+	ok       bool
 }
 
 type profileStageWriteLoaded struct {
 	sequence uint64
-	ok bool
+	ok       bool
 }
 
 func (s *profileStageState) active() bool {
@@ -150,12 +150,12 @@ func (m *Model) beginProfileStage() tea.Cmd {
 	}
 	ctx := profileStageContext{
 		profileID: current.ProfileID, snapshotID: snapshotID,
-		sourceRevision: current.Revision,
+		sourceRevision:      current.Revision,
 		declarationRevision: m.status.DeclarationRevision,
-		configRevision: m.status.ConfigRevision,
-		appliedGeneration: profileStageCopyGeneration(m.status.AppliedGenerationID),
-		lastKnownGood: profileStageCopyGeneration(m.status.LastKnownGoodGenerationID),
-		statusRequest: m.statusRequest, profilesRequest: m.profilesRequest,
+		configRevision:      m.status.ConfigRevision,
+		appliedGeneration:   profileStageCopyGeneration(m.status.AppliedGenerationID),
+		lastKnownGood:       profileStageCopyGeneration(m.status.LastKnownGoodGenerationID),
+		statusRequest:       m.statusRequest, profilesRequest: m.profilesRequest,
 	}
 	if !m.profileStageContextValid(ctx) {
 		m.profileStage.notice = "Stage requires a complete source, an existing declaration, fresh status and terminal >=68x16. Press r to reload; first run uses Nodes [3] i."
@@ -180,14 +180,14 @@ func profileStagePreviewSafe(raw apiv1.ProfileDeclarationPreviewResponse, ctx pr
 		raw.AddedNodeCount < 0 || raw.AddedNodeCount > maxProfileStageNodes ||
 		raw.RemovedNodeCount < 0 || raw.RemovedNodeCount > maxProfileStageNodes ||
 		raw.RetainedNodeCount < 0 || raw.RetainedNodeCount > maxProfileStageNodes ||
-		raw.AddedNodeCount + raw.RetainedNodeCount != raw.EffectiveNodeCount ||
+		raw.AddedNodeCount+raw.RetainedNodeCount != raw.EffectiveNodeCount ||
 		!validRouteToggleDigest(raw.RuntimeOverlaySHA256) ||
 		!validRouteToggleDigest(raw.CandidateSHA256) {
 		return false
 	}
 	for _, sample := range []struct {
-		ids []string
-		count int
+		ids       []string
+		count     int
 		truncated bool
 	}{
 		{raw.AddedNodeIDs, raw.AddedNodeCount, raw.AddedIDsTruncated},
@@ -217,7 +217,7 @@ func loadProfileStagePreview(ctx context.Context, api profileStageAPI, sequence 
 		defer cancel()
 		raw, err := api.PreviewProfileDeclaration(bounded, stageCtx.profileID,
 			apiv1.ProfileDeclarationPreviewRequest{
-				SnapshotID: stageCtx.snapshotID,
+				SnapshotID:                  stageCtx.snapshotID,
 				ExpectedDeclarationRevision: stageCtx.declarationRevision,
 			})
 		if err != nil || bounded.Err() != nil || !profileStagePreviewSafe(raw, stageCtx) {
@@ -227,12 +227,12 @@ func loadProfileStagePreview(ctx context.Context, api profileStageAPI, sequence 
 		// Store only numeric deltas, immutable hashes and already validated IDs.
 		// Never hold original node names, source URL, errors or raw diff arrays.
 		msg.receipt = profileStageReceipt{
-			context: stageCtx,
+			context:         stageCtx,
 			candidateSHA256: raw.CandidateSHA256,
-			overlaySHA256: raw.RuntimeOverlaySHA256,
-			snapshotNodes: raw.SnapshotNodeCount,
-			effectiveNodes: raw.EffectiveNodeCount,
-			added: raw.AddedNodeCount, removed: raw.RemovedNodeCount,
+			overlaySHA256:   raw.RuntimeOverlaySHA256,
+			snapshotNodes:   raw.SnapshotNodeCount,
+			effectiveNodes:  raw.EffectiveNodeCount,
+			added:           raw.AddedNodeCount, removed: raw.RemovedNodeCount,
 			retained: raw.RetainedNodeCount,
 		}
 		return msg
@@ -320,11 +320,11 @@ func (m *Model) confirmProfileStage() tea.Cmd {
 		return nil
 	}
 	request := apiv1.ProfileDeclarationStageRequest{
-		SnapshotID: p.context.snapshotID,
-		ExpectedSourceRevision: p.context.sourceRevision,
+		SnapshotID:                  p.context.snapshotID,
+		ExpectedSourceRevision:      p.context.sourceRevision,
 		ExpectedDeclarationRevision: p.context.declarationRevision,
-		CandidateSHA256: p.candidateSHA256,
-		RuntimeOverlaySHA256: p.overlaySHA256,
+		CandidateSHA256:             p.candidateSHA256,
+		RuntimeOverlaySHA256:        p.overlaySHA256,
 	}
 	m.profileStage.pending = nil
 	m.profileStage.previewing = false

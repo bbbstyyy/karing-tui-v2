@@ -14,16 +14,16 @@ import (
 
 type snapshotStageTUIFake struct {
 	*fakeAPI
-	preview apiv1.ProfileDeclarationPreviewResponse
-	stage apiv1.ProfileDeclarationStageResponse
-	previewError error
-	stageError error
-	previewCalls int
-	stageCalls int
-	previewID string
-	stageID string
+	preview        apiv1.ProfileDeclarationPreviewResponse
+	stage          apiv1.ProfileDeclarationStageResponse
+	previewError   error
+	stageError     error
+	previewCalls   int
+	stageCalls     int
+	previewID      string
+	stageID        string
 	previewRequest apiv1.ProfileDeclarationPreviewRequest
-	stageRequest apiv1.ProfileDeclarationStageRequest
+	stageRequest   apiv1.ProfileDeclarationStageRequest
 }
 
 func newSnapshotStageTUIFake() *snapshotStageTUIFake {
@@ -34,7 +34,7 @@ func newSnapshotStageTUIFake() *snapshotStageTUIFake {
 			status: apiv1.StatusResponse{
 				APIVersion: apiv1.Version, CoreConfigured: true,
 				DeclarationRevision: 9, ConfigRevision: 4,
-				AppliedGenerationID: &applied,
+				AppliedGenerationID:       &applied,
 				LastKnownGoodGenerationID: &applied,
 			},
 			profiles: []apiv1.ProfileSourceResponse{{
@@ -44,7 +44,7 @@ func newSnapshotStageTUIFake() *snapshotStageTUIFake {
 					Location: "https://hidden.invalid/sub?token=PRIVATE_TOKEN",
 				},
 				CurrentSnapshotID: &snapshot,
-				LastError: "upstream credential=SECRET_NEVER_RENDER",
+				LastError:         "upstream credential=SECRET_NEVER_RENDER",
 			}},
 		},
 		preview: apiv1.ProfileDeclarationPreviewResponse{
@@ -52,10 +52,10 @@ func newSnapshotStageTUIFake() *snapshotStageTUIFake {
 			SourceRevision: 6, BaseDeclarationRevision: 9,
 			SnapshotNodeCount: 3, EffectiveNodeCount: 3,
 			AddedNodeCount: 1, RemovedNodeCount: 1, RetainedNodeCount: 2,
-			AddedNodeIDs: []string{"node-added"},
-			RemovedNodeIDs: []string{"node-removed"},
-			RetainedNodeIDs: []string{"node-old-1", "node-old-2"},
-			CandidateSHA256: strings.Repeat("a", 64),
+			AddedNodeIDs:         []string{"node-added"},
+			RemovedNodeIDs:       []string{"node-removed"},
+			RetainedNodeIDs:      []string{"node-old-1", "node-old-2"},
+			CandidateSHA256:      strings.Repeat("a", 64),
 			RuntimeOverlaySHA256: strings.Repeat("b", 64),
 		},
 		stage: apiv1.ProfileDeclarationStageResponse{
@@ -182,7 +182,7 @@ func TestSnapshotStageTUIRequiresDiffPreviewConfirmAndDurableReadback(t *testing
 
 func TestSnapshotStageTUIRejectsForgedPreviewWithoutLeakingSecrets(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		change func(*apiv1.ProfileDeclarationPreviewResponse)
 	}{
 		{"wrong profile", func(p *apiv1.ProfileDeclarationPreviewResponse) { p.ProfileID = "source-2" }},
@@ -250,7 +250,7 @@ func TestSnapshotStageTUICancelResizeStaleReplyAndSourceGuard(t *testing.T) {
 
 func TestSnapshotStageTUIFailClosedUnavailableSourcesAndLegacyAPI(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		mutate func(*Model)
 	}{
 		{"no initial declaration", func(m *Model) { m.status.DeclarationRevision = 0 }},
