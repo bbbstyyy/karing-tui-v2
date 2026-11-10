@@ -3,6 +3,7 @@ package profile
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -146,5 +147,23 @@ func TestReconcileRejectsControlCharactersInsteadOfNormalizing(t *testing.T) {
 	}})
 	if !errors.Is(err, ErrInvalidSourceNode) {
 		t.Fatalf("invalid source key error = %v", err)
+	}
+}
+
+func TestExplicitSelectedNodeIDIsBoundedAndTerminalSafe(t *testing.T) {
+	stable, err := StableNodeID("work", "proxy-key")
+	if err != nil || ValidateExplicitSelectedNodeID(stable) != nil {
+		t.Fatal("derived canonical ID should be permitted")
+	}
+	if err := ValidateExplicitSelectedNodeID("n2"); err != nil {
+		t.Fatal("legacy plain ID should be accepted")
+	}
+	for _, bad := range []string{
+		"", "bad/id", "https://secret?token=PRIVATE", "secret?password=PRIVATE",
+		"new node", "new\nnode", strings.Repeat("a", 129),
+	} {
+		if err := ValidateExplicitSelectedNodeID(bad); err == nil {
+			t.Fatalf("explicit selected ID unexpectedly accepted")
+		}
 	}
 }

@@ -8,4 +8,6 @@ The explicit replacement is restricted to a **single-profile, proxy-only, Curren
 
 This is a CLI-first incremental feature, not a general migration UI or persisted CurrentSelected migration. CN 28-group parity, real Group/Proxy DNS, licensed assets, restore/#59, 72-hour stability and offline packages remain blockers. No TUN or subscription/ISP routing is added.
 
+This PR also extends the pinned real Core Clash/Trojan TLS test with a second explicit selected default migration: ordinary removed-node staging fails, chosen-node Stage leaves the original Core serving real traffic, and an independent checked Apply activates the new authenticated peer before a later failed refresh/restart. Source URLs and authentication are never exposed by the API. Explicit node IDs are restricted to terminal-safe ASCII (letters, digits, underscore, hyphen, period, colon, at most 128 bytes); URL-shaped IDs are rejected.
+
 The final exact commit must pass format/Vet/unit/build, Race 4/4, pinned managed Core, amd64/arm64 native provenance. Keep Draft until then.
