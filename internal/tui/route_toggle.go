@@ -93,9 +93,9 @@ func projectRouteToggleRows(raw apiv1.ConfigInspectionResponse, lines []string) 
 	// Require complete evidence for both on/off states before offering either.
 	if raw.RegionAppend && raw.RegionAppendCode == "cn" {
 		for _, candidate := range []struct {
-			layer domain.RoutingLayer
-			id string
-			name string
+			layer   domain.RoutingLayer
+			id      string
+			name    string
 			enabled bool
 		}{
 			{domain.LayerGeoSite, "region:auto-geosite:cn", "geosite", raw.RegionGeoSiteEnabled},
@@ -104,7 +104,9 @@ func projectRouteToggleRows(raw apiv1.ConfigInspectionResponse, lines []string) 
 			found, count := false, 0
 			for _, layer := range raw.Layers {
 				for _, group := range layer.Groups {
-					if group.ID != candidate.id { continue }
+					if group.ID != candidate.id {
+						continue
+					}
 					count++
 					if layer.Layer == candidate.layer && group.Origin == "region_append" &&
 						group.Enabled && group.Target.Kind == domain.TargetDirect && group.DNSProfile == "" {
@@ -116,7 +118,9 @@ func projectRouteToggleRows(raw apiv1.ConfigInspectionResponse, lines []string) 
 				return rows // malformed region evidence must not grant either switch
 			}
 			state := "off"
-			if candidate.enabled { state = "on" }
+			if candidate.enabled {
+				state = "on"
+			}
 			lineText := fmt.Sprintf("  CN region %s append [%s] target=DIRECT (declaration only)", candidate.name, state)
 			for i, line := range lines {
 				if line == lineText {
