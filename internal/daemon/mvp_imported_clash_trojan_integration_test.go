@@ -290,7 +290,6 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	assertNoRouteOutcomeSignal(t, upstreamHits, 100*time.Millisecond, "wrong Trojan password")
 	assertNoRouteOutcomeSignal(t, targetHits, 100*time.Millisecond, "wrong password target")
 
-
 	// The real selected Trojan keeps serving throughout two ACCEPTED source
 	// updates. A display-name-only change preserves the semantic Clash
 	// identity, whereas changing the endpoint deliberately removes that
@@ -323,7 +322,7 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	}
 	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
 		sourcePath+"/declaration/preview", apiv1.ProfileDeclarationPreviewRequest{
-			SnapshotID: *renamedSnapshot.CurrentSnapshotID,
+			SnapshotID:                  *renamedSnapshot.CurrentSnapshotID,
 			ExpectedDeclarationRevision: staged.DeclarationRevision,
 		})
 	if status != http.StatusOK || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
@@ -378,7 +377,7 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	// old declaration revision has not changed.
 	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
 		sourcePath+"/declaration/preview", apiv1.ProfileDeclarationPreviewRequest{
-			SnapshotID: *renamedSnapshot.CurrentSnapshotID,
+			SnapshotID:                  *renamedSnapshot.CurrentSnapshotID,
 			ExpectedDeclarationRevision: staged.DeclarationRevision,
 		})
 	if status != http.StatusConflict || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
@@ -386,7 +385,7 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	}
 	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
 		sourcePath+"/declaration/preview", apiv1.ProfileDeclarationPreviewRequest{
-			SnapshotID: *removedSnapshot.CurrentSnapshotID,
+			SnapshotID:                  *removedSnapshot.CurrentSnapshotID,
 			ExpectedDeclarationRevision: staged.DeclarationRevision,
 		})
 	if status != http.StatusUnprocessableEntity || bytes.Contains(reply, []byte(mvpTrojanSecret)) ||
@@ -397,11 +396,11 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	// as an escape hatch to commit an invalid candidate.
 	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
 		sourcePath+"/declaration/stage", apiv1.ProfileDeclarationStageRequest{
-			SnapshotID: *removedSnapshot.CurrentSnapshotID,
-			ExpectedSourceRevision: created.Revision,
+			SnapshotID:                  *removedSnapshot.CurrentSnapshotID,
+			ExpectedSourceRevision:      created.Revision,
 			ExpectedDeclarationRevision: staged.DeclarationRevision,
-			CandidateSHA256: renamePreview.CandidateSHA256,
-			RuntimeOverlaySHA256: renamePreview.RuntimeOverlaySHA256,
+			CandidateSHA256:             renamePreview.CandidateSHA256,
+			RuntimeOverlaySHA256:        renamePreview.RuntimeOverlaySHA256,
 		})
 	if status != http.StatusUnprocessableEntity || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
 		t.Fatalf("removed-selected snapshot stage bypassed declaration validation: %d", status)
