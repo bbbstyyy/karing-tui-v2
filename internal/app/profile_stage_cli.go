@@ -46,7 +46,7 @@ func runProfileStageCommand(ctx context.Context, api profileStageCLIClient, args
 		!visited["candidate-sha256"] || !visited["runtime-overlay-sha256"] || !visited["confirm"] ||
 		*snapshotID <= 0 || *expectedSource == 0 || *expected == 0 || !*confirm ||
 		!validStageSHA256(*candidateHash) || !validStageSHA256(*overlayHash) ||
-		(visited["replacement-selected-node-id"] && profile.ValidateNodeID(*selected) != nil) {
+		(visited["replacement-selected-node-id"] && profile.ValidateExplicitSelectedNodeID(*selected) != nil) {
 		fmt.Fprintln(stderr, "stage requires positive --snapshot-id, --expected-source-revision and --expected-declaration-revision, both 64-character lowercase preview SHA-256 digests, and --confirm")
 		return 2
 	}

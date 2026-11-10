@@ -38,7 +38,7 @@ func runProfilePreviewCommand(ctx context.Context, api profilePreviewCLIClient, 
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
 	if len(fs.Args()) != 0 || !visited["snapshot-id"] || !visited["expected-declaration-revision"] ||
 		*snapshotID <= 0 || *expected == 0 ||
-		(visited["replacement-selected-node-id"] && profile.ValidateNodeID(*selected) != nil) {
+		(visited["replacement-selected-node-id"] && profile.ValidateExplicitSelectedNodeID(*selected) != nil) {
 		fmt.Fprintln(stderr, "preview requires positive --snapshot-id=N and --expected-declaration-revision=N")
 		return 2
 	}

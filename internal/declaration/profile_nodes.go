@@ -44,7 +44,7 @@ func ReplaceProfileNodesV1(
 func ReplaceProfileNodesWithExplicitSelectionV1(
 	document []byte, profileID string, nodes []domain.Node, selectedNodeID string,
 ) (ProfileNodeReplacement, error) {
-	if err := profile.ValidateNodeID(selectedNodeID); err != nil {
+	if err := profile.ValidateExplicitSelectedNodeID(selectedNodeID); err != nil {
 		return ProfileNodeReplacement{}, ErrProfileNodeReplacementInvalid
 	}
 	return replaceProfileNodesV1(document, profileID, nodes, selectedNodeID)

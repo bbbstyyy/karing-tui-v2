@@ -40,7 +40,7 @@ func registerProfileSnapshotPreviewRoutes(mux *http.ServeMux, store *storage.Sto
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid declaration preview request"})
 			return
 		}
-		if request.ReplacementSelectedNodeID != "" && profile.ValidateNodeID(request.ReplacementSelectedNodeID) != nil {
+		if request.ReplacementSelectedNodeID != "" && profile.ValidateExplicitSelectedNodeID(request.ReplacementSelectedNodeID) != nil {
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid explicit replacement node ID"})
 			return
 		}
