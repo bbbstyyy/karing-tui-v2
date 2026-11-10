@@ -27,8 +27,9 @@ PID, Applied/LKG generation, and refusal of stale stage receipts.
 
 ## Deliberate limitations
 
-- Initial V1 routing and selection declaration is seeded by a test fixture:
-  the project still needs a first-run user declaration constructor.
+- Initial V1 routing and selection declaration are built by the guarded
+  first-run public API, with explicit proxy-only/no-CN acknowledgement.
+  This does not prove the complete user-facing TUI flow or CN readiness.
 - The imported **HTTP proxy** is an integration stepping stone, not proof
   of Shadowsocks, VLESS or Trojan transport/TLS compatibility.
 - The traffic proof is bounded to synthetic loopback IPv4 CONNECT
