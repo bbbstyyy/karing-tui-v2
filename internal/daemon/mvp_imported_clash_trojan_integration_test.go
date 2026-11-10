@@ -38,12 +38,16 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	defer closeTarget()
 	trojan, rootCert, upstreamHits, closeTrojan := startMVPLocalTrojanTLS(t, target)
 	defer closeTrojan()
+	// A second real peer has a different semantic Clash identity. The old
+	// selected node must not be silently rebound to its endpoint on refresh.
+	replacementTrojan, _, replacementHits, closeReplacement := startMVPLocalTrojanTLS(t, target)
+	defer closeReplacement()
 	// The pinned Core is a separate child process. Its normal TLS verifier
 	// must trust only this temporary local fixture certificate, NOT skip
 	// verification through an insecure=true outbound setting.
 	t.Setenv("SSL_CERT_FILE", rootCert)
 
-	var broken atomic.Bool
+	var broken, renamed, selectedRemoved atomic.Bool
 	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -54,7 +58,14 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 			_, _ = fmt.Fprintf(w, "proxies:\n  - name: Rejected\n    type: trojan\n    server: 127.0.0.1\n    port: %d\n    password: %s\n    skip-cert-verify: true\n", trojan.Port(), mvpTrojanSecret)
 			return
 		}
-		_, _ = fmt.Fprintf(w, "proxies:\n  - name: Accepted\n    type: trojan\n    server: 127.0.0.1\n    port: %d\n    password: %s\n    sni: %s\n    skip-cert-verify: false\nproxy-groups:\n  - name: Untrusted Rule\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,DIRECT\n", trojan.Port(), mvpTrojanSecret, mvpTrojanServerName)
+		name, port := "Accepted", trojan.Port()
+		if renamed.Load() {
+			name = "Renamed"
+		}
+		if selectedRemoved.Load() {
+			name, port = "Replacement", replacementTrojan.Port()
+		}
+		_, _ = fmt.Fprintf(w, "proxies:\n  - name: %s\n    type: trojan\n    server: 127.0.0.1\n    port: %d\n    password: %s\n    sni: %s\n    skip-cert-verify: false\nproxy-groups:\n  - name: Untrusted Rule\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,DIRECT\n", name, port, mvpTrojanSecret, mvpTrojanServerName)
 	}))
 	defer sourceServer.Close()
 
@@ -278,6 +289,151 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	assertMVPLocalTrojanRejectsBadPassword(t, trojan, rootCert, target)
 	assertNoRouteOutcomeSignal(t, upstreamHits, 100*time.Millisecond, "wrong Trojan password")
 	assertNoRouteOutcomeSignal(t, targetHits, 100*time.Millisecond, "wrong password target")
+
+	// The real selected Trojan keeps serving throughout two ACCEPTED source
+	// updates. A display-name-only change preserves the semantic Clash
+	// identity, whereas changing the endpoint deliberately removes that
+	// selected ID. Neither refresh may stage/activate a replacement for us.
+	renamed.Store(true)
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost, sourcePath+"/refresh",
+		apiv1.ProfileRefreshRequest{ExpectedSourceRevision: created.Revision})
+	if status != http.StatusOK || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
+		t.Fatalf("safe Clash label refresh rejected or leaked password: status %d", status)
+	}
+	var renamedSnapshot apiv1.ProfileRefreshResponse
+	if err := json.Unmarshal(reply, &renamedSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if renamedSnapshot.CurrentSnapshotID == nil || renamedSnapshot.NotModified ||
+		renamedSnapshot.NodeCount != 1 ||
+		*renamedSnapshot.CurrentSnapshotID <= *refreshed.CurrentSnapshotID {
+		t.Fatalf("Clash label refresh did not create a new accepted snapshot: %+v", renamedSnapshot)
+	}
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodGet, sourcePath+"/nodes", nil)
+	var renamedPage apiv1.ProfileNodeListResponse
+	if err := json.Unmarshal(reply, &renamedPage); err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK || renamedPage.Total != 1 ||
+		len(renamedPage.Nodes) != 1 || renamedPage.Nodes[0].NodeID != nodeID ||
+		renamedPage.SnapshotID == nil ||
+		*renamedPage.SnapshotID != *renamedSnapshot.CurrentSnapshotID {
+		t.Fatalf("display-only Clash rename mutated semantic NodeID: %+v", renamedPage)
+	}
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
+		sourcePath+"/declaration/preview", apiv1.ProfileDeclarationPreviewRequest{
+			SnapshotID:                  *renamedSnapshot.CurrentSnapshotID,
+			ExpectedDeclarationRevision: staged.DeclarationRevision,
+		})
+	if status != http.StatusOK || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
+		t.Fatalf("renamed stable node preview failed or leaked password: status %d", status)
+	}
+	var renamePreview apiv1.ProfileDeclarationPreviewResponse
+	if err := json.Unmarshal(reply, &renamePreview); err != nil {
+		t.Fatal(err)
+	}
+	if renamePreview.BaseDeclarationRevision != staged.DeclarationRevision ||
+		renamePreview.SourceRevision != created.Revision ||
+		renamePreview.SnapshotID != *renamedSnapshot.CurrentSnapshotID ||
+		renamePreview.SnapshotNodeCount != 1 || renamePreview.EffectiveNodeCount != 1 ||
+		renamePreview.AddedNodeCount != 0 || renamePreview.RemovedNodeCount != 0 ||
+		renamePreview.RetainedNodeCount != 1 || len(renamePreview.RetainedNodeIDs) != 1 ||
+		renamePreview.RetainedNodeIDs[0] != nodeID || renamePreview.CoreValidated ||
+		renamePreview.Applied || len(renamePreview.CandidateSHA256) != 64 {
+		t.Fatalf("Clash rename produced unexpected prospective node diff: %+v", renamePreview)
+	}
+
+	// A changed endpoint has a different semantic NodeID by design: it is
+	// NOT a harmless rename. An entirely valid fresh subscription may therefore
+	// be accepted, but staging it must fail closed while the current selection
+	// still points to the removed (and running) original Trojan.
+	selectedRemoved.Store(true)
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost, sourcePath+"/refresh",
+		apiv1.ProfileRefreshRequest{ExpectedSourceRevision: created.Revision})
+	if status != http.StatusOK || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
+		t.Fatalf("valid replacement Clash source was not accepted: status %d", status)
+	}
+	var removedSnapshot apiv1.ProfileRefreshResponse
+	if err := json.Unmarshal(reply, &removedSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if removedSnapshot.CurrentSnapshotID == nil || removedSnapshot.NotModified ||
+		removedSnapshot.NodeCount != 1 ||
+		*removedSnapshot.CurrentSnapshotID <= *renamedSnapshot.CurrentSnapshotID {
+		t.Fatalf("valid replacement snapshot not stored: %+v", removedSnapshot)
+	}
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodGet, sourcePath+"/nodes", nil)
+	var removedPage apiv1.ProfileNodeListResponse
+	if err := json.Unmarshal(reply, &removedPage); err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK || removedPage.Total != 1 ||
+		len(removedPage.Nodes) != 1 || removedPage.Nodes[0].NodeID == nodeID ||
+		removedPage.Nodes[0].NodeID == "" || removedPage.SnapshotID == nil ||
+		*removedPage.SnapshotID != *removedSnapshot.CurrentSnapshotID {
+		t.Fatalf("removed selected node remained in accepted source: %+v", removedPage)
+	}
+	// A preview from the previous accepted snapshot is stale even though the
+	// old declaration revision has not changed.
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
+		sourcePath+"/declaration/preview", apiv1.ProfileDeclarationPreviewRequest{
+			SnapshotID:                  *renamedSnapshot.CurrentSnapshotID,
+			ExpectedDeclarationRevision: staged.DeclarationRevision,
+		})
+	if status != http.StatusConflict || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
+		t.Fatalf("stale rename snapshot preview bypassed source CAS: %d", status)
+	}
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
+		sourcePath+"/declaration/preview", apiv1.ProfileDeclarationPreviewRequest{
+			SnapshotID:                  *removedSnapshot.CurrentSnapshotID,
+			ExpectedDeclarationRevision: staged.DeclarationRevision,
+		})
+	if status != http.StatusUnprocessableEntity || bytes.Contains(reply, []byte(mvpTrojanSecret)) ||
+		bytes.Contains(reply, []byte(nodeID)) {
+		t.Fatalf("selected-node removal was stageable or leaked identity: %d", status)
+	}
+	// Even replaying a once-valid digest from an older snapshot cannot be used
+	// as an escape hatch to commit an invalid candidate.
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
+		sourcePath+"/declaration/stage", apiv1.ProfileDeclarationStageRequest{
+			SnapshotID:                  *removedSnapshot.CurrentSnapshotID,
+			ExpectedSourceRevision:      created.Revision,
+			ExpectedDeclarationRevision: staged.DeclarationRevision,
+			CandidateSHA256:             renamePreview.CandidateSHA256,
+			RuntimeOverlaySHA256:        renamePreview.RuntimeOverlaySHA256,
+		})
+	if status != http.StatusUnprocessableEntity || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
+		t.Fatalf("removed-selected snapshot stage bypassed declaration validation: %d", status)
+	}
+	stillStaged, err := store.CurrentDeclaration(ctx)
+	if err != nil || stillStaged.Revision != staged.DeclarationRevision ||
+		stillStaged.SHA256 != staged.DeclarationSHA256 {
+		t.Fatalf("failed replacement modified durable declaration: %+v %v", stillStaged, err)
+	}
+	stillRunning, err := store.Snapshot(ctx)
+	if err != nil || stillRunning.AppliedGenerationID == nil ||
+		*stillRunning.AppliedGenerationID != applied.GenerationID ||
+		stillRunning.LastKnownGoodGenerationID == nil ||
+		*stillRunning.LastKnownGoodGenerationID != applied.GenerationID ||
+		stillRunning.RecoveryRequired || stillRunning.ActiveAttemptID != nil {
+		t.Fatalf("accepted unstageable source disrupted Applied/LKG: %+v %v", stillRunning, err)
+	}
+	for _, inbound := range []netip.AddrPort{rule, selected} {
+		probeCtx, stopProbe := context.WithTimeout(ctx, 5*time.Second)
+		probe, probeErr := socks5Connect(probeCtx, inbound, target)
+		if probeErr != nil {
+			stopProbe()
+			t.Fatalf("selected node removal disrupted live Trojan Core traffic: %v", probeErr)
+		}
+		mvpAssertMarker(t, probe)
+		stopProbe()
+		assertRouteOutcomeSignal(t, upstreamHits, 2*time.Second, "old selected Trojan still live")
+		assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "old Trojan echo after selected removal")
+		assertNoRouteOutcomeSignal(t, replacementHits, 100*time.Millisecond, "unconfirmed replacement peer")
+	}
+	// The bad update below must retain the most recently accepted snapshot
+	// (the replacement) even though the running LKG legitimately differs.
+	refreshed = removedSnapshot
 
 	broken.Store(true)
 	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost, sourcePath+"/refresh",
