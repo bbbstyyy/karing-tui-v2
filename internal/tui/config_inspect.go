@@ -310,6 +310,24 @@ func projectConfigInspection(raw apiv1.ConfigInspectionResponse) ([]string, []st
 				inspectionSafeID(row.ID), row.Role, row.Transport, row.Port, row.UpstreamKind),
 			fmt.Sprintf("      bootstrap=%s detour=%s", inspectionSafeID(row.BootstrapID), detour))
 	}
+	// The independent CN switches remain visible even when their generated
+	// native route group is absent (disabled). This is declaration metadata,
+	// NOT evidence of a currently running CN rule or available licensed assets.
+	if raw.RegionAppend && raw.RegionAppendCode == "cn" {
+		for _, switchState := range []struct {
+			name    string
+			enabled bool
+		}{
+			{"geosite", raw.RegionGeoSiteEnabled},
+			{"geoip", raw.RegionGeoIPEnabled},
+		} {
+			state := "off"
+			if switchState.enabled {
+				state = "on"
+			}
+			routing = append(routing, fmt.Sprintf("  CN region %s append [%s] target=DIRECT (declaration only)", switchState.name, state))
+		}
+	}
 	// Final defensive sanitizer: no raw upstream error or matcher payload is
 	// retained in the Bubble Tea model even if a hostile daemon replies.
 	for i := range routing {

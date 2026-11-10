@@ -87,6 +87,48 @@ func projectRouteToggleRows(raw apiv1.ConfigInspectionResponse, lines []string) 
 			})
 		}
 	}
+	// Only the two canonical CN region switches are editable. Off switches
+	// produce no generated route group; the explicit, bounded metadata above
+	// is what allows a user to re-enable one without inventing a matcher.
+	// Require complete evidence for both on/off states before offering either.
+	if raw.RegionAppend && raw.RegionAppendCode == "cn" {
+		for _, candidate := range []struct {
+			layer domain.RoutingLayer
+			id string
+			name string
+			enabled bool
+		}{
+			{domain.LayerGeoSite, "region:auto-geosite:cn", "geosite", raw.RegionGeoSiteEnabled},
+			{domain.LayerGeoIP, "region:auto-geoip:cn", "geoip", raw.RegionGeoIPEnabled},
+		} {
+			found, count := false, 0
+			for _, layer := range raw.Layers {
+				for _, group := range layer.Groups {
+					if group.ID != candidate.id { continue }
+					count++
+					if layer.Layer == candidate.layer && group.Origin == "region_append" &&
+						group.Enabled && group.Target.Kind == domain.TargetDirect && group.DNSProfile == "" {
+						found = true
+					}
+				}
+			}
+			if count > 1 || found != candidate.enabled || count != 0 && !found {
+				return rows // malformed region evidence must not grant either switch
+			}
+			state := "off"
+			if candidate.enabled { state = "on" }
+			lineText := fmt.Sprintf("  CN region %s append [%s] target=DIRECT (declaration only)", candidate.name, state)
+			for i, line := range lines {
+				if line == lineText {
+					rows = append(rows, routeToggleRow{
+						layer: candidate.layer, id: candidate.id, origin: "region_append",
+						enabled: candidate.enabled, target: domain.TargetRef{Kind: domain.TargetDirect}, line: i,
+					})
+					break
+				}
+			}
+		}
+	}
 	return rows
 }
 

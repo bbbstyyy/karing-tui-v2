@@ -84,6 +84,10 @@ func (m *Model) beginRouteBindingChooser(kind string) {
 		return
 	}
 	row := m.inspection.routeRows[m.inspection.routeSelected]
+	if row.origin == "region_append" {
+		m.inspection.notice = "CN region targets and DNS are immutable; use e to toggle only."
+		return
+	}
 	options := make([]routeBindingChoice, 0, maxInspectRoutes+5)
 	switch kind {
 	case "target":
@@ -223,6 +227,12 @@ func previewRouteEdit(ctx context.Context, api API, seq uint64, row routeToggleR
 			ExpectedSelectionRevision:   binding.SelectionRevision,
 			Layer:                       row.layer, GroupID: row.id,
 		}
+		if row.origin == "region_append" && (choice.kind != "enabled" ||
+			row.target.Kind != domain.TargetDirect || row.dnsProfile != "" ||
+			!((row.layer == domain.LayerGeoSite && row.id == "region:auto-geosite:cn") ||
+				(row.layer == domain.LayerGeoIP && row.id == "region:auto-geoip:cn"))) {
+			return result
+		}
 		afterEnabled, afterTarget, afterDNS := row.enabled, row.target, row.dnsProfile
 		switch choice.kind {
 		case "enabled":
@@ -249,6 +259,8 @@ func previewRouteEdit(ctx context.Context, api API, seq uint64, row routeToggleR
 		expectedOrigin := row.origin
 		if expectedOrigin == "cn_preset" {
 			expectedOrigin = "cn_preset_override"
+		} else if expectedOrigin == "region_append" {
+			expectedOrigin = "region_append_toggle"
 		}
 		if err != nil || preview.APIVersion != apiv1.Version ||
 			!reflect.DeepEqual(preview.Request, req) || preview.Origin != expectedOrigin ||

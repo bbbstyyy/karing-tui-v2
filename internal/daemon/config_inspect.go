@@ -156,6 +156,11 @@ func projectConfigurationInspection(
 		RegionAppend:               model.RegionAppend != nil,
 		Layers:                     make([]apiv1.ConfigInspectionLayer, 0, 5),
 	}
+	if model.RegionAppend != nil {
+		result.RegionAppendCode = model.RegionAppend.RegionCode
+		result.RegionGeoSiteEnabled = model.RegionAppend.GeoSiteEnabled
+		result.RegionGeoIPEnabled = model.RegionAppend.GeoIPEnabled
+	}
 	budget := maxInspectedRouteGroups
 	for _, section := range []struct {
 		layer  domain.RoutingLayer

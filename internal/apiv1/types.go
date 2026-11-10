@@ -92,6 +92,9 @@ type ConfigInspectionResponse struct {
 	RuleSetsChanged            bool                    `json:"rule_sets_changed"`
 	CNPreset                   bool                    `json:"cn_preset"`
 	RegionAppend               bool                    `json:"region_append"`
+	RegionAppendCode           string                  `json:"region_append_code,omitempty"`
+	RegionGeoSiteEnabled       bool                    `json:"region_geosite_enabled"`
+	RegionGeoIPEnabled         bool                    `json:"region_geoip_enabled"`
 	RouteTotal                 int                     `json:"route_total"`
 	RouteTruncated             bool                    `json:"route_truncated"`
 	Layers                     []ConfigInspectionLayer `json:"layers"`
