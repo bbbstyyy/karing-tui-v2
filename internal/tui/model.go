@@ -591,6 +591,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if m.page == profilesPage {
 				m.profileRefresh.notice = ""
+				m.profileStage.notice = ""
 			}
 			if m.page == dashboardPage {
 				m.checkedApply.discard()
@@ -1130,7 +1131,7 @@ func (m Model) pageLines() []string {
 			}
 			return []string{"Profiles: loading..."}
 		}
-		result := []string{fmt.Sprintf("Profiles (%d shown; c: file, s: HTTPS, u: refresh; no auto-apply)", len(m.profiles))}
+		result := []string{fmt.Sprintf("Profiles (%d shown; c: file, s: HTTPS, u: refresh, b: stage; no auto-apply)", len(m.profiles))}
 		if len(m.profiles) == 0 {
 			return append(result, "No configured profiles.")
 		}
@@ -1144,7 +1145,7 @@ func (m Model) pageLines() []string {
 			}
 			snapshot := generationLabel(item.CurrentSnapshotID)
 			result = append(result, fmt.Sprintf("%s%s  [%s] enabled=%t rev=%d snapshot=%s failures=%d",
-				prefix, item.ProfileID, item.Format, item.Enabled,
+				prefix, inspectionSafeID(item.ProfileID), inspectionSafeID(item.Format), item.Enabled,
 				item.Revision, snapshot, item.ConsecutiveFailures))
 		}
 		return result
@@ -1157,10 +1158,10 @@ func (m Model) pageLines() []string {
 			if m.nodesError {
 				return []string{"Nodes: page unavailable. Press r to retry, Esc to return."}
 			}
-			return []string{"Nodes for " + id, "Loading node page..."}
+			return []string{"Nodes for " + inspectionSafeID(id), "Loading node page..."}
 		}
 		result := []string{fmt.Sprintf("Nodes for %s  total=%d  offset=%d  snapshot=%s",
-			id, m.nodes.Total, m.nodesOffset, generationLabel(m.nodes.SnapshotID))}
+			inspectionSafeID(id), m.nodes.Total, m.nodesOffset, generationLabel(m.nodes.SnapshotID))}
 		for i, item := range m.nodes.Nodes {
 			mark := " "
 			if item.Favorite {
@@ -1171,7 +1172,7 @@ func (m Model) pageLines() []string {
 				cursor = "> "
 			}
 			result = append(result, fmt.Sprintf("%s%s %s [%s] disabled=%t",
-				cursor, mark, item.DisplayName, item.NodeID, item.Disabled))
+				cursor, mark, item.DisplayName, inspectionSafeID(item.NodeID), item.Disabled))
 		}
 		if len(m.nodes.Nodes) == 0 {
 			result = append(result, "No nodes in this page.")
