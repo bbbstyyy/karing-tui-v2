@@ -42,6 +42,7 @@ func runRouteConfigCommand(ctx context.Context, api routeConfigCLIClient, args [
 func printRouteConfigUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: karing-tui config route-preview --layer=L --group=ID (--target-kind=K [--profile-id=P --node-id=N|--urltest-group-id=G] | --dns-profile-id=ID | --enabled=true|false) [--out=PRIVATE_NEW_FILE]")
 	fmt.Fprintln(w, "       karing-tui config route-stage --receipt=PRIVATE_FILE --confirm")
+	fmt.Fprintln(w, "For CN auto-region switches only: --layer=geosite --group=region:auto-geosite:cn --enabled=BOOL, or --layer=geoip --group=region:auto-geoip:cn --enabled=BOOL; targets and DNS cannot be changed.")
 	fmt.Fprintln(w, "Preview compiles but does not stage/apply; stage commits a new declaration revision ONLY. Never retry an uncertain stage response without re-reading context.")
 }
 

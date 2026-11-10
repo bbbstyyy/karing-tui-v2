@@ -278,6 +278,107 @@ func TestManagedCoreRealCNGroupDNSRegionJoint(t *testing.T) {
 		after.RecoveryRequired {
 		t.Fatalf("unsafe Group DNS apply changed LKG: %+v, err=%v", after, err)
 	}
+	// Drive the NEW guarded region-edit path through a real pinned Core.
+	// The two auto-appends are independent: switching off GeoSite must
+	// block a domain previously matched by geosite:cn, while geoip:cn
+	// still reaches the echo. The original 28 CN L1 groups are untouched.
+	regionOff := false
+	disabled, err := declaration.PatchRouteGroupV1(makeDocument(false, false),
+		declaration.RoutePatch{
+			Layer: domain.LayerGeoSite, GroupID: "region:auto-geosite:cn",
+			Enabled: &regionOff,
+		})
+	if err != nil || disabled.Origin != "region_append_toggle" ||
+		!disabled.Before.Enabled || disabled.After.Enabled {
+		t.Fatalf("guarded CN geosite-off edit refused: %+v, %v", disabled, err)
+	}
+	offRevision, err := store.CommitDeclaration(ctx, unsafe.Revision,
+		disabled.Document, "integration:cn-region-site-off")
+	if err != nil {
+		t.Fatal(err)
+	}
+	offCtx, endOff := context.WithTimeout(ctx, 40*time.Second)
+	offAttempt, offArtifact, err := runtime.ApplyDeclarationRevision(
+		offCtx, offRevision.Revision, attempt.TargetRevision)
+	endOff()
+	if err != nil {
+		t.Fatalf("CN region-off real Core check/apply: %v; stderr=%s", err, managed.StderrTail())
+	}
+	var offSite, offIP, offCN int
+	for _, row := range offArtifact.SourceMap {
+		switch row.GroupID {
+		case "region:auto-geosite:cn":
+			offSite++
+		case "region:auto-geoip:cn":
+			offIP++
+		default:
+			if strings.HasPrefix(row.GroupID, "cn.") && row.Action != "resolve" {
+				offCN++
+			}
+		}
+	}
+	if offSite != 0 || offIP != 1 || offCN != preset.CNExpectedGroups {
+		t.Fatalf("real Core CN region-off changed unrelated source groups: site=%d ip=%d CN=%d",
+			offSite, offIP, offCN)
+	}
+	waitManagedCoreState(t, managed, 5*time.Second, func(s core.Snapshot) bool {
+		return s.State == core.StateRunning && s.PID > 0
+	})
+	drainFiveLayerSignals(targetHits)
+	offConnectCtx, stopOffConnect := context.WithTimeout(ctx, 5*time.Second)
+	offConn, offErr := socks5ConnectDomain(offConnectCtx, rule,
+		"region-site.integration.test", target.Port())
+	stopOffConnect()
+	if offErr == nil {
+		_ = offConn.Close()
+		t.Fatal("disabled GeoSite region route silently bypassed FINAL BLOCK")
+	}
+	assertNoRouteOutcomeSignal(t, targetHits, 200*time.Millisecond, "disabled CN region GeoSite")
+	connect("region-ip.integration.test")
+	assertDNSPathQuery(t, directQueries, "region-ip.integration.test",
+		5*time.Second, "independent region GeoIP remained on")
+
+	// A separate one-field, explicitly staged enable restores only the
+	// original GeoSite append and keeps the GeoIP append unchanged.
+	regionOn := true
+	reenabled, err := declaration.PatchRouteGroupV1(disabled.Document,
+		declaration.RoutePatch{
+			Layer: domain.LayerGeoSite, GroupID: "region:auto-geosite:cn",
+			Enabled: &regionOn,
+		})
+	if err != nil || reenabled.Origin != "region_append_toggle" ||
+		reenabled.Before.Enabled || !reenabled.After.Enabled {
+		t.Fatalf("guarded CN geosite-on edit refused: %+v, %v", reenabled, err)
+	}
+	onRevision, err := store.CommitDeclaration(ctx, offRevision.Revision,
+		reenabled.Document, "integration:cn-region-site-on")
+	if err != nil {
+		t.Fatal(err)
+	}
+	onCtx, endOn := context.WithTimeout(ctx, 40*time.Second)
+	onAttempt, onArtifact, err := runtime.ApplyDeclarationRevision(
+		onCtx, onRevision.Revision, offAttempt.TargetRevision)
+	endOn()
+	if err != nil {
+		t.Fatalf("CN region-on real Core check/apply: %v; stderr=%s", err, managed.StderrTail())
+	}
+	assertCNJointSourceMap(t, onArtifact.SourceMap, snapshot)
+	waitManagedCoreState(t, managed, 5*time.Second, func(s core.Snapshot) bool {
+		return s.State == core.StateRunning && s.PID > 0
+	})
+	connect("region-site.integration.test")
+	assertDNSPathQuery(t, directQueries, "region-site.integration.test",
+		5*time.Second, "reenabled region GeoSite DNS")
+	finalState, err := store.Snapshot(ctx)
+	if err != nil || finalState.AppliedGenerationID == nil ||
+		*finalState.AppliedGenerationID != onAttempt.GenerationID ||
+		finalState.LastKnownGoodGenerationID == nil ||
+		*finalState.LastKnownGoodGenerationID != onAttempt.GenerationID ||
+		finalState.RecoveryRequired {
+		t.Fatalf("real CN region toggle did not commit stable Applied/LKG: %+v err=%v",
+			finalState, err)
+	}
+
 	stopCtx, stopCore := context.WithTimeout(ctx, 10*time.Second)
 	if err := runtime.Stop(stopCtx); err != nil {
 		stopCore()
