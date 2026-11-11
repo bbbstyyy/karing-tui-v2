@@ -40,6 +40,17 @@ subset. It does **not** authorize migrating an independently persisted live
 CurrentSelected intent, a CN 28-group configuration, or subscription-supplied
 routing/ISP rules.
 
+## Pinned native schema compatibility
+
+The managed-core TUI test exposed an actual Apply UX blocker: the pinned
+compiler Schema ID contains the trusted separator `@` followed by its build
+digest. The generic `inspectionSafeID` redactor is intentionally hostile to
+untrusted URLs and therefore rejects `@`, but that redactor is not a valid
+validator for native compiler receipts. The protected TUI Apply preview now
+requires exact equality with the build's `compiler.NativeSchemaID`, instead
+of weakening the untrusted-source sanitizer. Unit tests accept that exact
+pinned schema and reject other printable, malformed and URL-shaped values.
+
 ## Explicit remaining blockers
 
 The final exact PR SHA must pass full Go CI and Race 4/4, pinned Managed Core,

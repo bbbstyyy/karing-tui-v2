@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 )
 
 // The ordinary fakeAPI used by all TUI tests remains read-only unless a
@@ -55,7 +56,7 @@ func newCheckedApplyFakeAPI() *checkedApplyFakeAPI {
 				ExpectedConfigRevision: 4, ExpectedAppliedGenerationID: &generation,
 				ExpectedSelectionRevision: 7, NativeConfigSHA256: strings.Repeat("b", 64),
 			},
-			NativeSchemaID:  "sing-box-compatible",
+			NativeSchemaID:  compiler.NativeSchemaID,
 			RouteEntryCount: 32, DNSServerCount: 5, RuleSetCount: 2,
 			CompilerValidated: true,
 		},
@@ -252,6 +253,9 @@ func TestTUICheckedApplyRejectsUnsafeOrDriftedReceipts(t *testing.T) {
 		{"unsafe schema", func(f *checkedApplyFakeAPI) {
 			f.preview.NativeSchemaID = "https://node.invalid?token=SECRET"
 		}},
+		{"printable but wrong schema", func(f *checkedApplyFakeAPI) {
+			f.preview.NativeSchemaID = "karing-sing-box-unpinned"
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := newCheckedApplyFakeAPI()
@@ -365,5 +369,26 @@ func TestTUICheckedApplyMalformedAckDoesNotReportSuccess(t *testing.T) {
 	m, _ = updated(t, m, cmd())
 	if strings.Contains(m.checkedApply.notice, "Applied and verified") {
 		t.Fatal(fmt.Sprintf("invalid core response accepted: %s", m.checkedApply.notice))
+	}
+}
+
+func TestTUICheckedApplyPinnedSchemaWithAtIsValidAndNoOtherSchemaAllowed(t *testing.T) {
+	api := newCheckedApplyFakeAPI()
+	if !strings.Contains(compiler.NativeSchemaID, "@") ||
+		api.preview.NativeSchemaID != compiler.NativeSchemaID ||
+		!safeTUIApplyPreview(api.preview) {
+		t.Fatal("real pinned Core schema hash separator was incorrectly rejected")
+	}
+	for _, fake := range []string{
+		"", "karing-sing-box-1.13.19",
+		strings.ReplaceAll(compiler.NativeSchemaID, "@", "/"),
+		compiler.NativeSchemaID + "-forged",
+		"https://malicious.invalid?password=DO_NOT_RENDER",
+	} {
+		preview := api.preview
+		preview.NativeSchemaID = fake
+		if safeTUIApplyPreview(preview) {
+			t.Fatalf("untrusted Core schema unexpectedly accepted")
+		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
+	"github.com/bbbstyyy/karing-tui-v2/internal/compiler"
 )
 
 // Applying a declaration may replace the core and interrupt connections.
@@ -67,13 +68,14 @@ func safeTUIApplyPreview(p apiv1.CheckedApplyPreviewResponse) bool {
 		!validRouteToggleDigest(r.NativeConfigSHA256) ||
 		(r.ExpectedAppliedGenerationID != nil && *r.ExpectedAppliedGenerationID <= 0) ||
 		p.RouteEntryCount < 0 || p.DNSServerCount < 0 || p.RuleSetCount < 0 ||
-		p.NativeSchemaID == "" || len(p.NativeSchemaID) > 64 {
+		p.NativeSchemaID != compiler.NativeSchemaID {
 		return false
 	}
-	if safeText(p.NativeSchemaID, 64) != p.NativeSchemaID ||
-		inspectionSafeID(p.NativeSchemaID) != p.NativeSchemaID {
-		return false
-	}
+	// The pinned local compiler's trusted Schema ID deliberately includes
+	// '@' before its source hash. Never run the user-supplied NodeID/URL
+	// redactor on this field: it rejects legitimate native receipts. Exact
+	// compiler.SchemaID equality is stricter than a character allowlist and
+	// still rejects an untrusted or mismatched daemon response.
 	return true
 }
 
