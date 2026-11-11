@@ -104,7 +104,12 @@ func mvpTUIOpenAcceptedNodesForProfile(t *testing.T, socket, profileID, nodeID s
 	m, cmd = mvpTUIUpdate(t, m, mvpTUIKey('3'))
 	m = mvpTUIRun(t, m, cmd)
 	view := m.View()
-	if !strings.Contains(view, "Nodes for "+profileID) || !strings.Contains(view, nodeID) {
+	// The Nodes table may truncate stable IDs to the available terminal
+	// width. The subsequent approval MUST show the full exact identity.
+	// Check this page is the intended accepted source and includes its
+	// stable ID prefix; do not demand the table render an unlimited width.
+	if nodeID == "" || !strings.Contains(view, "Nodes for "+profileID) ||
+		!strings.Contains(view, nodeID[:min(20, len(nodeID))]) {
 		t.Fatalf("current accepted node was not read from Unix daemon: %q", view)
 	}
 	return m
