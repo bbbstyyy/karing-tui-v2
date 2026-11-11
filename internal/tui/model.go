@@ -739,6 +739,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.page == nodesPage {
 				m.beginInitialProfile()
 			}
+		case "m":
+			if m.page == nodesPage {
+				return m, m.beginSelectedSnapshotStageFromNodes()
+			}
 		case "f":
 			m.proposeOverlay(true)
 		case "d":
@@ -1007,7 +1011,7 @@ func (m Model) View() string {
 	} else if m.page == nodesPage && m.initial.notice != "" {
 		help = m.initial.notice
 	} else if m.page == nodesPage {
-		help = "j/k: choose node  i: FIRST-RUN setup  f/d: node overlay  n/p: page  Esc: profiles"
+		help = "m: PREVIEW selected rebind  i: first-run  j/k: choose  n/p: page"
 	} else if m.page == selectionPage {
 		help = "j/k: choose  Enter: propose  r: reload  Tab: page  q: quit"
 		if m.selection.pending != nil {
@@ -1172,7 +1176,7 @@ func (m Model) pageLines() []string {
 				cursor = "> "
 			}
 			result = append(result, fmt.Sprintf("%s%s %s [%s] disabled=%t",
-				cursor, mark, item.DisplayName, inspectionSafeID(item.NodeID), item.Disabled))
+				cursor, mark, item.DisplayName, safeExplicitNodeIDForView(item.NodeID), item.Disabled))
 		}
 		if len(m.nodes.Nodes) == 0 {
 			result = append(result, "No nodes in this page.")
