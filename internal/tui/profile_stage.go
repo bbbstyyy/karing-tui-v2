@@ -29,16 +29,16 @@ const (
 )
 
 type profileStageContext struct {
-	profileID           string
-	snapshotID          int64
+	profileID                 string
+	snapshotID                int64
 	replacementSelectedNodeID string
-	sourceRevision      uint64
-	declarationRevision uint64
-	configRevision      uint64
-	appliedGeneration   *int64
-	lastKnownGood       *int64
-	statusRequest       uint64
-	profilesRequest     uint64
+	sourceRevision            uint64
+	declarationRevision       uint64
+	configRevision            uint64
+	appliedGeneration         *int64
+	lastKnownGood             *int64
+	statusRequest             uint64
+	profilesRequest           uint64
 }
 
 type profileStageReceipt struct {
@@ -165,12 +165,12 @@ func (m *Model) beginProfileStageForSelected(selectedNodeID string) tea.Cmd {
 	ctx := profileStageContext{
 		profileID: current.ProfileID, snapshotID: snapshotID,
 		replacementSelectedNodeID: selectedNodeID,
-		sourceRevision:      current.Revision,
-		declarationRevision: m.status.DeclarationRevision,
-		configRevision:      m.status.ConfigRevision,
-		appliedGeneration:   profileStageCopyGeneration(m.status.AppliedGenerationID),
-		lastKnownGood:       profileStageCopyGeneration(m.status.LastKnownGoodGenerationID),
-		statusRequest:       m.statusRequest, profilesRequest: m.profilesRequest,
+		sourceRevision:            current.Revision,
+		declarationRevision:       m.status.DeclarationRevision,
+		configRevision:            m.status.ConfigRevision,
+		appliedGeneration:         profileStageCopyGeneration(m.status.AppliedGenerationID),
+		lastKnownGood:             profileStageCopyGeneration(m.status.LastKnownGoodGenerationID),
+		statusRequest:             m.statusRequest, profilesRequest: m.profilesRequest,
 	}
 	if !m.profileStageContextValid(ctx) {
 		m.profileStage.notice = "Stage requires a complete source, an existing declaration, fresh status and terminal >=68x16. Press r to reload; first run uses Nodes [3] i."

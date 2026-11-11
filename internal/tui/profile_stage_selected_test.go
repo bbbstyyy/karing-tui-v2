@@ -90,7 +90,7 @@ func TestTUINodesExplicitChoicePreviewStageAndReadback(t *testing.T) {
 
 func TestTUINodesExplicitChoiceRejectsUnsafeOrStaleSource(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		change func(*Model)
 	}{
 		{"disabled node", func(m *Model) { m.nodes.Nodes[1].Disabled = true }},
@@ -123,12 +123,14 @@ func TestTUINodesExplicitChoiceRejectsUnsafeOrStaleSource(t *testing.T) {
 
 func TestTUINodesExplicitPreviewRefusesForgedOrStaleServerReply(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		change func(*snapshotStageTUIFake)
 	}{
 		{"omitted explicit ID", func(a *snapshotStageTUIFake) { a.preview.ReplacementSelectedNodeID = "" }},
 		{"wrong explicit ID", func(a *snapshotStageTUIFake) { a.preview.ReplacementSelectedNodeID = "node-untrusted" }},
-		{"unsafe raw ID", func(a *snapshotStageTUIFake) { a.preview.ReplacementSelectedNodeID = "https://private/?token=NEVER_SHOW" }},
+		{"unsafe raw ID", func(a *snapshotStageTUIFake) {
+			a.preview.ReplacementSelectedNodeID = "https://private/?token=NEVER_SHOW"
+		}},
 		{"preview conflict", func(a *snapshotStageTUIFake) { a.previewError = errors.New("secret https://private/?token=NEVER_SHOW") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
