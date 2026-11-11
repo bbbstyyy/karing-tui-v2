@@ -160,7 +160,7 @@ func (m Model) checkedApplyLines() []string {
 				generationLabel(r.ExpectedAppliedGenerationID), r.ExpectedSelectionRevision),
 			"Declaration SHA256: " + r.DeclarationSHA256[:20] + "...",
 			"Compiled SHA256:    " + r.NativeConfigSHA256[:20] + "...",
-			fmt.Sprintf("Schema: %s", p.NativeSchemaID),
+			"Schema: exact pinned native Core build (validated)",
 			fmt.Sprintf("Routes: %d  DNS servers: %d  rule sets: %d",
 				p.RouteEntryCount, p.DNSServerCount, p.RuleSetCount),
 			"Core check has NOT run; no generation was changed by preview.",
