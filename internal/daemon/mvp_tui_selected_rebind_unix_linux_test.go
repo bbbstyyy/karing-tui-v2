@@ -231,7 +231,7 @@ func TestMVPRealUnixTUISelectionIntentRaceFailsClosed(t *testing.T) {
 		t.Fatalf("selection intent overwritten by stale TUI stage: %+v %t %v", intent, present, err)
 	}
 	for i := 0; i < 2; i++ {
-		m, again := mvpTUIUpdate(t, m, mvpTUIKey('y'))
+		_, again := mvpTUIUpdate(t, m, mvpTUIKey('y'))
 		if again != nil {
 			t.Fatal("failed/uncertain selected Stage automatically repeated")
 		}
