@@ -142,13 +142,21 @@ func TestMVPRealUnixTUIExplicitSelectedRebindStagesOnly(t *testing.T) {
 	view := m.View()
 	for _, required := range []string{
 		"EXPLICIT replacement CurrentSelected ID:",
-		selectedID,
 		"Node diff: +1 added  -1 removed",
 		"CONFIRM Stage only",
 		"NOT Core Check/Apply",
 	} {
 		if !strings.Contains(view, required) {
 			t.Fatalf("TUI refused or hid explicit approval evidence %q: %q", required, view)
+		}
+	}
+	// Stable IDs can exceed a single terminal row. The TUI deliberately
+	// displays the WHOLE identity in 64-byte lines instead of truncating it.
+	// Verify each line exactly, including the last shortened segment.
+	for offset := 0; offset < len(selectedID); offset += 64 {
+		end := min(offset+64, len(selectedID))
+		if !strings.Contains(view, "  "+selectedID[offset:end]+"\n") {
+			t.Fatalf("explicit selected identity segment %d-%d not visible", offset, end)
 		}
 	}
 	if strings.Contains(view, oldID) || strings.Contains(view, "password") {
