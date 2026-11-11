@@ -34,6 +34,9 @@ func selectedSnapshotStageTUI(t *testing.T, api *snapshotStageTUIFake) Model {
 		t.Fatal("nodes page was not loaded")
 	}
 	m.nodesScroll = 1
+	if !strings.Contains(m.View(), "m: PREVIEW selected rebind") {
+		t.Fatal("Nodes page did not explain that replacement requires preview")
+	}
 	return m
 }
 

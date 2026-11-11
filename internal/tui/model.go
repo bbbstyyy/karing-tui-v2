@@ -1011,7 +1011,7 @@ func (m Model) View() string {
 	} else if m.page == nodesPage && m.initial.notice != "" {
 		help = m.initial.notice
 	} else if m.page == nodesPage {
-		help = "j/k: choose  m: EXPLICIT stage new selected  i: first-run  n/p: page  Esc: profiles"
+		help = "m: PREVIEW selected rebind  i: first-run  j/k: choose  n/p: page"
 	} else if m.page == selectionPage {
 		help = "j/k: choose  Enter: propose  r: reload  Tab: page  q: quit"
 		if m.selection.pending != nil {
