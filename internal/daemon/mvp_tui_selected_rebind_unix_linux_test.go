@@ -26,6 +26,11 @@ import (
 // no TUN and no external subscription network calls. The existing pinned-Core
 // integration test separately proves authenticated traffic after Apply.
 func mvpTUIUnixServer(t *testing.T, store *storage.Store) string {
+	return mvpTUIUnixServerForRuntime(t, store, nil)
+}
+
+// Also expose the same real Unix TUI to a daemon with a pinned live Core.
+func mvpTUIUnixServerForRuntime(t *testing.T, store *storage.Store, runtime *serverRuntime) string {
 	t.Helper()
 	socket := filepath.Join(t.TempDir(), "daemon.sock")
 	listener, err := net.Listen("unix", socket)
@@ -33,7 +38,7 @@ func mvpTUIUnixServer(t *testing.T, store *storage.Store) string {
 		t.Fatal(err)
 	}
 	server := &http.Server{
-		Handler:           (&Server{started: time.Now().UTC()}).handler(store, nil),
+		Handler:           (&Server{started: time.Now().UTC()}).handler(store, runtime),
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 	done := make(chan error, 1)
@@ -84,6 +89,11 @@ func mvpTUIRun(t *testing.T, m tui.Model, cmd tea.Cmd) tui.Model {
 }
 
 func mvpTUIOpenAcceptedNodes(t *testing.T, socket string, nodeID string) tui.Model {
+	return mvpTUIOpenAcceptedNodesForProfile(t, socket, "source-a", nodeID)
+}
+
+// The source and node must be read from daemon, not populated by a TUI mock.
+func mvpTUIOpenAcceptedNodesForProfile(t *testing.T, socket, profileID, nodeID string) tui.Model {
 	t.Helper()
 	m := tui.NewModel(context.Background(), client.New(socket))
 	m = mvpTUIRun(t, m, m.Init())
@@ -94,7 +104,12 @@ func mvpTUIOpenAcceptedNodes(t *testing.T, socket string, nodeID string) tui.Mod
 	m, cmd = mvpTUIUpdate(t, m, mvpTUIKey('3'))
 	m = mvpTUIRun(t, m, cmd)
 	view := m.View()
-	if !strings.Contains(view, "Nodes for source-a") || !strings.Contains(view, nodeID) {
+	// The Nodes table may truncate stable IDs to the available terminal
+	// width. The subsequent approval MUST show the full exact identity.
+	// Check this page is the intended accepted source and includes its
+	// stable ID prefix; do not demand the table render an unlimited width.
+	if nodeID == "" || !strings.Contains(view, "Nodes for "+profileID) ||
+		!strings.Contains(view, nodeID[:min(20, len(nodeID))]) {
 		t.Fatalf("current accepted node was not read from Unix daemon: %q", view)
 	}
 	return m
