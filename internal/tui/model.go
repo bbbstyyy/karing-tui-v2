@@ -739,6 +739,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.page == nodesPage {
 				m.beginInitialProfile()
 			}
+		case "m":
+			if m.page == nodesPage {
+				return m, m.beginSelectedSnapshotStageFromNodes()
+			}
 		case "f":
 			m.proposeOverlay(true)
 		case "d":
@@ -1007,7 +1011,7 @@ func (m Model) View() string {
 	} else if m.page == nodesPage && m.initial.notice != "" {
 		help = m.initial.notice
 	} else if m.page == nodesPage {
-		help = "j/k: choose node  i: FIRST-RUN setup  f/d: node overlay  n/p: page  Esc: profiles"
+		help = "j/k: choose  m: EXPLICIT stage new selected  i: first-run  n/p: page  Esc: profiles"
 	} else if m.page == selectionPage {
 		help = "j/k: choose  Enter: propose  r: reload  Tab: page  q: quit"
 		if m.selection.pending != nil {

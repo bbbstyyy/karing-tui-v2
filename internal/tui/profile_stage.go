@@ -31,6 +31,7 @@ const (
 type profileStageContext struct {
 	profileID           string
 	snapshotID          int64
+	replacementSelectedNodeID string
 	sourceRevision      uint64
 	declarationRevision uint64
 	configRevision      uint64
@@ -118,6 +119,8 @@ func (m *Model) profileStageContextValid(ctx profileStageContext) bool {
 		!sameApplyGeneration(m.status.AppliedGenerationID, ctx.appliedGeneration) ||
 		!sameApplyGeneration(m.status.LastKnownGoodGenerationID, ctx.lastKnownGood) ||
 		ctx.declarationRevision == 0 || ctx.snapshotID <= 0 ||
+		(ctx.replacementSelectedNodeID != "" &&
+			profile.ValidateExplicitSelectedNodeID(ctx.replacementSelectedNodeID) != nil) ||
 		ctx.sourceRevision == 0 || m.selectedProfileID() != ctx.profileID ||
 		m.selected < 0 || m.selected >= len(m.profiles) {
 		return false
@@ -131,6 +134,17 @@ func (m *Model) profileStageContextValid(ctx profileStageContext) bool {
 }
 
 func (m *Model) beginProfileStage() tea.Cmd {
+	return m.beginProfileStageForSelected("")
+}
+
+// Unlike a normal snapshot preview, this requires the operator to choose the
+// EXACT node ID from the current accepted Nodes page. It only previews a
+// declaration; a later 'y' stages it and checked Core Apply stays separate.
+func (m *Model) beginProfileStageForSelected(selectedNodeID string) tea.Cmd {
+	if selectedNodeID != "" && profile.ValidateExplicitSelectedNodeID(selectedNodeID) != nil {
+		m.profileStage.notice = "Invalid explicit replacement node. No write sent."
+		return nil
+	}
 	if m.page != profilesPage || m.profileStage.active() {
 		return nil
 	}
@@ -150,6 +164,7 @@ func (m *Model) beginProfileStage() tea.Cmd {
 	}
 	ctx := profileStageContext{
 		profileID: current.ProfileID, snapshotID: snapshotID,
+		replacementSelectedNodeID: selectedNodeID,
 		sourceRevision:      current.Revision,
 		declarationRevision: m.status.DeclarationRevision,
 		configRevision:      m.status.ConfigRevision,
@@ -174,6 +189,9 @@ func profileStagePreviewSafe(raw apiv1.ProfileDeclarationPreviewResponse, ctx pr
 	if raw.ProfileID != ctx.profileID || raw.SnapshotID != ctx.snapshotID ||
 		raw.SourceRevision != ctx.sourceRevision ||
 		raw.BaseDeclarationRevision != ctx.declarationRevision ||
+		raw.ReplacementSelectedNodeID != ctx.replacementSelectedNodeID ||
+		(ctx.replacementSelectedNodeID != "" &&
+			profile.ValidateExplicitSelectedNodeID(ctx.replacementSelectedNodeID) != nil) ||
 		raw.CoreValidated || raw.Applied ||
 		raw.SnapshotNodeCount <= 0 || raw.SnapshotNodeCount > maxProfileStageNodes ||
 		raw.EffectiveNodeCount <= 0 || raw.EffectiveNodeCount > maxProfileStageNodes ||
@@ -222,6 +240,7 @@ func loadProfileStagePreview(ctx context.Context, api profileStageAPI, sequence 
 			apiv1.ProfileDeclarationPreviewRequest{
 				SnapshotID:                  stageCtx.snapshotID,
 				ExpectedDeclarationRevision: stageCtx.declarationRevision,
+				ReplacementSelectedNodeID:   stageCtx.replacementSelectedNodeID,
 			})
 		if err != nil || bounded.Err() != nil || !profileStagePreviewSafe(raw, stageCtx) {
 			return msg
@@ -253,6 +272,7 @@ func (m *Model) acceptProfileStagePreview(msg profileStagePreviewLoaded) {
 		msg.receipt.context.snapshotID != m.profileStage.context.snapshotID ||
 		msg.receipt.context.sourceRevision != m.profileStage.context.sourceRevision ||
 		msg.receipt.context.declarationRevision != m.profileStage.context.declarationRevision ||
+		msg.receipt.context.replacementSelectedNodeID != m.profileStage.context.replacementSelectedNodeID ||
 		!validRouteToggleDigest(msg.receipt.candidateSHA256) ||
 		!validRouteToggleDigest(msg.receipt.overlaySHA256) {
 		m.profileStage.discard()
@@ -268,7 +288,7 @@ func (m Model) profileStageLines() []string {
 	s := m.profileStage
 	if s.pending != nil {
 		p := s.pending
-		return []string{
+		lines := []string{
 			"SNAPSHOT -> DECLARATION: PREVIEW ONLY (NOT APPLIED)",
 			fmt.Sprintf("Profile: %s | snapshot %d | source revision %d",
 				p.context.profileID, p.context.snapshotID, p.context.sourceRevision),
@@ -276,11 +296,19 @@ func (m Model) profileStageLines() []string {
 				p.context.declarationRevision, p.context.declarationRevision+1, p.context.configRevision),
 			fmt.Sprintf("Imported %d nodes, effective %d (after overlays)", p.snapshotNodes, p.effectiveNodes),
 			fmt.Sprintf("Node diff: +%d added  -%d removed  =%d retained", p.added, p.removed, p.retained),
-			"Declaration SHA256: " + p.candidateSHA256[:20] + "...",
-			"Overlay SHA256:     " + p.overlaySHA256[:20] + "...",
+		}
+		if id := p.context.replacementSelectedNodeID; id != "" {
+			// The ID passed TUI and daemon safety validation, not a source name
+			// or subscription URL. Show the exact identity being acknowledged.
+			lines = append(lines, "EXPLICIT replacement CurrentSelected: "+id,
+				"Only simple proxy-only; source change is NOT live traffic.")
+		}
+		return append(lines,
+			"Declaration SHA256: "+p.candidateSHA256[:20]+"...",
+			"Overlay SHA256:     "+p.overlaySHA256[:20]+"...",
 			"Removed/rebound nodes may make Core Apply fail. This is NOT Core check.",
 			"y: CONFIRM stage ONLY; Esc: discard; Core Apply is separate [1] a.",
-		}
+		)
 	}
 	if s.previewing {
 		return []string{
@@ -317,6 +345,9 @@ func (m *Model) confirmProfileStage() tea.Cmd {
 		p.context.snapshotID != m.profileStage.context.snapshotID ||
 		p.context.sourceRevision != m.profileStage.context.sourceRevision ||
 		p.context.declarationRevision != m.profileStage.context.declarationRevision ||
+		p.context.replacementSelectedNodeID != m.profileStage.context.replacementSelectedNodeID ||
+		(p.context.replacementSelectedNodeID != "" &&
+			profile.ValidateExplicitSelectedNodeID(p.context.replacementSelectedNodeID) != nil) ||
 		!validRouteToggleDigest(p.candidateSHA256) || !validRouteToggleDigest(p.overlaySHA256) {
 		m.profileStage.discard()
 		m.profileStage.notice = "Stage receipt invalid; no write sent."
@@ -328,6 +359,7 @@ func (m *Model) confirmProfileStage() tea.Cmd {
 		ExpectedDeclarationRevision: p.context.declarationRevision,
 		CandidateSHA256:             p.candidateSHA256,
 		RuntimeOverlaySHA256:        p.overlaySHA256,
+		ReplacementSelectedNodeID:   p.context.replacementSelectedNodeID,
 	}
 	m.profileStage.pending = nil
 	m.profileStage.previewing = false
@@ -354,6 +386,7 @@ func writeProfileStage(ctx context.Context, api profileStageAPI, sequence uint64
 			response.SnapshotID == request.SnapshotID &&
 			response.DeclarationRevision == request.ExpectedDeclarationRevision+1 &&
 			response.DeclarationSHA256 == request.CandidateSHA256 &&
+			response.ReplacementSelectedNodeID == request.ReplacementSelectedNodeID &&
 			!response.CoreValidated && !response.Applied
 		return msg
 	}
