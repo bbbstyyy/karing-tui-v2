@@ -276,7 +276,7 @@ func (m *Model) acceptProfileStagePreview(msg profileStagePreviewLoaded) {
 		!validRouteToggleDigest(msg.receipt.candidateSHA256) ||
 		!validRouteToggleDigest(msg.receipt.overlaySHA256) {
 		m.profileStage.discard()
-		m.profileStage.notice = "Snapshot preview rejected, invalid or stale. Reload status/source; no write sent."
+		m.profileStage.notice = "Preview refused; no write sent. Missing selected node? Nodes [3], then m."
 		return
 	}
 	receipt := msg.receipt
