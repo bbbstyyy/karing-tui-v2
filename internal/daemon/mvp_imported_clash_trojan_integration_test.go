@@ -144,6 +144,9 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	}()
 	api := httptest.NewServer(New(runtimepath.Paths{}).handler(store, runtime))
 	defer api.Close()
+	// The SAME actual daemon and pinned Core are also reachable through the
+	// supported Unix client transport used by the public TUI.
+	unixSocket := mvpTUIUnixServerForRuntime(t, store, runtime)
 	const sourcePath = "/v1/profiles/" + profileID
 	source := apiv1.ProfileSourceSpec{
 		Format: "clash-yaml", LocationKind: "url", Location: sourceServer.URL,
@@ -446,58 +449,70 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 		assertNoRouteOutcomeSignal(t, replacementHits, 100*time.Millisecond, "unconfirmed replacement peer")
 	}
 
-	// The user can now explicitly nominate this new accepted node in the
-	// narrowly scoped first-run proxy-only declaration. Normal preview/stage
-	// above intentionally refused to guess this replacement.
+	// This time drive the exact accepted replacement with Bubble Tea
+	// keystrokes over a *real Unix Socket*. Both the checked Stage and
+	// subsequent checked Apply must be separate user confirmations.
 	newSelected := removedPage.Nodes[0].NodeID
-	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
-		sourcePath+"/declaration/preview", apiv1.ProfileDeclarationPreviewRequest{
-			SnapshotID:                  *removedSnapshot.CurrentSnapshotID,
-			ExpectedDeclarationRevision: staged.DeclarationRevision,
-			ReplacementSelectedNodeID:   newSelected,
-		})
-	if status != http.StatusOK || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
-		t.Fatalf("explicit selected replacement preview rejected or leaked secret: %d", status)
+	ui := mvpTUIOpenAcceptedNodesForProfile(t, unixSocket, profileID, newSelected)
+	ui, uiCmd := mvpTUIUpdate(t, ui, mvpTUIKey('m'))
+	if uiCmd == nil {
+		t.Fatal("TUI did not start read-only explicit replacement preview")
 	}
-	var selectedPreview apiv1.ProfileDeclarationPreviewResponse
-	if err := json.Unmarshal(reply, &selectedPreview); err != nil {
-		t.Fatal(err)
+	beforePreview, err := store.CurrentDeclaration(ctx)
+	if err != nil || beforePreview.Revision != staged.DeclarationRevision ||
+		beforePreview.SHA256 != staged.DeclarationSHA256 {
+		t.Fatalf("TUI preview changed declaration before confirmation: %+v %v", beforePreview, err)
 	}
-	if selectedPreview.ReplacementSelectedNodeID != newSelected ||
-		selectedPreview.AddedNodeCount != 1 || selectedPreview.RemovedNodeCount != 1 ||
-		selectedPreview.RetainedNodeCount != 0 || selectedPreview.CoreValidated ||
-		selectedPreview.Applied || len(selectedPreview.CandidateSHA256) != 64 {
-		t.Fatalf("explicit selected candidate diff invalid: %+v", selectedPreview)
+	ui = mvpTUIRun(t, ui, uiCmd)
+	review := []byte(ui.View())
+	for _, expected := range []string{
+		"EXPLICIT replacement CurrentSelected ID:",
+		"Node diff: +1 added  -1 removed",
+		"Stage is NOT Core Check/Apply",
+		"y: CONFIRM Stage only",
+	} {
+		if !bytes.Contains(review, []byte(expected)) {
+			t.Fatalf("TUI replacement review omitted %q: %s", expected, review)
+		}
 	}
-	selectedReceipt := apiv1.ProfileDeclarationStageRequest{
-		SnapshotID:                  *removedSnapshot.CurrentSnapshotID,
-		ExpectedSourceRevision:      selectedPreview.SourceRevision,
-		ExpectedDeclarationRevision: selectedPreview.BaseDeclarationRevision,
-		CandidateSHA256:             selectedPreview.CandidateSHA256,
-		RuntimeOverlaySHA256:        selectedPreview.RuntimeOverlaySHA256,
-		ReplacementSelectedNodeID:   newSelected,
+	// A stable node ID can exceed 64 columns: the entire identity must be
+	// visible in exact bounded lines, not truncated or merged with secrets.
+	for offset := 0; offset < len(newSelected); offset += 64 {
+		end := min(offset+64, len(newSelected))
+		if !bytes.Contains(review, []byte("  "+newSelected[offset:end]+"\n")) {
+			t.Fatal("TUI replacement review truncated selected stable identity")
+		}
 	}
-	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
-		sourcePath+"/declaration/stage", selectedReceipt)
-	if status != http.StatusCreated || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
-		t.Fatalf("explicit selected declaration stage failed or leaked password: %d", status)
+	if bytes.Contains(review, []byte(mvpTrojanSecret)) ||
+		bytes.Contains(review, []byte(nodeID)) {
+		t.Fatal("TUI explicit approval leaked secret or retired identity")
 	}
-	var selectedStaged apiv1.ProfileDeclarationStageResponse
-	if err := json.Unmarshal(reply, &selectedStaged); err != nil {
-		t.Fatal(err)
+	ui, uiCmd = mvpTUIUpdate(t, ui, mvpTUIKey('y'))
+	if uiCmd == nil {
+		t.Fatal("TUI did not require separate selected Stage confirmation")
 	}
-	if selectedStaged.DeclarationRevision != staged.DeclarationRevision+1 ||
-		selectedStaged.DeclarationSHA256 != selectedPreview.CandidateSHA256 ||
-		selectedStaged.ReplacementSelectedNodeID != newSelected ||
-		selectedStaged.Applied || selectedStaged.CoreValidated {
-		t.Fatalf("selected stage receipt not bound to preview: %+v", selectedStaged)
+	ui = mvpTUIRun(t, ui, uiCmd)
+	if !bytes.Contains([]byte(ui.View()), []byte("Verified staged declaration rev")) ||
+		!bytes.Contains([]byte(ui.View()), []byte("Applied/LKG unchanged")) {
+		t.Fatalf("TUI selected Stage lacked readback confirmation: %s", ui.View())
 	}
-	stillUnapplied, err := store.Snapshot(ctx)
-	if err != nil || stillUnapplied.AppliedGenerationID == nil ||
-		*stillUnapplied.AppliedGenerationID != applied.GenerationID ||
-		stillUnapplied.LastKnownGoodGenerationID == nil ||
-		*stillUnapplied.LastKnownGoodGenerationID != applied.GenerationID {
-		t.Fatalf("explicit declaration stage changed running Core: %+v %v", stillUnapplied, err)
+	rebound, err := store.CurrentDeclaration(ctx)
+	if err != nil || rebound.Revision != staged.DeclarationRevision+1 ||
+		rebound.SHA256 == staged.DeclarationSHA256 {
+		t.Fatalf("TUI Stage did not commit one new immutable declaration: %+v %v", rebound, err)
+	}
+	proposed, err := declaration.ParseV1(rebound.DocumentJSON)
+	if err != nil || len(proposed.Nodes) != 1 ||
+		proposed.Selection.Current.Default.NodeID != newSelected ||
+		proposed.Nodes[0].NodeID != newSelected {
+		t.Fatalf("TUI Stage did not choose the exact admitted replacement: %v", err)
+	}
+	unchangedCore, err := store.Snapshot(ctx)
+	if err != nil || unchangedCore.AppliedGenerationID == nil ||
+		unchangedCore.LastKnownGoodGenerationID == nil ||
+		*unchangedCore.AppliedGenerationID != applied.GenerationID ||
+		*unchangedCore.LastKnownGoodGenerationID != applied.GenerationID {
+		t.Fatalf("TUI Stage switched active Core before Apply: %+v %v", unchangedCore, err)
 	}
 	holdCtx, holdCancel := context.WithTimeout(ctx, 5*time.Second)
 	holdConn, holdErr := socks5Connect(holdCtx, rule, target)
@@ -507,46 +522,59 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	}
 	mvpAssertMarker(t, holdConn)
 	holdCancel()
-	assertRouteOutcomeSignal(t, upstreamHits, 2*time.Second, "old Trojan before checked re-apply")
-	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "old Trojan echo before checked re-apply")
-	assertNoRouteOutcomeSignal(t, replacementHits, 100*time.Millisecond, "selected stage must not switch Core")
+	assertRouteOutcomeSignal(t, upstreamHits, 2*time.Second, "old Trojan while TUI Stage pending Apply")
+	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "old Trojan still serves echo before Apply")
+	assertNoRouteOutcomeSignal(t, replacementHits, 100*time.Millisecond, "TUI Stage cannot activate new Trojan")
 
-	status, reply = mvpJSONRequest(t, api.URL, http.MethodGet, "/v1/config/apply/preview", nil)
-	if status != http.StatusOK {
-		t.Fatalf("explicit selection checked apply preview: %d", status)
+	// Separately inspect the pending declaration and explicitly confirm an
+	// actual Core Check/Activate/Verify/Commit via the same Unix TUI client.
+	ui, uiCmd = mvpTUIUpdate(t, ui, mvpTUIKey('1'))
+	ui = mvpTUIRun(t, ui, uiCmd)
+	ui, uiCmd = mvpTUIUpdate(t, ui, mvpTUIKey('a'))
+	if uiCmd == nil {
+		t.Fatal("TUI did not offer checked Core Apply preview")
 	}
-	var selectedApplyPreview apiv1.CheckedApplyPreviewResponse
-	if err := json.Unmarshal(reply, &selectedApplyPreview); err != nil {
-		t.Fatal(err)
+	beforeApply, err := store.Snapshot(ctx)
+	if err != nil || beforeApply.AppliedGenerationID == nil ||
+		*beforeApply.AppliedGenerationID != applied.GenerationID {
+		t.Fatalf("TUI checked Apply preview changed generation: %+v %v", beforeApply, err)
 	}
-	if !selectedApplyPreview.CompilerValidated || selectedApplyPreview.CoreValidated ||
-		selectedApplyPreview.Applied ||
-		selectedApplyPreview.Receipt.DeclarationRevision != selectedStaged.DeclarationRevision ||
-		selectedApplyPreview.Receipt.DeclarationSHA256 != selectedStaged.DeclarationSHA256 {
-		t.Fatalf("selected apply preview not bound to staged new default: %+v", selectedApplyPreview)
+	ui = mvpTUIRun(t, ui, uiCmd)
+	applyView := []byte(ui.View())
+	for _, marker := range []string{
+		"CURRENT DECLARATION: COMPILER PREVIEW ONLY",
+		"APPLY MAY RESTART CORE",
+		"Core check has NOT run",
+	} {
+		if !bytes.Contains(applyView, []byte(marker)) {
+			t.Fatalf("TUI did not expose checked Apply risks %q: %s", marker, applyView)
+		}
 	}
-	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
-		"/v1/config/apply/confirm", selectedApplyPreview.Receipt)
-	if status != http.StatusOK || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
-		t.Fatalf("selected Trojan real-Core checked Apply failed: %d core=%s", status, managed.StderrTail())
+	ui, uiCmd = mvpTUIUpdate(t, ui, mvpTUIKey('y'))
+	if uiCmd == nil {
+		t.Fatal("TUI checked Apply was not separately confirmed")
 	}
-	var selectedApplied apiv1.CheckedApplyResponse
-	if err := json.Unmarshal(reply, &selectedApplied); err != nil {
-		t.Fatal(err)
+	ui = mvpTUIRun(t, ui, uiCmd)
+	if !bytes.Contains([]byte(ui.View()), []byte("Applied and verified: declaration rev")) ||
+		bytes.Contains([]byte(ui.View()), []byte(mvpTrojanSecret)) {
+		t.Fatalf("TUI Apply did not verify durable generation or leaked a secret: %s", ui.View())
 	}
-	if !selectedApplied.CoreChecked || !selectedApplied.Verified || !selectedApplied.Applied ||
-		selectedApplied.GenerationID == applied.GenerationID ||
-		selectedApplied.DeclarationRevision != selectedStaged.DeclarationRevision ||
-		selectedApplied.DeclarationSHA256 != selectedStaged.DeclarationSHA256 {
-		t.Fatalf("explicit selected rebind failed to commit new generation: %+v", selectedApplied)
+	afterApply, err := store.Snapshot(ctx)
+	if err != nil || afterApply.AppliedGenerationID == nil ||
+		afterApply.LastKnownGoodGenerationID == nil ||
+		*afterApply.AppliedGenerationID == applied.GenerationID ||
+		*afterApply.AppliedGenerationID != *afterApply.LastKnownGoodGenerationID ||
+		afterApply.Revision != beforeApply.Revision+1 {
+		t.Fatalf("TUI Apply did not durably activate new Core: %+v %v", afterApply, err)
 	}
-	rebuilt, err := store.GenerationArtifacts(ctx, selectedApplied.GenerationID)
+	newGeneration := *afterApply.AppliedGenerationID
+	rebuilt, err := store.GenerationArtifacts(ctx, newGeneration)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(rebuilt.ConfigJSON, []byte(mvpTrojanSecret)) ||
 		bytes.Contains(rebuilt.ConfigJSON, []byte("\"insecure\":true")) {
-		t.Fatal("selected rebind lost password or bypassed certificate verification")
+		t.Fatal("TUI selected Apply lost Trojan password or disabled TLS verification")
 	}
 	waitManagedCoreState(t, managed, 5*time.Second, func(s core.Snapshot) bool {
 		return s.State == core.StateRunning && s.PID > 0
@@ -556,21 +584,21 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 		checkConn, checkErr := socks5Connect(checkCtx, inbound, target)
 		if checkErr != nil {
 			checkCancel()
-			t.Fatalf("explicit replacement Trojan did not serve real Core traffic: %v", checkErr)
+			t.Fatalf("real TUI selected Trojan Core rejected proxy traffic: %v", checkErr)
 		}
 		mvpAssertMarker(t, checkConn)
 		checkCancel()
-		assertRouteOutcomeSignal(t, replacementHits, 2*time.Second, "explicit replacement Trojan")
-		assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "replacement Trojan echo")
-		assertNoRouteOutcomeSignal(t, upstreamHits, 100*time.Millisecond, "retired selected Trojan after apply")
+		assertRouteOutcomeSignal(t, replacementHits, 2*time.Second, "TUI replacement Trojan authenticated TLS")
+		assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "TUI replacement Trojan tunneled echo")
+		assertNoRouteOutcomeSignal(t, upstreamHits, 100*time.Millisecond, "retired Trojan after TUI Apply")
 	}
 	mvpHTTPConnectMarker(t, rule, target)
-	assertRouteOutcomeSignal(t, replacementHits, 2*time.Second, "replacement Trojan HTTP CONNECT")
-	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "replacement Trojan HTTP CONNECT echo")
+	assertRouteOutcomeSignal(t, replacementHits, 2*time.Second, "TUI replacement Trojan HTTP CONNECT")
+	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "TUI replacement Trojan CONNECT echo")
 	assertNoRouteOutcomeSignal(t, upstreamHits, 100*time.Millisecond, "retired Trojan CONNECT")
-	// The new generation is now the only accepted LKG for subsequent bad
-	// source refresh and controlled restart. No auto-apply occurred earlier.
-	applied = selectedApplied
+	// This is now the ONLY accepted LKG for the following bad refresh and
+	// offline stop/start; no implicit Core update happened on source refresh.
+	applied.GenerationID = newGeneration
 	upstreamHits = replacementHits
 
 	// The bad update below must retain the most recently accepted snapshot
