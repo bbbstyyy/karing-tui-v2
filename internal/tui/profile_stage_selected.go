@@ -3,6 +3,7 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/bbbstyyy/karing-tui-v2/internal/apiv1"
 	"github.com/bbbstyyy/karing-tui-v2/internal/profile"
 )
 
@@ -18,6 +19,9 @@ func (m *Model) beginSelectedSnapshotStageFromNodes() tea.Cmd {
 	m.overlayNotice = ""
 	if m.width < minProfileStageWidth || m.height < minProfileStageHeight ||
 		!m.profilesReady || m.profilesError || m.profilesTruncated ||
+		!m.statusReady || m.statusError || m.status.APIVersion != apiv1.Version ||
+		m.status.RecoveryRequired || m.status.ActiveOperation != "" ||
+		m.status.DeclarationRevision == 0 ||
 		!m.nodesReady || m.nodesError ||
 		m.selected < 0 || m.selected >= len(m.profiles) {
 		m.overlayNotice = "Replacement requires fresh complete source/status and terminal >=68x16; reload first."
@@ -28,7 +32,9 @@ func (m *Model) beginSelectedSnapshotStageFromNodes() tea.Cmd {
 		m.nodes.ProfileID != source.ProfileID ||
 		profile.ValidateProfileID(source.ProfileID) != nil ||
 		inspectionSafeID(source.ProfileID) != source.ProfileID ||
-		!source.Enabled || source.CurrentSnapshotID == nil ||
+		!source.Enabled || source.Revision == 0 ||
+		!profileStageSourceSupported(source.Format) ||
+		source.CurrentSnapshotID == nil ||
 		*source.CurrentSnapshotID <= 0 || m.nodes.SnapshotID == nil ||
 		*m.nodes.SnapshotID != *source.CurrentSnapshotID ||
 		m.nodes.Limit != nodePageSize || m.nodes.Offset != m.nodesOffset ||
