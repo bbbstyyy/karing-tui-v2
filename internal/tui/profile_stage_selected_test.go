@@ -197,9 +197,9 @@ func TestTUIExplicitSelectedFullIdentityVisibleAtMinimumTerminal(t *testing.T) {
 	m.width, m.height = minProfileStageWidth, minProfileStageHeight
 	selectedID := strings.Repeat("a", 64) + strings.Repeat("b", 64)
 	m.profileStage.pending = &profileStageReceipt{
-		context: profileStageContext{replacementSelectedNodeID: selectedID},
+		context:         profileStageContext{replacementSelectedNodeID: selectedID},
 		candidateSHA256: strings.Repeat("c", 64),
-		overlaySHA256: strings.Repeat("d", 64),
+		overlaySHA256:   strings.Repeat("d", 64),
 	}
 	view := m.View()
 	for _, want := range []string{
