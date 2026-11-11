@@ -33,7 +33,7 @@ func mvpTUIUnixServer(t *testing.T, store *storage.Store) string {
 		t.Fatal(err)
 	}
 	server := &http.Server{
-		Handler: (&Server{started: time.Now().UTC()}).handler(store, nil),
+		Handler:           (&Server{started: time.Now().UTC()}).handler(store, nil),
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 	done := make(chan error, 1)
