@@ -1176,7 +1176,7 @@ func (m Model) pageLines() []string {
 				cursor = "> "
 			}
 			result = append(result, fmt.Sprintf("%s%s %s [%s] disabled=%t",
-				cursor, mark, item.DisplayName, inspectionSafeID(item.NodeID), item.Disabled))
+				cursor, mark, item.DisplayName, safeExplicitNodeIDForView(item.NodeID), item.Disabled))
 		}
 		if len(m.nodes.Nodes) == 0 {
 			result = append(result, "No nodes in this page.")

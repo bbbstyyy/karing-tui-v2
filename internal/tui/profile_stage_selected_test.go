@@ -120,6 +120,10 @@ func TestTUINodesExplicitChoiceRejectsUnsafeOrStaleSource(t *testing.T) {
 				strings.Contains(m.View(), "NEVER_SHOW") {
 				t.Fatal("stale or unsafe Node page was permitted to stage")
 			}
+			if (tc.name == "URL-shaped ID" || tc.name == "unsafe terminal ID") &&
+				!strings.Contains(m.View(), "node-id-hidden") {
+				t.Fatal("unsafe identity was partially displayed instead of hidden")
+			}
 		})
 	}
 }

@@ -39,6 +39,8 @@ implicitly. A late preview is ignored by sequence; a write that may have
 reached the daemon is **never** auto-retried. The TUI retains no subscription
 URL, imported password, source error or untrusted node display name in the
 approval receipt. Selection comes from a validated node ID only.
+Unsafe, URL-shaped or control-containing source IDs are masked as
+`node-id-hidden` in the Nodes list instead of displaying a secret suffix.
 
 The test suite includes positive TUI Preview → confirmation → readback
 and negative stale/disabled/hostile-ID/forged response/resize/late reply

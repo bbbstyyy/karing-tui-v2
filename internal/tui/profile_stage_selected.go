@@ -62,3 +62,14 @@ func (m *Model) beginSelectedSnapshotStageFromNodes() tea.Cmd {
 	}
 	return m.beginProfileStageForSelected(chosen.NodeID)
 }
+
+// Show only canonical explicit-selectable identities in the Nodes table.
+// A hostile source ID can contain credentials AFTER a control character;
+// ordinary terminal sanitization alone would leave those bytes visible.
+func safeExplicitNodeIDForView(nodeID string) string {
+	if profile.ValidateExplicitSelectedNodeID(nodeID) != nil ||
+		inspectionSafeID(nodeID) != nodeID {
+		return "node-id-hidden"
+	}
+	return nodeID
+}
