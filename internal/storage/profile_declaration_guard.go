@@ -27,6 +27,26 @@ func (s *Store) CommitProfileDeclarationGuarded(
 	document []byte,
 	source string,
 ) (DeclarationRevision, error) {
+	return s.commitProfileDeclarationGuarded(ctx, profileID, snapshotID, expectedSourceRevision,
+		expectedOverlays, expectedDeclarationRevision, document, source, false)
+}
+
+// This variant atomically refuses any persisted independent current selector
+// when an operator explicitly rebinds a first-run default selected node.
+func (s *Store) CommitProfileDeclarationGuardedWithoutSelectionIntent(
+	ctx context.Context, profileID string, snapshotID int64, expectedSourceRevision uint64,
+	expectedOverlays []ProfileNodeOverlayState, expectedDeclarationRevision uint64,
+	document []byte, source string,
+) (DeclarationRevision, error) {
+	return s.commitProfileDeclarationGuarded(ctx, profileID, snapshotID, expectedSourceRevision,
+		expectedOverlays, expectedDeclarationRevision, document, source, true)
+}
+
+func (s *Store) commitProfileDeclarationGuarded(
+	ctx context.Context, profileID string, snapshotID int64, expectedSourceRevision uint64,
+	expectedOverlays []ProfileNodeOverlayState, expectedDeclarationRevision uint64,
+	document []byte, source string, requireNoSelectionIntent bool,
+) (DeclarationRevision, error) {
 	if err := profile.ValidateProfileID(profileID); err != nil {
 		return DeclarationRevision{}, err
 	}
@@ -94,6 +114,18 @@ func (s *Store) CommitProfileDeclarationGuarded(
 	}
 	if index != len(expectedOverlays) {
 		return DeclarationRevision{}, ErrProfileDeclarationGuardConflict
+	}
+
+	if requireNoSelectionIntent {
+		var target []byte
+		if err := tx.QueryRowContext(ctx,
+			"SELECT current_target_json FROM selection_state WHERE singleton = 1",
+		).Scan(&target); err != nil {
+			return DeclarationRevision{}, fmt.Errorf("read guarded selection intent: %w", err)
+		}
+		if len(target) != 0 {
+			return DeclarationRevision{}, ErrProfileDeclarationGuardConflict
+		}
 	}
 
 	// A first-run CAS must also prove the runtime has never committed an

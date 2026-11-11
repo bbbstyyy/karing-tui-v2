@@ -33,11 +33,60 @@ func ReplaceProfileNodesV1(
 	profileID string,
 	nodes []domain.Node,
 ) (ProfileNodeReplacement, error) {
+	return replaceProfileNodesV1(document, profileID, nodes, "")
+}
+
+// ReplaceProfileNodesWithExplicitSelectionV1 is deliberately restricted to the
+// first-run proxy-only shape: one profile, no auxiliary URLTests/routing/CN,
+// and a CurrentSelected that contains only nodes from that profile. This
+// does not pick a fallback or modify a live Core. All other references must
+// remain intact or the complete declaration validation fails.
+func ReplaceProfileNodesWithExplicitSelectionV1(
+	document []byte, profileID string, nodes []domain.Node, selectedNodeID string,
+) (ProfileNodeReplacement, error) {
+	if err := profile.ValidateExplicitSelectedNodeID(selectedNodeID); err != nil {
+		return ProfileNodeReplacement{}, ErrProfileNodeReplacementInvalid
+	}
+	return replaceProfileNodesV1(document, profileID, nodes, selectedNodeID)
+}
+
+func replaceProfileNodesV1(
+	document []byte, profileID string, nodes []domain.Node, selectedNodeID string,
+) (ProfileNodeReplacement, error) {
 	if err := profile.ValidateProfileID(profileID); err != nil {
 		return ProfileNodeReplacement{}, err
 	}
-	if _, err := ParseV1(document); err != nil {
+	model, err := ParseV1(document)
+	if err != nil {
 		return ProfileNodeReplacement{}, err
+	}
+	if selectedNodeID != "" {
+		// If a richer selector, CN plan or any explicit route is present,
+		// the caller must not infer how to migrate its target references.
+		if model.CNPreset != nil || model.RegionAppend != nil ||
+			model.Selection.Global != nil || len(model.Selection.Custom) != 0 ||
+			len(model.Routing.Custom) != 0 || len(model.Routing.GeoSite) != 0 ||
+			len(model.Routing.GeoIP) != 0 || len(model.Routing.ACL) != 0 ||
+			model.Routing.Final.Kind != domain.TargetCurrentSelected ||
+			model.Selection.Current.Default.Kind != domain.TargetSpecificNode ||
+			model.Selection.Current.Default.ProfileID != profileID ||
+			len(model.Selection.Current.Members) == 0 ||
+			len(model.Nodes) != len(model.Selection.Current.Members) {
+			return ProfileNodeReplacement{}, ErrProfileNodeReplacementInvalid
+		}
+		members := make(map[string]bool, len(model.Selection.Current.Members))
+		for _, member := range model.Selection.Current.Members {
+			if member.Kind != domain.TargetSpecificNode || member.ProfileID != profileID ||
+				members[member.NodeID] {
+				return ProfileNodeReplacement{}, ErrProfileNodeReplacementInvalid
+			}
+			members[member.NodeID] = true
+		}
+		for _, node := range model.Nodes {
+			if node.ProfileID != profileID || !members[node.NodeID] {
+				return ProfileNodeReplacement{}, ErrProfileNodeReplacementInvalid
+			}
+		}
 	}
 
 	wire, err := decodeDocumentWireV1(document)
@@ -93,6 +142,20 @@ func ReplaceProfileNodesV1(
 	merged = append(merged, replacements...)
 	merged = append(merged, kept[insertAt:]...)
 	wire.Nodes = merged
+	if selectedNodeID != "" {
+		selected := domain.TargetRef{
+			Kind: domain.TargetSpecificNode, ProfileID: profileID, NodeID: selectedNodeID,
+		}
+		if _, exists := newIDs[selectedNodeID]; !exists {
+			return ProfileNodeReplacement{}, ErrProfileNodeReplacementInvalid
+		}
+		wire.Selection.Current.Members = make([]domain.TargetRef, 0, len(replacements))
+		for _, node := range nodes {
+			wire.Selection.Current.Members = append(wire.Selection.Current.Members,
+				domain.TargetRef{Kind: domain.TargetSpecificNode, ProfileID: profileID, NodeID: node.NodeID})
+		}
+		wire.Selection.Current.Default = selected
+	}
 
 	impact := ProfileNodeReplacementImpact{}
 	for _, node := range nodes {

@@ -30,13 +30,15 @@ func runProfilePreviewCommand(ctx context.Context, api profilePreviewCLIClient, 
 	fs.SetOutput(stderr)
 	snapshotID := fs.Int64("snapshot-id", 0, "required current accepted snapshot ID")
 	expected := fs.Uint64("expected-declaration-revision", 0, "required current declaration revision")
+	selected := fs.String("replacement-selected-node-id", "", "explicit selected replacement; refuses persisted CurrentSelected override")
 	if err := fs.Parse(args[2:]); err != nil {
 		return 2
 	}
 	visited := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
 	if len(fs.Args()) != 0 || !visited["snapshot-id"] || !visited["expected-declaration-revision"] ||
-		*snapshotID <= 0 || *expected == 0 {
+		*snapshotID <= 0 || *expected == 0 ||
+		(visited["replacement-selected-node-id"] && profile.ValidateExplicitSelectedNodeID(*selected) != nil) {
 		fmt.Fprintln(stderr, "preview requires positive --snapshot-id=N and --expected-declaration-revision=N")
 		return 2
 	}
@@ -44,6 +46,7 @@ func runProfilePreviewCommand(ctx context.Context, api profilePreviewCLIClient, 
 	defer cancel()
 	result, err := api.PreviewProfileDeclaration(requestCtx, profileID, apiv1.ProfileDeclarationPreviewRequest{
 		SnapshotID: *snapshotID, ExpectedDeclarationRevision: *expected,
+		ReplacementSelectedNodeID: *selected,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "profile declaration preview failed: %s\n", safeSourceCLIError(err))

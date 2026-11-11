@@ -223,6 +223,18 @@ MVP Beta 是**能力受限但诚实可用**的发行候选：支持字段子集�
 72 小时混合耐久以及双架构无特权交付包，尚未达到 MVP Beta 标准。
 不得将上述局部合并或 GitHub Actions 绿色结果自动换算为 MV-02–09 通过。
 
+### 7.3 近期 MVP 用户链路增量证据（2026-11-11；非发布验收）
+
+下表只记录 **已集成的精确 PR/CI** 与**待验收工作**；不变更 MV-01–09 的退出门槛，也不把合成回环流量等同于生产 CN 资源与 DNS、恢复或 72h 证据。
+
+| 工作包 | 确认状态 | 可追溯证据 | 继续阻断事项 |
+| --- | --- | --- | --- |
+| MVP-1C：订阅刷新后受保护的真实 Core 重绑定 | [#130](https://github.com/bbbstyyy/karing-tui-v2/pull/130) 已合并，`39838772`；最终测试提交 `b8817ae4` | [Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42762197966)、[Managed Core](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42762197848)、[双架构 Provenance](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42762198010) 成功 | 只是受控 HTTP 出站与显式 Stage/Apply；不代表完整 TUI、CN Group/Proxy DNS、真实恢复完成 |
+| MVP-1C/1D：Clash 订阅移除已选节点时拒绝静默迁移 | [#131](https://github.com/bbbstyyy/karing-tui-v2/pull/131) 已合并，`e51e3749`；最终测试提交 `f9574ffa` | [Go CI/Race 4/4](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42775339493)、[Managed Core](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42775339224)、[双架构 Provenance](https://github.com/bbbstyyy/karing-tui-v2/actions/runs/42775339301) 成功 | 证明的是安全拒绝与原 LKG 流量，不包含用户选择替代节点的可用操作 |
+| MVP-1A/3：显式选择替代节点并准备声明 | [#132](https://github.com/bbbstyyy/karing-tui-v2/pull/132) Draft，**未合并、未验收** | 首次初始化 proxy-only 约束下的 CLI/API Preview、摘要 CAS Stage、拒绝持久化选择意图、真实 Trojan TLS 测试候选；**最终 CI 待核对** | 不支持复杂/CN 组、全 TUI 或独立已保存 CurrentSelected 的迁移；仍须单独受保护 Core Apply |
+
+**发布状态不变：Pre-MVP。** 28 组生产 CN Group/Proxy DNS 语义、68 引用许可证/离线资源闭包（含 `geoip:bing`）、Issue #59 真正恢复、72h 混合流量和双架构完整离线发行仍未通过。
+
 ---
 
 **一句话目标：让一个普通 Linux 用户真正能够安全地导入订阅、按原样使用 CN 五层分流与 DNS、经 TUI/CLI 选节点并应用到 Core、在重启和故障后保持/恢复有效状态；做到并验证这些，才叫 MVP。**

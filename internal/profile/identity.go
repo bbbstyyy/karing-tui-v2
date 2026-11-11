@@ -63,6 +63,27 @@ func ValidateNodeID(nodeID string) error {
 	return nil
 }
 
+// ValidateExplicitSelectedNodeID is stricter than legacy node identity parsing.
+// Only non-secret, terminal-safe canonical identifiers can appear in user
+// approval receipts. This intentionally excludes URL and query syntax.
+func ValidateExplicitSelectedNodeID(nodeID string) error {
+	if err := ValidateNodeID(nodeID); err != nil {
+		return err
+	}
+	if len(nodeID) > 128 {
+		return ErrInvalidPriorIdentity
+	}
+	for _, ch := range nodeID {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
+			ch == '.' || ch == ':' {
+			continue
+		}
+		return ErrInvalidPriorIdentity
+	}
+	return nil
+}
+
 func StableNodeID(profileID, sourceKey string) (string, error) {
 	if err := ValidateProfileID(profileID); err != nil {
 		return "", err

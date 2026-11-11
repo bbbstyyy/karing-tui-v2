@@ -26,10 +26,21 @@ func StageProfileSnapshotDeclaration(
 	snapshotID int64, expectedSourceRevision uint64, expectedDeclarationRevision uint64,
 	expectedCandidateSHA256 string, expectedOverlaySHA256 string,
 ) (DeclarationStageResult, error) {
+	return StageProfileSnapshotDeclarationWithSelected(ctx, store, profileID, snapshotID,
+		expectedSourceRevision, expectedDeclarationRevision, expectedCandidateSHA256, expectedOverlaySHA256, "")
+}
+
+// An explicit selected replacement requires exact snapshot/digest/overlay
+// agreement and the absence of any persisted selector override. Never Apply.
+func StageProfileSnapshotDeclarationWithSelected(
+	ctx context.Context, store *storage.Store, profileID string,
+	snapshotID int64, expectedSourceRevision uint64, expectedDeclarationRevision uint64,
+	expectedCandidateSHA256 string, expectedOverlaySHA256 string, selectedNodeID string,
+) (DeclarationStageResult, error) {
 	if expectedSourceRevision == 0 || len(expectedCandidateSHA256) != 64 || len(expectedOverlaySHA256) != 64 {
 		return DeclarationStageResult{}, ErrProfileStagePreviewMismatch
 	}
-	preview, err := PreviewProfileSnapshotDeclaration(ctx, store, profileID, snapshotID, expectedDeclarationRevision)
+	preview, err := PreviewProfileSnapshotDeclarationWithSelected(ctx, store, profileID, snapshotID, expectedDeclarationRevision, selectedNodeID)
 	if err != nil {
 		return DeclarationStageResult{}, err
 	}
@@ -60,7 +71,12 @@ func StageProfileSnapshotDeclaration(
 	if err != nil {
 		return DeclarationStageResult{}, err
 	}
-	replacement, err := declaration.ReplaceProfileNodesV1(base.DocumentJSON, profileID, effective)
+	var replacement declaration.ProfileNodeReplacement
+	if selectedNodeID == "" {
+		replacement, err = declaration.ReplaceProfileNodesV1(base.DocumentJSON, profileID, effective)
+	} else {
+		replacement, err = declaration.ReplaceProfileNodesWithExplicitSelectionV1(base.DocumentJSON, profileID, effective, selectedNodeID)
+	}
 	if err != nil {
 		return DeclarationStageResult{}, err
 	}
@@ -68,9 +84,15 @@ func StageProfileSnapshotDeclaration(
 	if hex.EncodeToString(sum[:]) != expectedCandidateSHA256 || overlayHash != expectedOverlaySHA256 {
 		return DeclarationStageResult{}, ErrProfileStagePreviewMismatch
 	}
-	revision, err := store.CommitProfileDeclarationGuarded(ctx, profileID, snapshotID,
-		preview.SourceRevision, overlays, expectedDeclarationRevision, replacement.Document,
-		fmt.Sprintf("profile-snapshot/%d/overlay/%s", snapshotID, overlayHash))
+	source := fmt.Sprintf("profile-snapshot/%d/overlay/%s", snapshotID, overlayHash)
+	var revision storage.DeclarationRevision
+	if selectedNodeID == "" {
+		revision, err = store.CommitProfileDeclarationGuarded(ctx, profileID, snapshotID,
+			preview.SourceRevision, overlays, expectedDeclarationRevision, replacement.Document, source)
+	} else {
+		revision, err = store.CommitProfileDeclarationGuardedWithoutSelectionIntent(ctx, profileID, snapshotID,
+			preview.SourceRevision, overlays, expectedDeclarationRevision, replacement.Document, source)
+	}
 	if err != nil {
 		return DeclarationStageResult{}, err
 	}

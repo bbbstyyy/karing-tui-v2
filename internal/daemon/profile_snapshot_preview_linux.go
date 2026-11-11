@@ -40,6 +40,10 @@ func registerProfileSnapshotPreviewRoutes(mux *http.ServeMux, store *storage.Sto
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid declaration preview request"})
 			return
 		}
+		if request.ReplacementSelectedNodeID != "" && profile.ValidateExplicitSelectedNodeID(request.ReplacementSelectedNodeID) != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid explicit replacement node ID"})
+			return
+		}
 		if request.SnapshotID <= 0 || request.ExpectedDeclarationRevision == 0 {
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "a positive current snapshot ID and declaration revision are required"})
 			return
@@ -56,32 +60,33 @@ func registerProfileSnapshotPreviewRoutes(mux *http.ServeMux, store *storage.Sto
 		defer gate.Release(profileID)
 		ctx, cancel := context.WithTimeout(r.Context(), profilePreviewTimeout)
 		defer cancel()
-		preview, err := profileupdate.PreviewProfileSnapshotDeclaration(ctx, store, profileID,
-			request.SnapshotID, request.ExpectedDeclarationRevision)
+		preview, err := profileupdate.PreviewProfileSnapshotDeclarationWithSelected(ctx, store, profileID,
+			request.SnapshotID, request.ExpectedDeclarationRevision, request.ReplacementSelectedNodeID)
 		if err != nil {
 			writeProfileSnapshotPreviewError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, apiv1.ProfileDeclarationPreviewResponse{
-			ProfileID:               preview.ProfileID,
-			SnapshotID:              preview.SnapshotID,
-			BaseDeclarationRevision: preview.BaseDeclarationRevision,
-			SourceRevision:          preview.SourceRevision,
-			SnapshotNodeCount:       preview.SnapshotNodeCount,
-			EffectiveNodeCount:      preview.EffectiveNodeCount,
-			AddedNodeCount:          len(preview.Impact.AddedNodeIDs),
-			RemovedNodeCount:        len(preview.Impact.RemovedNodeIDs),
-			RetainedNodeCount:       len(preview.Impact.RetainedNodeIDs),
-			AddedNodeIDs:            limitedPreviewNodeIDs(preview.Impact.AddedNodeIDs),
-			RemovedNodeIDs:          limitedPreviewNodeIDs(preview.Impact.RemovedNodeIDs),
-			RetainedNodeIDs:         limitedPreviewNodeIDs(preview.Impact.RetainedNodeIDs),
-			AddedIDsTruncated:       len(preview.Impact.AddedNodeIDs) > previewNodeIDLimit,
-			RemovedIDsTruncated:     len(preview.Impact.RemovedNodeIDs) > previewNodeIDLimit,
-			RetainedIDsTruncated:    len(preview.Impact.RetainedNodeIDs) > previewNodeIDLimit,
-			RuntimeOverlaySHA256:    preview.RuntimeOverlaySHA256,
-			CandidateSHA256:         preview.CandidateSHA256,
-			CoreValidated:           false,
-			Applied:                 false,
+			ProfileID:                 preview.ProfileID,
+			SnapshotID:                preview.SnapshotID,
+			BaseDeclarationRevision:   preview.BaseDeclarationRevision,
+			SourceRevision:            preview.SourceRevision,
+			SnapshotNodeCount:         preview.SnapshotNodeCount,
+			EffectiveNodeCount:        preview.EffectiveNodeCount,
+			AddedNodeCount:            len(preview.Impact.AddedNodeIDs),
+			RemovedNodeCount:          len(preview.Impact.RemovedNodeIDs),
+			RetainedNodeCount:         len(preview.Impact.RetainedNodeIDs),
+			AddedNodeIDs:              limitedPreviewNodeIDs(preview.Impact.AddedNodeIDs),
+			RemovedNodeIDs:            limitedPreviewNodeIDs(preview.Impact.RemovedNodeIDs),
+			RetainedNodeIDs:           limitedPreviewNodeIDs(preview.Impact.RetainedNodeIDs),
+			AddedIDsTruncated:         len(preview.Impact.AddedNodeIDs) > previewNodeIDLimit,
+			RemovedIDsTruncated:       len(preview.Impact.RemovedNodeIDs) > previewNodeIDLimit,
+			RetainedIDsTruncated:      len(preview.Impact.RetainedNodeIDs) > previewNodeIDLimit,
+			RuntimeOverlaySHA256:      preview.RuntimeOverlaySHA256,
+			CandidateSHA256:           preview.CandidateSHA256,
+			ReplacementSelectedNodeID: request.ReplacementSelectedNodeID,
+			CoreValidated:             false,
+			Applied:                   false,
 		})
 	})
 }
@@ -98,7 +103,8 @@ func writeProfileSnapshotPreviewError(w http.ResponseWriter, err error) {
 		errors.Is(err, profileupdate.ErrPreviewDeclarationStale),
 		errors.Is(err, profileupdate.ErrPreviewDeclarationIntegrity),
 		errors.Is(err, profileupdate.ErrPreviewOverlayStale),
-		errors.Is(err, profileupdate.ErrPreviewSourceDisabled):
+		errors.Is(err, profileupdate.ErrPreviewSourceDisabled),
+		errors.Is(err, profileupdate.ErrPreviewSelectionIntentActive):
 		status = http.StatusConflict
 		message = "current enabled source, accepted snapshot, overlay or base declaration revision changed"
 	case errors.Is(err, context.DeadlineExceeded):

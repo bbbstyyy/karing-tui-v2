@@ -21,6 +21,10 @@ func registerProfileDeclarationStageRoutes(mux *http.ServeMux, store *storage.St
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid declaration stage request"})
 			return
 		}
+		if request.ReplacementSelectedNodeID != "" && profile.ValidateExplicitSelectedNodeID(request.ReplacementSelectedNodeID) != nil {
+			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "invalid explicit replacement node ID"})
+			return
+		}
 		if request.SnapshotID <= 0 || request.ExpectedSourceRevision == 0 || request.ExpectedDeclarationRevision == 0 ||
 			!validStageDigest(request.CandidateSHA256) || !validStageDigest(request.RuntimeOverlaySHA256) {
 			writeJSON(w, http.StatusBadRequest, apiv1.ErrorResponse{Error: "snapshot, source revision, declaration revision and canonical 64-character preview digests required"})
@@ -38,8 +42,9 @@ func registerProfileDeclarationStageRoutes(mux *http.ServeMux, store *storage.St
 		defer gate.Release(id)
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 		defer cancel()
-		result, err := profileupdate.StageProfileSnapshotDeclaration(ctx, store, id, request.SnapshotID,
-			request.ExpectedSourceRevision, request.ExpectedDeclarationRevision, request.CandidateSHA256, request.RuntimeOverlaySHA256)
+		result, err := profileupdate.StageProfileSnapshotDeclarationWithSelected(ctx, store, id, request.SnapshotID,
+			request.ExpectedSourceRevision, request.ExpectedDeclarationRevision,
+			request.CandidateSHA256, request.RuntimeOverlaySHA256, request.ReplacementSelectedNodeID)
 		if err != nil {
 			if errors.Is(err, profileupdate.ErrProfileStagePreviewMismatch) ||
 				errors.Is(err, storage.ErrProfileDeclarationGuardConflict) ||
@@ -53,7 +58,8 @@ func registerProfileDeclarationStageRoutes(mux *http.ServeMux, store *storage.St
 		writeJSON(w, http.StatusCreated, apiv1.ProfileDeclarationStageResponse{
 			ProfileID: id, SnapshotID: request.SnapshotID, SourceRevision: result.Preview.SourceRevision,
 			DeclarationRevision: result.Revision.Revision,
-			DeclarationSHA256:   result.Revision.SHA256, CoreValidated: false, Applied: false,
+			DeclarationSHA256:   result.Revision.SHA256, ReplacementSelectedNodeID: request.ReplacementSelectedNodeID,
+			CoreValidated: false, Applied: false,
 		})
 	})
 }

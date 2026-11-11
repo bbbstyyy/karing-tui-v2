@@ -40,12 +40,26 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 	defer closeTrojan()
 	// A second real peer has a different semantic Clash identity. The old
 	// selected node must not be silently rebound to its endpoint on refresh.
-	replacementTrojan, _, replacementHits, closeReplacement := startMVPLocalTrojanTLS(t, target)
+	replacementTrojan, replacementRoot, replacementHits, closeReplacement := startMVPLocalTrojanTLS(t, target)
 	defer closeReplacement()
 	// The pinned Core is a separate child process. Its normal TLS verifier
 	// must trust only this temporary local fixture certificate, NOT skip
 	// verification through an insecure=true outbound setting.
-	t.Setenv("SSL_CERT_FILE", rootCert)
+	// Both peers independently authenticate TLS; do not disable verification.
+	// Trust only the two local fixture roots for this isolated test child.
+	rootA, err := os.ReadFile(rootCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootB, err := os.ReadFile(replacementRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootBundle := filepath.Join(t.TempDir(), "trojan-rebind-roots.pem")
+	if err := os.WriteFile(rootBundle, append(rootA, rootB...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSL_CERT_FILE", rootBundle)
 
 	var broken, renamed, selectedRemoved atomic.Bool
 	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +445,134 @@ func TestManagedCoreRealMVPImportedClashYAMLTrojanFlow(t *testing.T) {
 		assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "old Trojan echo after selected removal")
 		assertNoRouteOutcomeSignal(t, replacementHits, 100*time.Millisecond, "unconfirmed replacement peer")
 	}
+
+	// The user can now explicitly nominate this new accepted node in the
+	// narrowly scoped first-run proxy-only declaration. Normal preview/stage
+	// above intentionally refused to guess this replacement.
+	newSelected := removedPage.Nodes[0].NodeID
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
+		sourcePath+"/declaration/preview", apiv1.ProfileDeclarationPreviewRequest{
+			SnapshotID:                  *removedSnapshot.CurrentSnapshotID,
+			ExpectedDeclarationRevision: staged.DeclarationRevision,
+			ReplacementSelectedNodeID:   newSelected,
+		})
+	if status != http.StatusOK || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
+		t.Fatalf("explicit selected replacement preview rejected or leaked secret: %d", status)
+	}
+	var selectedPreview apiv1.ProfileDeclarationPreviewResponse
+	if err := json.Unmarshal(reply, &selectedPreview); err != nil {
+		t.Fatal(err)
+	}
+	if selectedPreview.ReplacementSelectedNodeID != newSelected ||
+		selectedPreview.AddedNodeCount != 1 || selectedPreview.RemovedNodeCount != 1 ||
+		selectedPreview.RetainedNodeCount != 0 || selectedPreview.CoreValidated ||
+		selectedPreview.Applied || len(selectedPreview.CandidateSHA256) != 64 {
+		t.Fatalf("explicit selected candidate diff invalid: %+v", selectedPreview)
+	}
+	selectedReceipt := apiv1.ProfileDeclarationStageRequest{
+		SnapshotID:                  *removedSnapshot.CurrentSnapshotID,
+		ExpectedSourceRevision:      selectedPreview.SourceRevision,
+		ExpectedDeclarationRevision: selectedPreview.BaseDeclarationRevision,
+		CandidateSHA256:             selectedPreview.CandidateSHA256,
+		RuntimeOverlaySHA256:        selectedPreview.RuntimeOverlaySHA256,
+		ReplacementSelectedNodeID:   newSelected,
+	}
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
+		sourcePath+"/declaration/stage", selectedReceipt)
+	if status != http.StatusCreated || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
+		t.Fatalf("explicit selected declaration stage failed or leaked password: %d", status)
+	}
+	var selectedStaged apiv1.ProfileDeclarationStageResponse
+	if err := json.Unmarshal(reply, &selectedStaged); err != nil {
+		t.Fatal(err)
+	}
+	if selectedStaged.DeclarationRevision != staged.DeclarationRevision+1 ||
+		selectedStaged.DeclarationSHA256 != selectedPreview.CandidateSHA256 ||
+		selectedStaged.ReplacementSelectedNodeID != newSelected ||
+		selectedStaged.Applied || selectedStaged.CoreValidated {
+		t.Fatalf("selected stage receipt not bound to preview: %+v", selectedStaged)
+	}
+	stillUnapplied, err := store.Snapshot(ctx)
+	if err != nil || stillUnapplied.AppliedGenerationID == nil ||
+		*stillUnapplied.AppliedGenerationID != applied.GenerationID ||
+		stillUnapplied.LastKnownGoodGenerationID == nil ||
+		*stillUnapplied.LastKnownGoodGenerationID != applied.GenerationID {
+		t.Fatalf("explicit declaration stage changed running Core: %+v %v", stillUnapplied, err)
+	}
+	holdCtx, holdCancel := context.WithTimeout(ctx, 5*time.Second)
+	holdConn, holdErr := socks5Connect(holdCtx, rule, target)
+	if holdErr != nil {
+		holdCancel()
+		t.Fatal(holdErr)
+	}
+	mvpAssertMarker(t, holdConn)
+	holdCancel()
+	assertRouteOutcomeSignal(t, upstreamHits, 2*time.Second, "old Trojan before checked re-apply")
+	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "old Trojan echo before checked re-apply")
+	assertNoRouteOutcomeSignal(t, replacementHits, 100*time.Millisecond, "selected stage must not switch Core")
+
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodGet, "/v1/config/apply/preview", nil)
+	if status != http.StatusOK {
+		t.Fatalf("explicit selection checked apply preview: %d", status)
+	}
+	var selectedApplyPreview apiv1.CheckedApplyPreviewResponse
+	if err := json.Unmarshal(reply, &selectedApplyPreview); err != nil {
+		t.Fatal(err)
+	}
+	if !selectedApplyPreview.CompilerValidated || selectedApplyPreview.CoreValidated ||
+		selectedApplyPreview.Applied ||
+		selectedApplyPreview.Receipt.DeclarationRevision != selectedStaged.DeclarationRevision ||
+		selectedApplyPreview.Receipt.DeclarationSHA256 != selectedStaged.DeclarationSHA256 {
+		t.Fatalf("selected apply preview not bound to staged new default: %+v", selectedApplyPreview)
+	}
+	status, reply = mvpJSONRequest(t, api.URL, http.MethodPost,
+		"/v1/config/apply/confirm", selectedApplyPreview.Receipt)
+	if status != http.StatusOK || bytes.Contains(reply, []byte(mvpTrojanSecret)) {
+		t.Fatalf("selected Trojan real-Core checked Apply failed: %d core=%s", status, managed.StderrTail())
+	}
+	var selectedApplied apiv1.CheckedApplyResponse
+	if err := json.Unmarshal(reply, &selectedApplied); err != nil {
+		t.Fatal(err)
+	}
+	if !selectedApplied.CoreChecked || !selectedApplied.Verified || !selectedApplied.Applied ||
+		selectedApplied.GenerationID == applied.GenerationID ||
+		selectedApplied.DeclarationRevision != selectedStaged.DeclarationRevision ||
+		selectedApplied.DeclarationSHA256 != selectedStaged.DeclarationSHA256 {
+		t.Fatalf("explicit selected rebind failed to commit new generation: %+v", selectedApplied)
+	}
+	rebuilt, err := store.GenerationArtifacts(ctx, selectedApplied.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(rebuilt.ConfigJSON, []byte(mvpTrojanSecret)) ||
+		bytes.Contains(rebuilt.ConfigJSON, []byte("\"insecure\":true")) {
+		t.Fatal("selected rebind lost password or bypassed certificate verification")
+	}
+	waitManagedCoreState(t, managed, 5*time.Second, func(s core.Snapshot) bool {
+		return s.State == core.StateRunning && s.PID > 0
+	})
+	for _, inbound := range []netip.AddrPort{rule, selected} {
+		checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
+		checkConn, checkErr := socks5Connect(checkCtx, inbound, target)
+		if checkErr != nil {
+			checkCancel()
+			t.Fatalf("explicit replacement Trojan did not serve real Core traffic: %v", checkErr)
+		}
+		mvpAssertMarker(t, checkConn)
+		checkCancel()
+		assertRouteOutcomeSignal(t, replacementHits, 2*time.Second, "explicit replacement Trojan")
+		assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "replacement Trojan echo")
+		assertNoRouteOutcomeSignal(t, upstreamHits, 100*time.Millisecond, "retired selected Trojan after apply")
+	}
+	mvpHTTPConnectMarker(t, rule, target)
+	assertRouteOutcomeSignal(t, replacementHits, 2*time.Second, "replacement Trojan HTTP CONNECT")
+	assertRouteOutcomeSignal(t, targetHits, 2*time.Second, "replacement Trojan HTTP CONNECT echo")
+	assertNoRouteOutcomeSignal(t, upstreamHits, 100*time.Millisecond, "retired Trojan CONNECT")
+	// The new generation is now the only accepted LKG for subsequent bad
+	// source refresh and controlled restart. No auto-apply occurred earlier.
+	applied = selectedApplied
+	upstreamHits = replacementHits
+
 	// The bad update below must retain the most recently accepted snapshot
 	// (the replacement) even though the running LKG legitimately differs.
 	refreshed = removedSnapshot

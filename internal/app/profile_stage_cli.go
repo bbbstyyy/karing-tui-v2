@@ -36,6 +36,7 @@ func runProfileStageCommand(ctx context.Context, api profileStageCLIClient, args
 	candidateHash := fs.String("candidate-sha256", "", "candidate declaration SHA-256 from preview")
 	overlayHash := fs.String("runtime-overlay-sha256", "", "runtime overlay SHA-256 from preview")
 	confirm := fs.Bool("confirm", false, "explicitly stage declaration; does not apply core")
+	selected := fs.String("replacement-selected-node-id", "", "exact explicit replacement node ID acknowledged in preview")
 	if err := fs.Parse(args[2:]); err != nil {
 		return 2
 	}
@@ -44,7 +45,8 @@ func runProfileStageCommand(ctx context.Context, api profileStageCLIClient, args
 	if len(fs.Args()) != 0 || !visited["snapshot-id"] || !visited["expected-source-revision"] || !visited["expected-declaration-revision"] ||
 		!visited["candidate-sha256"] || !visited["runtime-overlay-sha256"] || !visited["confirm"] ||
 		*snapshotID <= 0 || *expectedSource == 0 || *expected == 0 || !*confirm ||
-		!validStageSHA256(*candidateHash) || !validStageSHA256(*overlayHash) {
+		!validStageSHA256(*candidateHash) || !validStageSHA256(*overlayHash) ||
+		(visited["replacement-selected-node-id"] && profile.ValidateExplicitSelectedNodeID(*selected) != nil) {
 		fmt.Fprintln(stderr, "stage requires positive --snapshot-id, --expected-source-revision and --expected-declaration-revision, both 64-character lowercase preview SHA-256 digests, and --confirm")
 		return 2
 	}
@@ -54,6 +56,7 @@ func runProfileStageCommand(ctx context.Context, api profileStageCLIClient, args
 		SnapshotID: *snapshotID, ExpectedSourceRevision: *expectedSource,
 		ExpectedDeclarationRevision: *expected,
 		CandidateSHA256:             *candidateHash, RuntimeOverlaySHA256: *overlayHash,
+		ReplacementSelectedNodeID: *selected,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "profile declaration stage failed: %s\n", safeSourceCLIError(err))

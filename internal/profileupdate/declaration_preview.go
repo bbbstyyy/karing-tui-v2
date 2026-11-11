@@ -12,11 +12,12 @@ import (
 )
 
 var (
-	ErrPreviewSnapshotNotCurrent   = errors.New("profile snapshot preview requires current accepted snapshot")
-	ErrPreviewDeclarationStale     = errors.New("profile snapshot preview declaration revision changed")
-	ErrPreviewDeclarationIntegrity = errors.New("profile snapshot preview base declaration integrity mismatch")
-	ErrPreviewOverlayStale         = errors.New("profile snapshot preview overlay revisions changed")
-	ErrPreviewSourceDisabled       = errors.New("profile declaration preview requires an enabled source")
+	ErrPreviewSnapshotNotCurrent    = errors.New("profile snapshot preview requires current accepted snapshot")
+	ErrPreviewDeclarationStale      = errors.New("profile snapshot preview declaration revision changed")
+	ErrPreviewDeclarationIntegrity  = errors.New("profile snapshot preview base declaration integrity mismatch")
+	ErrPreviewOverlayStale          = errors.New("profile snapshot preview overlay revisions changed")
+	ErrPreviewSourceDisabled        = errors.New("profile declaration preview requires an enabled source")
+	ErrPreviewSelectionIntentActive = errors.New("explicit selected replacement cannot override a persisted live selector")
 )
 
 type DeclarationSnapshotPreview struct {
@@ -41,6 +42,15 @@ func PreviewProfileSnapshotDeclaration(
 	snapshotID int64,
 	expectedDeclarationRevision uint64,
 ) (DeclarationSnapshotPreview, error) {
+	return PreviewProfileSnapshotDeclarationWithSelected(ctx, store, profileID, snapshotID, expectedDeclarationRevision, "")
+}
+
+// This optional explicit replacement is only for first-run proxy-only plans
+// with NO independent persisted CurrentSelected intent. It stages no Core.
+func PreviewProfileSnapshotDeclarationWithSelected(
+	ctx context.Context, store *storage.Store, profileID string, snapshotID int64,
+	expectedDeclarationRevision uint64, selectedNodeID string,
+) (DeclarationSnapshotPreview, error) {
 	if store == nil {
 		return DeclarationSnapshotPreview{}, errors.New("profile snapshot preview store is nil")
 	}
@@ -56,6 +66,13 @@ func PreviewProfileSnapshotDeclaration(
 	}
 	if source.CurrentSnapshotID == nil || *source.CurrentSnapshotID != snapshotID || snapshotID <= 0 {
 		return DeclarationSnapshotPreview{}, ErrPreviewSnapshotNotCurrent
+	}
+	if selectedNodeID != "" {
+		if _, present, err := store.CurrentSelectionIntent(ctx); err != nil {
+			return DeclarationSnapshotPreview{}, err
+		} else if present {
+			return DeclarationSnapshotPreview{}, ErrPreviewSelectionIntentActive
+		}
 	}
 	base, err := store.CurrentDeclaration(ctx)
 	if err != nil {
@@ -93,7 +110,12 @@ func PreviewProfileSnapshotDeclaration(
 	}
 	preview.EffectiveNodeCount = len(effective)
 	preview.RuntimeOverlaySHA256 = overlaySHA
-	replacement, err := declaration.ReplaceProfileNodesV1(base.DocumentJSON, profileID, effective)
+	var replacement declaration.ProfileNodeReplacement
+	if selectedNodeID == "" {
+		replacement, err = declaration.ReplaceProfileNodesV1(base.DocumentJSON, profileID, effective)
+	} else {
+		replacement, err = declaration.ReplaceProfileNodesWithExplicitSelectionV1(base.DocumentJSON, profileID, effective, selectedNodeID)
+	}
 	preview.Impact = replacement.Impact
 	if err != nil {
 		return preview, err
@@ -123,6 +145,13 @@ func PreviewProfileSnapshotDeclaration(
 	}
 	if !sameProfileOverlayRevisions(overlays, latestOverlays) {
 		return preview, ErrPreviewOverlayStale
+	}
+	if selectedNodeID != "" {
+		if _, present, err := store.CurrentSelectionIntent(ctx); err != nil {
+			return preview, err
+		} else if present {
+			return preview, ErrPreviewSelectionIntentActive
+		}
 	}
 	return preview, nil
 }
