@@ -1,0 +1,21 @@
+# ADR 0097 — Approved core inode pin and inert private-copy closure
+
+- Status: **M4 internal-only backup prerequisite**, not a durable export, backup, activation, or restore authorization.
+- Dependencies: ADR 0094–0096, `resources/core.lock.json`, approved core build workflow.
+- Scope: Linux amd64/arm64 ordinary-user operation, no TUN, retained CN presets and original five routing layers (no subscription/ISP routing layer).
+
+## Decision
+
+Add `coreartifact.PinApprovedCore`, which admits **only** the approved architecture-specific SHA-256 defined by the core lock and already used by `coreartifact.Verify`: `KaringX/sing-box@beddeababcc71dfb0c78124598b13341c06c69fb` through the project-owned `cmd/karing-tui-core` entrypoint. The executable is opened O_RDONLY|O_NOFOLLOW|O_CLOEXEC and held as a descriptor across snapshot creation. It must be a regular executable (some execute bit, no group/other write), root/current-UID-owned, **single-linked**, and no larger than 256 MiB. Its bytes are hashed over the opened descriptor, and the original path must continue to resolve to the same inode. Read-before/after inode, mode, size and mtime plus repeat digest checks detect ordinary in-place edits, path removal and same-byte inode swaps. This pin alone never authorizes launching the core.
+
+`coreartifact.StagePinnedRuleSetSnapshotWithCore` extends the existing private, flock-held, bounded rule snapshot scope rather than adding another staging directory. It copies the verified opened core descriptor into `core-<sha256>.bin` as an **independent 0400, non-executable** file. Copies are SHA-256 checked, fsynced, inode verified and rechecked with all rules; the source pin is rehashed before and after copying. Close and the existing bounded orphan scavenger recognize at most one `core-<sha256>.bin` (<= 256 MiB) alongside at most 128 rules (<= 128 MiB combined). Directory lock, parent-lock creation handshake, fail-closed unknown entries, no-follow, single-link checks and nonrecursive cleanup continue to apply. Older orphan scanners reject the novel filename rather than deleting another process's copy; the scope remains separately recognizable.
+
+`backupclosure.BuildWithApprovedCore` is internal-only and calls the existing WAL-consistent SQLite + native manifest/rule closure, then pins/copies the approved executable. It updates an in-memory **v2** manifest with the approved architecture, locked candidate version/commit, SHA-256, length and a **logical relative filename** `core/<sha256>.bin`; no original absolute executable path, config contents or credentials are emitted. The existing `Build` remains a v1 rules-only closure, without pretending a core is present. Verification rejects a forged or missing core digest, a changed source descriptor, a missing/replaced private binary copy, or mutated in-memory inventory; `restore_ready=false` stays immutable in both versions. All opened descriptors and temporary private files are closed on success and failure. The core is never executed from its inert snapshot.
+
+## Reproducibility evidence and failure tests
+
+Unit tests use private synthetic fixture hashes **only through an unexported helper**. They cover refusals of unapproved hash, symlink, hardlink, unsafe permission, overflow, source inode replacement and copy tampering, as well as bounded orphan cleanup and cancellation. The managed-core-integration workflow first builds/verifies the actual approved amd64 core, then exercises `TestApprovedCoreClosureWithRealBinary` against that executable after the existing runtime integration suite. This closes the gap between synthetic fixture coverage and locked-core compatibility.
+
+## Remaining blockers
+
+This is a **temporary** inode/resource closure. No durable ownership lease across restart, encrypted/signed and portable backup archive, verified data migration/import, disk-space reservation, user-facing backup/restore workflow, T15/T23 fault-injection evidence, restoration CAS or rollback-of-rollback is implemented. No TUN, HTTP, CLI or TUI restore/backup surface is added. Existing license/distribution approval and M5 release gates are not changed. Same-UID malicious ABA changes between finite verification passes remain outside the current threat model.

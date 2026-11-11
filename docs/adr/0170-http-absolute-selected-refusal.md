@@ -1,0 +1,20 @@
+# ADR 0170 — numeric HTTP absolute-form Selected refusal, isolation and same-Core recovery (T22 partial)
+
+- **Status:** bounded native amd64/arm64 preflight proposed; not full T22 or a release signoff.
+- **Depends on:** merged ADR 0169 numeric HTTP absolute-form GET on Rule/Direct/Selected, plus ADR 0163 fail-closed HTTP CONNECT and ADR 0165 concurrent CONNECT refusals.
+- **Envelope:** the same sixth approved Daemon and pinned running Core, Applied=LKG generation 2 / config and declaration revisions 2, same fourth native Linux read-only nonroot UID 10001 container with `docker --network none --cap-drop ALL`. Reuse the already existing 127.0.0.1 ephemeral HTTP Origin and synthetic Selected SOCKS node; no extra Core start/stop, fault signal, network origin, capabilities or TUN.
+
+## Gap and decision
+
+Successful ordinary GET forwarding does not prove that the **non-CONNECT HTTP proxy** path fails closed when its Selected upstream refuses, while Rule/Direct remain unaffected. A misleading HTTP 200, silent DIRECT retry or origin request crossing the wrong inbound would be a routing violation.
+
+1. Reuse the same approved Core PID and local Origin from ADR 0169. Snapshot the Origin's exact allowlisted origin-form GET receipts, successful Selected upstream accepts and refusals. Confirm Core PID / declaration/config revision 2 / Applied=LKG before injecting any failure.
+2. In a `try/finally`, set **only** the existing synthetic Selected node's SOCKS5 CONNECT refusal toggle. While it is active, issue one numeric HTTP absolute-form GET through Rule and Direct. Both must receive the existing bounded exact HTTP 200 + body and append **exactly one corresponding origin receipt**. They must cause no new Selected accept/refusal.
+3. Through Selected:2082, send one absolute-form GET to the same Origin and require either an empty EOF/reset/abort or a complete <=1024-byte HTTP/1.0/1.1 **4xx/5xx** refusal header. A 2xx, redirect, malformed, truncated, oversized or stalled response is not acceptable. Crucially, no new Origin receipt and **no Selected successful accept** is allowed. The synthetic Selected node must independently show **1–4** refusals (bounded retry tolerance), with no node fault. Even if the client sees an acceptable error, an Origin request or missing upstream refusal fails the test.
+4. The refusal switch is reset unconditionally in `finally`, including after any simulated failure. Verify the same approved Core PID and Applied=LKG again, then rerun all three successful ADR 0169 absolute-form paths with exact Origin receipts, **one** new Selected success and no additional refusal. The final Origin receipt sequence must contain only the two healthy requests under rejection plus three recovery requests above the preflight baseline; duplicate/delayed/extra requests fail.
+5. Add no-network negative regressions for bad port, HTTP status/headers/timeout/partial frame, missing or duplicate origin receipt, Rule/Direct crossing, Selected DIRECT bypass, no/too many refusals, incorrect Core PID, failed recovery and a reset switch on every failure. Whitelist safe fixed diagnostic labels; never log arbitrary request headers, URLs, secrets or exception strings.
+6. The existing native lab's Selected lifetime successful accept total becomes **65 → 66**; the refusal lower bound becomes **15 → 16**. Only a fully passing **new exact-head** ordinary CI, Managed Core and both native architectures may emit `T22_AIRGAP_HTTP_ABSOLUTE_SELECTED_FAIL_CLOSED=ok`.
+
+## Non-claims
+
+One bounded localhost HTTP GET failure and recovery is not DNS/SOCKS DOMAIN/UDP, TLS, remote HTTP, CN five-layer/28-group licensed SRS, T20 1,000 reconnects, T25 72h/7d/30d soak, physical power loss, double rollback, Restore/GC, signed offline distribution or stable release. Preserve `T22_HOSTNAME_AND_UDP_VERIFIED=false`, `T20_1000_RECONNECTS_VERIFIED=false`, `T25_72H_7D_30D_SOAK_VERIFIED=false`, `core_distribution=false`, and `cn_preset_offline_bundle=false`. Do not modify stable `main` or release Draft PR #1; no TUN or subscription/ISP routing layer.
