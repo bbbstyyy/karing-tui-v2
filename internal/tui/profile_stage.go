@@ -298,10 +298,19 @@ func (m Model) profileStageLines() []string {
 			fmt.Sprintf("Node diff: +%d added  -%d removed  =%d retained", p.added, p.removed, p.retained),
 		}
 		if id := p.context.replacementSelectedNodeID; id != "" {
-			// The ID passed TUI and daemon safety validation, not a source name
-			// or subscription URL. Show the exact identity being acknowledged.
-			lines = append(lines, "EXPLICIT replacement CurrentSelected: "+id,
-				"Only simple proxy-only; source change is NOT live traffic.")
+			// Explicit stable IDs are terminal-safe ASCII and at most 128
+			// bytes. Render the WHOLE ID in two <=66-column lines even at
+			// 68x16; never ask a user to approve a truncated identity.
+			lines = append(lines, "EXPLICIT replacement CurrentSelected ID:")
+			for offset := 0; offset < len(id); offset += 64 {
+				end := min(offset+64, len(id))
+				lines = append(lines, "  "+id[offset:end])
+			}
+			return append(lines,
+				"SHA decl: "+p.candidateSHA256[:16]+"... overlay: "+p.overlaySHA256[:16]+"...",
+				"Stage is NOT Core Check/Apply; running LKG stays.",
+				"y: CONFIRM Stage only; Esc: cancel; [1] a: Core Apply later.",
+			)
 		}
 		return append(lines,
 			"Declaration SHA256: "+p.candidateSHA256[:20]+"...",

@@ -62,7 +62,7 @@ func TestTUINodesExplicitChoicePreviewStageAndReadback(t *testing.T) {
 		t.Fatal("preview did not bind accepted snapshot, revision and exact chosen node")
 	}
 	view := m.View()
-	for _, want := range []string{"EXPLICIT replacement CurrentSelected: node-added", "Node diff: +1", "NOT Core check", "y: CONFIRM stage ONLY"} {
+	for _, want := range []string{"EXPLICIT replacement CurrentSelected ID:", "node-added", "Node diff: +1", "Stage is NOT Core Check/Apply", "y: CONFIRM Stage only"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("explicit selected preview omitted %q", want)
 		}
@@ -189,5 +189,31 @@ func TestTUINodesExplicitChoiceDiscardResizeAndStageReceiptMismatch(t *testing.T
 	if statusCmd == nil || m.profileStage.awaitingReadback ||
 		!strings.Contains(m.profileStage.notice, "NEVER auto-retry") || api.stageCalls != 1 {
 		t.Fatal("wrong stage replacement echo was trusted as success")
+	}
+}
+
+func TestTUIExplicitSelectedFullIdentityVisibleAtMinimumTerminal(t *testing.T) {
+	m := readySnapshotStageTUI(t, newSnapshotStageTUIFake())
+	m.width, m.height = minProfileStageWidth, minProfileStageHeight
+	selectedID := strings.Repeat("a", 64) + strings.Repeat("b", 64)
+	m.profileStage.pending = &profileStageReceipt{
+		context: profileStageContext{replacementSelectedNodeID: selectedID},
+		candidateSHA256: strings.Repeat("c", 64),
+		overlaySHA256: strings.Repeat("d", 64),
+	}
+	view := m.View()
+	for _, want := range []string{
+		"EXPLICIT replacement CurrentSelected ID:",
+		strings.Repeat("a", 64),
+		strings.Repeat("b", 64),
+		"y: CONFIRM Stage only",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("min-sized confirmation truncates %q", want)
+		}
+	}
+	if strings.Contains(view, "too small") ||
+		len(strings.Split(strings.TrimSpace(view), "\n")) > minProfileStageHeight {
+		t.Fatal("confirmation overflows its minimum terminal")
 	}
 }
