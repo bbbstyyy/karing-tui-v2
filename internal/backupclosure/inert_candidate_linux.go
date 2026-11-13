@@ -1349,6 +1349,18 @@ func reopenInertRestoreCandidateAtFileProbed(
 	ctx context.Context, directory string, key [32]byte,
 	beforeChildOpen, beforePreflight, afterPreflight func(),
 ) (_ *InertRestoreCandidate, err error) {
+	return reopenInertRestoreCandidateAtFinalIdentityProbed(
+		ctx, directory, key, beforeChildOpen, beforePreflight, afterPreflight, nil)
+}
+
+// Reopen must not publish a newly acquired candidate lease after cancellation
+// at the last successful identity check. This nil-in-production checkpoint is
+// strictly package-private and does not change any public API or lease policy.
+// Unlike Verify, Reopen OWNS the new flock and closes it on refusal.
+func reopenInertRestoreCandidateAtFinalIdentityProbed(
+	ctx context.Context, directory string, key [32]byte,
+	beforeChildOpen, beforePreflight, afterPreflight, afterIdentity func(),
+) (_ *InertRestoreCandidate, err error) {
 	if ctx == nil || key == ([32]byte{}) ||
 		!validInertRestoreCandidateDir(directory) {
 		return nil, ErrUnsafeInertRestoreCandidate
@@ -1417,6 +1429,16 @@ func reopenInertRestoreCandidateAtFileProbed(
 	after, inspectErr := inspectInertCandidateFile(candidate, false)
 	if inspectErr != nil || !os.SameFile(before, after) ||
 		before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, ErrUnsafeInertRestoreCandidate
+	}
+	if afterIdentity != nil {
+		afterIdentity()
+	}
+	// A full HMAC/SQLite preflight and final inode inspection cannot justify
+	// returning a successful lease for a request already cancelled. The
+	// deferred failure path closes Reopen's newly acquired directory flock.
+	// The last check and return are not atomic with cancellation.
+	if ctx.Err() != nil {
 		return nil, ErrUnsafeInertRestoreCandidate
 	}
 	candidate.receipt = report
